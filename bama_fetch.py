@@ -4,35 +4,48 @@ from __future__ import annotations
 import json
 import os
 import time
+import random
 from pathlib import Path
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Dict, List, Set
 
-from selenium import webdriver
-from selenium.common.exceptions import NoSuchElementException
-from selenium.webdriver.chrome.options import Options as ChromeOptions
-from selenium.webdriver.chrome.service import Service as ChromeService
-from selenium.webdriver.common.by import By
+import requests
 
 # ===================== CONFIGURATION =====================
-MAX_ADS = 20_000
+MAX_ADS = 50_000
 SCRIPT_DIR = Path(__file__).resolve().parent
 OUTPUT_ROOT = SCRIPT_DIR / "BAMA ADS"
-SAVE_EVERY = 50  # write every N newly accepted ads
-
-# Timing (seconds)
-INITIAL_WAIT = 4.0
-SCROLL_PAUSE = 0.6
-AFTER_BUTTON_WAIT = 8.0
-MAX_STALE_SCROLLS = 6
-MAX_NO_BUTTON_ATTEMPTS = 5
-
+SAVE_EVERY = 50
 ILLEGAL_FS_CHARS = '<>:"/\\|?*'
+
+# --- API layer ---
+SEARCH_URL = "https://bama.ir/cad/api/search"
+WARMUP_URL = "https://bama.ir/car?image=1&priced=1"
+
+MAX_RETRIES = 5
+BACKOFF_BASE = 1.5      # ثانیه
+PAGE_PAUSE = 0.8        # مکث بین صفحات
+REQUEST_TIMEOUT = 20
+
+# مقدار واقعی Cookie را از متغیر محیطی بخوان تا وارد VC نشود.
+COOKIE = os.environ.get("BAMA_COOKIE", "")
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "fa,en;q=0.9",
+    "Referer": "https://bama.ir/car",
+    "X-Requested-With": "XMLHttpRequest",
+}
 # =========================================================
 
 
 class BamaScraper:
     def __init__(self) -> None:
-        self.driver: webdriver.Chrome | None = None
+        self.session: requests.Session | None = None
         self.output_root = OUTPUT_ROOT
         self.output_root.mkdir(parents=True, exist_ok=True)
 
@@ -42,6 +55,9 @@ class BamaScraper:
         # Buffered writes grouped by leaf ads.json path
         self.pending_by_path: Dict[Path, List[Dict[str, Any]]] = {}
         self._unsaved = 0
+
+        # Running total of newly saved ads this session
+        self.total_saved = 0
 
         self._load_existing_seen_codes()
 
@@ -172,100 +188,50 @@ class BamaScraper:
         if errors:
             print(f"⚠️ Write errors on {errors} files.")
 
-    # ----------------- selenium/network capture -----------------
-    def _get_driver(self) -> webdriver.Chrome:
-        options = ChromeOptions()
-        options.add_argument("--headless=new")
-        options.add_argument("--disable-gpu")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--window-size=1920,1080")
-        options.add_argument(
-            "--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
-        )
+    # ----------------- fetch layer -----------------
+    def _build_session(self) -> None:
+        """جایگزین _build_driver: ساخت سشن با هدرها و گرم‌کردن کوکی."""
+        self.session = requests.Session()
+        self.session.headers.update(HEADERS)
+        if COOKIE:
+            self.session.headers["Cookie"] = COOKIE
+
+        # warm-up: گرفتن کوکی‌های اولیه از صفحه‌ی لیست
         try:
-            driver = webdriver.Chrome(options=options)
-            print("✅ ChromeDriver started via Selenium automatic detection.")
-            return driver
-        except Exception:
-            print("⚠️ Automatic driver detection failed. Trying webdriver-manager ...")
+            self.session.get(WARMUP_URL, timeout=REQUEST_TIMEOUT)
+        except requests.RequestException:
+            # گرم‌کردن اختیاری است؛ اگر شکست خورد با همان Cookie ادامه می‌دهیم
+            pass
 
-        try:
-            from webdriver_manager.chrome import ChromeDriverManager
+    def _fetch_page(self, page_index: int) -> List[Dict[str, Any]]:
+        """جایگزین _get_responses: گرفتن یک صفحه از API با retry نمایی."""
+        params = {"pageIndex": page_index}
 
-            service = ChromeService(executable_path=ChromeDriverManager().install())
-            driver = webdriver.Chrome(service=service, options=options)
-            print("✅ ChromeDriver started via webdriver-manager.")
-            return driver
-        except Exception as exc:
-            print(f"❌ Failed to start ChromeDriver: {exc}")
-            raise
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                resp = self.session.get(
+                    SEARCH_URL, params=params, timeout=REQUEST_TIMEOUT
+                )
+                if resp.status_code == 429 or resp.status_code >= 500:
+                    raise requests.RequestException(f"HTTP {resp.status_code}")
+                resp.raise_for_status()
+                payload = resp.json()
+            except (requests.RequestException, ValueError) as exc:
+                if attempt == MAX_RETRIES:
+                    print(f"[page {page_index}] failed after {attempt} tries: {exc}")
+                    return []
+                sleep_for = BACKOFF_BASE ** attempt + random.uniform(0, 0.5)
+                print(f"[page {page_index}] retry {attempt} in {sleep_for:.1f}s ({exc})")
+                time.sleep(sleep_for)
+                continue
 
-    def _build_driver(self) -> None:
-        self.driver = self._get_driver()
-        self.driver.set_page_load_timeout(20)
-
-    def _inject_interceptor(self) -> None:
-        if self.driver is None:
-            raise RuntimeError("Driver is not initialized")
-
-        script = """
-        window.__bamaResponses = [];
-        (function() {
-            const originalFetch = window.fetch;
-            window.fetch = async function(url, ...args) {
-                const response = await originalFetch(url, ...args);
-                if (typeof url === 'string' && url.includes('/cad/api/search')) {
-                    try {
-                        const clone = response.clone();
-                        const payload = await clone.json();
-                        window.__bamaResponses.push({url, json: payload});
-                    } catch(e) {}
-                }
-                return response;
-            };
-
-            const originalOpen = XMLHttpRequest.prototype.open;
-            const originalSend = XMLHttpRequest.prototype.send;
-            XMLHttpRequest.prototype.open = function(method, url) {
-                this._url = url;
-                return originalOpen.apply(this, arguments);
-            };
-            XMLHttpRequest.prototype.send = function(body) {
-                this.addEventListener('load', function() {
-                    if (this._url && this._url.includes('/cad/api/search')) {
-                        try {
-                            const payload = JSON.parse(this.responseText);
-                            window.__bamaResponses.push({url: this._url, json: payload});
-                        } catch(e) {}
-                    }
-                });
-                return originalSend.apply(this, arguments);
-            };
-        })();
-        """
-        self.driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {"source": script})
-        self.driver.execute_script(script)
-
-    def _get_responses(self) -> List[Dict[str, Any]]:
-        if self.driver is None:
-            return []
-        try:
-            responses = self.driver.execute_script("return window.__bamaResponses.splice(0);")
-            if not responses:
+            # همان فیلتری که _get_responses داشت
+            if not payload.get("status") or not payload.get("data"):
                 return []
+            ads = payload["data"].get("ads", [])
+            return [item for item in ads if item.get("type") == "ad"]
 
-            ads: List[Dict[str, Any]] = []
-            for entry in responses:
-                payload = entry.get("json")
-                if payload and payload.get("status") and payload.get("data"):
-                    for item in payload["data"].get("ads", []):
-                        if item.get("type") == "ad":
-                            ads.append(item)
-            return ads
-        except Exception as exc:
-            print(f"⚠️ Error collecting intercepted responses: {exc}")
-            return []
+        return []
 
     # ----------------- processing loop -----------------
     def _process_ads(self, items: List[Dict[str, Any]]) -> int:
@@ -287,90 +253,40 @@ class BamaScraper:
             added += 1
         return added
 
-    def _scroll_down(self) -> None:
-        if self.driver is None:
-            return
-        self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(SCROLL_PAUSE)
-
-    def _click_more_button(self) -> bool:
-        if self.driver is None:
-            return False
-        try:
-            button = self.driver.find_element(By.XPATH, "//button[contains(., 'بیشتر')]")
-            if button.is_displayed() and button.is_enabled():
-                self.driver.execute_script("arguments[0].scrollIntoView(true);", button)
-                time.sleep(0.2)
-                button.click()
-                return True
-        except NoSuchElementException:
-            pass
-        except Exception as exc:
-            print(f"⚠️ Button click error: {exc}")
-        return False
-
     def run(self) -> None:
-        print("🚀 Launching headless Chrome ...")
-        self._build_driver()
-        assert self.driver is not None
+        self._build_session()
+
+        page_index = 1
+        new_since_flush = 0
 
         try:
-            self.driver.get("https://bama.ir/car?image=1&priced=1")
-            time.sleep(INITIAL_WAIT)
-        except Exception as exc:
-            print(f"❌ Failed to load page: {exc}")
+            while self.total_saved < MAX_ADS:
+                ads = self._fetch_page(page_index)
+
+                # شرط توقف: لیست خالی یعنی پایان صفحات
+                if not ads:
+                    print(f"[page {page_index}] empty -> stop")
+                    break
+
+                added = self._process_ads(ads)
+                new_since_flush += added
+                self.total_saved += added
+
+                print(
+                    f"[page {page_index}] fetched={len(ads)} "
+                    f"new={added} total={self.total_saved}"
+                )
+
+                if new_since_flush >= SAVE_EVERY:
+                    self._flush_pending()
+                    new_since_flush = 0
+
+                page_index += 1
+                time.sleep(PAGE_PAUSE)
+        finally:
             self._flush_pending(force=True)
-            return
-
-        self._inject_interceptor()
-        total_unique = len(self.seen_codes)
-
-        initial_ads = self._get_responses()
-        added = self._process_ads(initial_ads)
-        self._flush_pending(force=True)
-        total_unique += added
-        print(f"📥 Initial capture: +{added} ads (session total: {total_unique})")
-
-        stale_scrolls = 0
-        button_not_found = 0
-
-        while total_unique < MAX_ADS:
-            self._scroll_down()
-            new_ads = self._get_responses()
-            added = self._process_ads(new_ads)
-            if added > 0:
-                total_unique += added
-                print(f"✅ +{added} ads (session total: {total_unique})")
-                self._flush_pending(force=False)
-                stale_scrolls = 0
-            else:
-                stale_scrolls += 1
-
-            if stale_scrolls >= MAX_STALE_SCROLLS:
-                print("🔍 Scrolling stalled, looking for 'بیشتر' ...")
-                if self._click_more_button():
-                    print("🖱️ Clicked 'بیشتر'. Waiting for new data ...")
-                    time.sleep(AFTER_BUTTON_WAIT)
-                    new_ads = self._get_responses()
-                    added = self._process_ads(new_ads)
-                    if added > 0:
-                        total_unique += added
-                        print(f"📥 +{added} ads after button (session total: {total_unique})")
-                    self._flush_pending(force=True)
-                    stale_scrolls = 0
-                    button_not_found = 0
-                else:
-                    button_not_found += 1
-                    print(f"🚫 Button not found ({button_not_found}/{MAX_NO_BUTTON_ATTEMPTS})")
-                    if button_not_found >= MAX_NO_BUTTON_ATTEMPTS:
-                        print("❌ No more pages available.")
-                        break
-                    stale_scrolls = 0
-
-        self._flush_pending(force=True)
-        print(f"🏁 Finished. Session unique ads accepted: {total_unique}")
-        if self.driver is not None:
-            self.driver.quit()
+            if self.session is not None:
+                self.session.close()
 
 
 if __name__ == "__main__":
