@@ -1,1 +1,0 @@
-"""Bama Insight application package."""
