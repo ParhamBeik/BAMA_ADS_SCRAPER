@@ -1,7 +1,6 @@
 from datetime import datetime, timezone
 
-from app.services.ingestion import categories_for, extract_ad, fingerprint, payload_hashes, parse_int
-from app.services.time_parser import parse_publish_time
+from apps.parsing import categories_for, extract_ad, fingerprint, parse_int, payload_hashes, parse_publish_time
 
 
 def test_parse_int_handles_bama_formats() -> None:
