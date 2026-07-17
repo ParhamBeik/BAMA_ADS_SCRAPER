@@ -5,31 +5,34 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "bama-saas"
 version = "0.1.0"
-description = "Bama SaaS backend with PostgreSQL and FastAPI"
+description = "Bama SaaS — car price insights (Django + DRF + PostgreSQL)"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "fastapi>=0.115.0",
-    "uvicorn[standard]>=0.30.0",
-    "sqlalchemy>=2.0.30",
-    "alembic>=1.13.0",
-    "psycopg[binary]>=3.2.0",
-    "requests>=2.31.0",
-    "jdatetime>=4.1.0",
-    "rich>=13.7.0",
-    "pydantic>=2.8.0",
-    "pydantic-settings>=2.4.0",
+    "Django>=5.0",
+    "djangorestframework>=3.15",
+    "djangorestframework-simplejwt>=5.3",
+    "django-filter>=24.2",
+    "django-cors-headers>=4.4",
+    "dj-database-url>=2.2",
+    "psycopg[binary]>=3.2",
+    "jdatetime>=4.1",
+    "requests>=2.31",
+    "gunicorn>=22.0",
+    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=8.2.0", "httpx>=0.27.0"]
-
-[project.scripts]
-bama-saas = "app.cli:main"
+test = ["pytest>=8.2", "pytest-django>=4.8"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["app*"]
+include = ["apps*", "config*"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+DJANGO_SETTINGS_MODULE = "config.settings.dev"
+python_files = ["tests.py", "test_*.py", "*_tests.py"]
+testpaths = ["tests", "apps"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]

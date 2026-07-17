@@ -1,0 +1,79 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: bama-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-bama_saas}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-bama_saas}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - bama-network
+
+  django:
+    build: .
+    container_name: bama-django
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-bama_saas}
+      DJANGO_SETTINGS_MODULE: config.settings.dev
+      BAMA_SCRAPED_DATA_ROOT: /data
+      BAMA_HISTORY_DB_PATH: /data/history.db
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-}
+      SECRET_KEY: ${SECRET_KEY:-}
+    volumes:
+      - .:/app
+      - ../bama-scraper/data:/data:ro
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: sh -c "python manage.py migrate --noinput && python manage.py runserver 0.0.0.0:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health/"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks:
+      - bama-network
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    profiles: ["dev"]
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@example.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+    ports:
+      - "5050:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - bama-network
+
+  # Enabled in Phase 5 (Celery + Redis).
+  # redis:
+  #   image: redis:7-alpine
+  #   networks: [bama-network]
+  # celery:
+  #   build: .
+  #   command: celery -A config worker -l info
+  #   depends_on: [redis]
+
+volumes:
+  postgres_data:
+
+networks:
+  bama-network:

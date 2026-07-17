@@ -1,0 +1,14 @@
+.venv
+venv
+env
+__pycache__
+*.pyc
+*.pyo
+.git
+.gitignore
+.env
+*.log
+node_modules
+staticfiles
+.pytest_cache
+graphify-out
