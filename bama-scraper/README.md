@@ -1,59 +1,91 @@
 # BAMA Ads Scraper
 
-Flat scraper-only project for Bama.ir listings.
+A standalone scraper that turns Bama.ir's car listings into a single, queryable
+SQLite database. Run it once and you get a snapshot of the market; run it
+continuously and `data/bama.db` becomes a self-updating machine that tracks every
+ad's appearance, price/content changes, and disappearance over time.
 
 ## What It Does
 
-- Fetches ads into the exact Bama payload shape.
-- Maintains local `code_map.db` metadata for routing and publish dates.
-- Maintains append-only `history.db` sightings, payload versions, and repair/change events.
-- Audits/repairs the on-disk tree.
-- Generates leaf-level `analysis.png` charts.
+Every `fetch.py` run:
+
+1. Fetches ads in Bama's exact payload shape, page by page.
+2. Upserts each ad into the `ads` table — the current snapshot **and** the index
+   (`code` is the primary key; brand/model/variant/category are columns, not folders).
+3. Appends to the append-only history (`fetch_runs`, `ad_versions`,
+   `ad_observations`, `change_events`): new semantic content becomes an immutable
+   compressed version; price/content changes become change events.
+4. After a complete run, an **auto-pipeline** fires: marks vanished ads `removed`,
+   runs DB integrity checks (`audit`), and refreshes per-category market stats
+   (`analyze`) into `analysis_stats`. Each step is isolated so a failure never
+   loses the fetch.
+
+There is no JSON file tree and no separate routing/history DBs — one `bama.db`
+holds everything.
 
 ## Structure
 
 ```text
 bama-scraper/
 ├── src/
-│   ├── fetch.py
-│   ├── audit.py
-│   ├── analyze.py
-│   ├── history.py
-│   └── paths.py
+│   ├── paths.py          # project/data paths (incl. BAMA_DB_PATH)
+│   ├── store.py          # bama.db schema owner + open_store/upsert_ad/mark_inactive
+│   ├── fetch.py          # fetch pages -> ads table + history; runs auto-pipeline
+│   ├── history.py        # append-only versions/observations/change events
+│   ├── audit.py          # DB integrity checks + safe repairs
+│   └── analyze.py        # per-category market stats -> analysis_stats
+├── tests/                # pytest, real temp SQLite, no mocking
 └── data/
-    ├── BAMA ADS/
+    ├── bama.db           # the single source of truth (57k+ ads + full history)
     ├── time_dictionary.json
     ├── brand_aliases.json
-    ├── code_map.db
-    ├── history.db
     ├── unknown_times.log
-    ├── route_conflicts.log
     └── outputs/audit_report.txt
+```
+
+## Setup
+
+```bash
+cd bama-scraper
+pip install -e ".[dev]"
 ```
 
 ## Commands
 
 ```bash
-cd bama-scraper
+# Fetch a snapshot (also marks removed ads, audits, and refreshes stats).
 python src/fetch.py
-python src/audit.py
-python src/audit.py --fix
-python src/audit.py --brand-map
-python src/analyze.py
+BAMA_MAX_ADS=200 python src/fetch.py    # cap for a quick run
+
+# Standalone maintenance (fetch runs these automatically).
+python src/audit.py                     # write data/outputs/audit_report.txt
+python src/audit.py --fix               # backfill NULL publish dates from payloads
+python src/audit.py --brand-map         # propose brand_aliases.json from ads brands
+python src/analyze.py                   # recompute analysis_stats
+```
+
+## Querying the data
+
+```bash
+sqlite3 data/bama.db "SELECT count(*) FROM ads WHERE status='active';"
+sqlite3 data/bama.db "SELECT model, mean_price, median_price, cleaned_count
+                        FROM analysis_stats ORDER BY cleaned_count DESC LIMIT 10;"
+sqlite3 data/bama.db "SELECT event_type, count(*) FROM change_events GROUP BY event_type;"
 ```
 
 ## Reading Order
 
-1. `src/paths.py` defines the project/data paths.
-2. `src/fetch.py` fetches Bama pages, routes ads, writes pure `ads.json`, updates `code_map.db`, and records history.
-3. `src/history.py` records append-only fetch runs, observations, semantic versions, and change events.
-4. `src/audit.py` checks and repairs the JSON tree, map, publish dates, and history baselines.
-5. `src/analyze.py` creates one `analysis.png` beside each usable leaf `ads.json`.
+1. `src/paths.py` — where everything lives.
+2. `src/store.py` — the schema and the only DB opener; start here to learn the tables.
+3. `src/fetch.py` — the main loop: fetch → `upsert_ad` + `record_observation` → auto-pipeline.
+4. `src/history.py` — how versions/observations/events are recorded (semantic vs raw hashing).
+5. `src/audit.py` / `src/analyze.py` — the two pipeline steps that run after each fetch.
 
 ## Notes
 
-- `ads.json` stays pure; scraper metadata lives in SQLite.
-- `history.db` stores one fetch run plus one sighting per code/run; repeated semantic payloads reuse versions.
-- `audit.py --fix` is the safe reconciliation path after path logic changes.
-- `fetch.py` and `audit.py --fix` take an exclusive project lock; read-only audit takes a shared lock.
-- This project intentionally stays flat and lightweight.
+- Stored payloads (`ads.raw_payload`) stay pure Bama JSON; scraper bookkeeping lives in columns.
+- Re-sighting a `removed` ad flips it back to `active`; `mark_inactive` only touches ads not
+  seen since the run started, so an interrupted run never marks anything removed.
+- `fetch.py` and `audit.py --fix`/`--brand-map` take an exclusive project lock; read-only
+  audit takes a shared lock.
+- Tests use a fresh `open_store(tmp_path/"bama.db")` per test — no services, CI-safe.

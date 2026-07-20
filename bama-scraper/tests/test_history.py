@@ -14,7 +14,7 @@ def count(conn: sqlite3.Connection, table: str) -> int:
 
 
 def test_record_observation_reuses_versions_and_tracks_reverts(tmp_path: Path) -> None:
-    conn = open_history(tmp_path / "history.db")
+    conn = open_store(tmp_path / "bama.db")
     runs = [start_run(conn, "live_fetch", 1) for _ in range(4)]
     assert record_observation(conn, runs[0], "abc", payload("abc"), 1.0, "a/ads.json", "live_fetch") == (True, False)
     assert record_observation(conn, runs[1], "abc", payload("abc", time="امروز", rank="2"), 2.0, "a/ads.json", "live_fetch") == (False, False)
@@ -26,7 +26,7 @@ def test_record_observation_reuses_versions_and_tracks_reverts(tmp_path: Path) -
 
 
 def test_record_observation_is_idempotent_per_run_code(tmp_path: Path) -> None:
-    conn = open_history(tmp_path / "history.db")
+    conn = open_store(tmp_path / "bama.db")
     run_id = start_run(conn, "live_fetch", 1)
     assert record_observation(conn, run_id, "abc", payload("abc"), 1.0, "a/ads.json", "live_fetch") == (True, False)
     assert record_observation(conn, run_id, "abc", payload("abc"), 1.0, "a/ads.json", "live_fetch") == (False, False)
