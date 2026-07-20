@@ -12,24 +12,17 @@ __pycache__/
 !.env.example
 !bama-saas/.env.example
 
-# Large scraped dataset + runtime artifacts
-bama-scraper/data/BAMA ADS/
+# Scraper runtime artifacts (bama.db = local data store, never committed)
 bama-scraper/data/outputs/
-bama-scraper/data/route_conflicts.log
-bama-scraper/data/unknown_times.log
-bama-scraper/data/code_map.db
-bama-scraper/data/*.db-wal
-bama-scraper/data/*.db-shm
 bama-scraper/data/*.log
 bama-scraper/data/.writer.lock
 graphify-out/
 /repomix-output.md
 
-# SQLite code->location index (regenerable from ads.json via migrate.py)
+# SQLite databases (regenerable by running fetch.py)
 *.db
 *.db-shm
 *.db-wal
-*.bak-nopub
 
 # SaaS runtime and container outputs
 bama-saas/.venv/

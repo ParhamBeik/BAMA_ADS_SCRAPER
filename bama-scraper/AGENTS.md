@@ -40,6 +40,12 @@ Every test opens a fresh `open_store(tmp_path / "bama.db")` — copy that patter
   only orchestrates.
 - **DB stats only.** `analyze.py` writes rows to `analysis_stats` — no PNGs, no
   matplotlib/seaborn/scipy. Regression is `numpy.polyfit`.
+- **Curated data files are frozen.** `data/time_dictionary.json` (relative-phrase →
+  timedelta map) and `data/brand_aliases.json` are hand-curated and never mutated
+  at runtime. Unknown time phrases are logged once to `data/unknown_times.log` and
+  parse to NULL. `audit.py --brand-map` only *bootstraps* alias candidates and can
+  over-group distinct brands sharing a Persian acronym (e.g. GMC vs JMC) — a human
+  reviews before the file is trusted.
 - **Tests:** `tests/` use a real temp SQLite via `open_store(tmp_path/"bama.db")`,
   no mocking, no services. Keep them CI-safe (`.github/workflows/ci.yml`, py3.10–3.12).
 - **`data/.writer.lock`** is the inter-process write lock (`history.project_lock`);
@@ -47,6 +53,12 @@ Every test opens a fresh `open_store(tmp_path / "bama.db")` — copy that patter
   and never write to `bama.db` without holding it in exclusive mode.
 
 ## Architecture Change Log
+
+- 2026-06-29 → 2026-07-05 (pre-history, superseded): flat JSON-tree era —
+  `ads.json` files routed by `{category}/{brand}/{model}/{variant}` path with
+  `code_map.db` as the routing index; collapsed from 9 scripts to 4
+  (`fetch`/`audit`/`analyze`/`paths`); "new path wins" relocation + publish-date
+  backfill. All replaced by the single-DB design below.
 
 - 2026-07-05: Added append-only `history.db` support for fetch runs, semantic payload versions, per-run sightings, change events, repair events, and legacy baseline seeding. `fetch.py` and `audit.py --fix` now use an exclusive project lock; read-only audit uses a shared lock and reports history health.
 - 2026-07-20: Collapsed the JSON tree + `code_map.db` + `history.db` into a single
