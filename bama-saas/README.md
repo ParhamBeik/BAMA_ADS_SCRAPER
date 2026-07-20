@@ -21,10 +21,9 @@ bama-saas/
 ├── config/                 project package (settings.base/dev/prod, urls, wsgi, asgi)
 ├── apps/
 │   ├── accounts/           email-based User, Subscription; SimpleJWT auth
-│   ├── catalog/            Brand→Model→Variant, City, Dealer, Ad (current snapshot)
-│   ├── history/            FetchRun, AdVersion, AdObservation, AdChangeEvent, AuditRun
-│   ├── market/             PriceObservation (change-only price-through-time)
-│   ├── analytics/          PriceStatistics, AnalyticsCache; insight services
+│   ├── core/               all domain data: catalog (Brand→Model→Variant, Ad),
+│   │                       history (FetchRun, AdVersion, …), prices, analytics;
+│   │                       models/, serializers/, views/ split by those themes
 │   ├── jobs/               management commands + ingestion services (no models)
 │   └── parsing/            zero-Django pure-Python Bama payload rules (ported)
 ├── tests/                  pytest-django: test_parsing, test_analytics, test_importer
@@ -62,8 +61,8 @@ docker compose up --build          # add --profile dev to also start pgadmin on 
 ```
 
 Compose starts `postgres:16-alpine` and a `django` service that runs
-`migrate --noinput` then `runserver`. It mounts the sibling scraper data
-read-only at `/data` (`../bama-scraper/data:/data:ro`) and sets
+`migrate --noinput` then `runserver`. It mounts the project's own `data/`
+read-only at `/data` (`./data:/data:ro`) and sets
 `BAMA_SCRAPED_DATA_ROOT=/data`.
 
 ## Management commands
@@ -76,7 +75,7 @@ All commands run via `python manage.py <command>`.
 | `createsuperuser` | Create an admin (email-based) user. |
 | `runserver` | Dev server on `:8000`. |
 | `import_scraped [--root --limit --batch-size]` | Bulk-load publish-complete ads from `BAMA ADS/**/ads.json` under `BAMA_SCRAPED_DATA_ROOT` (~1,560 files / ~49.6k ads). Idempotent for Ad / AdVersion / PriceObservation. |
-| `import_history [--db --limit --batch-size]` | Replay the scraper's `history.db` (`BAMA_HISTORY_DB_PATH`) into the append-only schema to build price-through-time. |
+| `import_history [--db --limit --batch-size]` | Replay the seed SQLite history DB (`BAMA_HISTORY_DB_PATH`, default `data/bama.db`) into the append-only schema to build price-through-time. |
 | `refresh_analytics [--min-count]` | Rebuild `PriceStatistics` per (brand, model, variant, year) for `time_window="all"`. |
 | `fetch_live [--max-ads --page-pause --request-timeout]` | Stream live ads from bama.ir straight into Postgres via the same ingest pipeline as `import_scraped`. Defaults come from `BAMA_MAX_ADS` / `BAMA_PAGE_PAUSE` / `BAMA_REQUEST_TIMEOUT`. |
 | `mark_inactive_ads [--hours 72]` | Flip ads not seen for N hours to `Ad.Status.REMOVED` and stamp `removed_at`. Emits a `PriceDropEvent`/change as appropriate. |
@@ -89,11 +88,10 @@ All commands run via `python manage.py <command>`.
 
 ### Seeding data
 
-If the sibling `bama-scraper/data/` exists:
+With a seed DB at `data/bama.db` (a SQLite snapshot of historical listings):
 
 ```bash
-python manage.py import_scraped                  # current snapshot from scraped JSON
-python manage.py import_history                  # price-through-time from scraper's SQLite
+python manage.py import_history                  # price-through-time from the seed SQLite
 python manage.py refresh_analytics --min-count 3 # precompute landing-page stats
 ```
 

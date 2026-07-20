@@ -5,12 +5,12 @@
   migrated via Django migrations only — there is no Alembic, no SQLAlchemy, no
   FastAPI app. SQLite is **not** supported (PostgreSQL-only: GIN indexes,
   `django.contrib.postgres`).
-- Do **not** import from `bama-scraper`. The single source of Bama payload
-  rules is `apps/parsing/` — a zero-Django, pure-Python port of
-  `bama-scraper/src/fetch.py` (`extract_ad`, `parse_publish_time`/Jalali,
-  `payload_hashes`, `diff_payloads`, `pure_ad`, `unpack_payload`). The live
-  fetcher (`apps/jobs/services/fetcher.py`) mirrors the scraper's HTTP helpers
-  inline rather than importing them.
+- **Standalone project.** No code or path dependency on any other repo/folder.
+  The single source of Bama payload rules is `apps/parsing/` — zero-Django,
+  pure-Python (`extract_ad`, `parse_publish_time`/Jalali, `payload_hashes`,
+  `diff_payloads`, `pure_ad`, `unpack_payload`). The live fetcher
+  (`apps/jobs/services/fetcher.py`) contains its own HTTP helpers. Seed data
+  lives in this project's own `data/` dir (`data/bama.db`, gitignored).
 - Keep these architecture decisions intact:
   - **Normalized dimensions + JSONB snapshot.** `Brand→Model→Variant`, `City`,
     `Dealer` are normalized lookup tables. `Ad` is the current-snapshot row
@@ -23,7 +23,7 @@
     version vs the previous observation). Re-importing the same data is
     idempotent for `Ad`/`AdVersion`/`PriceObservation`; only `AdObservation`
     grows.
-  - **Change-only price history.** `market.PriceObservation` is the
+  - **Change-only price history.** `core.PriceObservation` is the
     price-through-time backbone: one row per actual price change (fingerprint
     dedup vs the ad's immediately-preceding observation), not per sighting.
     Keeps Bollinger / true-mean / trend series clean.
@@ -42,10 +42,12 @@
 
 - `config/` — project package: `settings/{base,dev,prod}.py`, `urls.py`,
   `wsgi.py`, `asgi.py`.
-- `apps/<app>/{models,views,urls,serializers,filters}.py` — the DRF surface.
+- `apps/core/{models,serializers,views}/` — packages split by theme
+  (catalog / history / market·price / analytics); `filters.py`, `urls.py`.
+- `apps/accounts/{models,views,urls,serializers}.py` — the user/auth surface.
 - `apps/<app>/services/` — non-trivial logic (e.g.
-  `analytics/services/{bollinger,truemean,insights}.py`,
-  `jobs/services/{ingest,fetcher,dimensions}.py`).
+  `core/services/{bollinger,truemean,insights,metrics,deal_score}.py`,
+  `jobs/services/{ingest,fetcher,dimensions,pipeline}.py`).
 - `apps/jobs/management/commands/*.py` — CLI entry points (`import_scraped`,
   `import_history`, `refresh_analytics`, `fetch_live`).
 - `apps/parsing/` — pure-Python, no ORM. Re-exported via `apps/parsing/__init__.py`.
@@ -54,6 +56,13 @@
 
 ## Architecture Change Log
 
+- 2026-07-20: **Merged 7 apps → 4** (`catalog`+`history`+`market`+`analytics`
+  → `apps/core`, with `models/`/`serializers/`/`views/` split by theme;
+  `accounts`, `jobs`, `parsing` unchanged). All `db_table` names and every
+  `/api/` path preserved; migrations reset (`core.0001`, `accounts.0001`).
+  **Decoupled from the sibling scraper project**: seed data now lives in this
+  project's own `data/bama.db`, docker-compose mounts `./data`, and no code,
+  path, or doc references any external project.
 - 2026-07-05: Rebuilt the backend around Alembic-managed PostgreSQL tables,
   live Bama ingestion, immutable sightings, change-only price history,
   DB-native audits, protected tracked background jobs, and public
