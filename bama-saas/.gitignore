@@ -14,5 +14,8 @@ logs/
 *.log
 .env
 
+# Local seed data (SQLite snapshot; large, regenerable)
+data/
+
 # Local DB volume
 postgres_data/
