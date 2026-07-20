@@ -28,12 +28,12 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-bama_saas}
       DJANGO_SETTINGS_MODULE: config.settings.dev
       BAMA_SCRAPED_DATA_ROOT: /data
-      BAMA_HISTORY_DB_PATH: /data/history.db
+      BAMA_HISTORY_DB_PATH: /data/bama.db
       ADMIN_API_KEY: ${ADMIN_API_KEY:-}
       SECRET_KEY: ${SECRET_KEY:-}
     volumes:
       - .:/app
-      - ../bama-scraper/data:/data:ro
+      - ./data:/data:ro
     ports:
       - "8000:8000"
     depends_on:

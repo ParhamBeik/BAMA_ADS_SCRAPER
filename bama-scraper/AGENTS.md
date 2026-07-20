@@ -54,9 +54,9 @@ Every test opens a fresh `open_store(tmp_path / "bama.db")` — copy that patter
   `clean_name` folds Arabic→Persian chars (ي→ی, ك→ک) and strips diacritics so
   spelling twins land in the same group. Changing any of this regroups ads and
   fires `route_changed` events — intended, but never silent.
-- **Standalone project.** No imports from or to `bama-saas/` — the sibling Django
-  service re-implements payload rules itself and may *read* `data/bama.db`, but
-  this project must never know about it. Own `.gitignore`, `pyproject.toml`, CI.
+- **Standalone project.** No imports from or to any other project. Consumers may
+  take a *copy* of `data/bama.db` for their own use, but this project must never
+  know about them. Own `.gitignore`, `pyproject.toml`, CI.
 - **Tests:** `tests/` use a real temp SQLite via `open_store(tmp_path/"bama.db")`,
   no mocking, no services. Keep them CI-safe (`.github/workflows/ci.yml`, py3.10–3.12).
 - **`data/.writer.lock`** is the inter-process write lock (`history.project_lock`);
