@@ -1,9 +1,9 @@
 """Raw-payload utilities: history-blob unpacking and forbidden-key stripping.
 
-- ``unpack_payload`` ported from ``bama-scraper/src/history.py``. It is used to
+- ``unpack_payload`` decodes stored payload blobs. It is used to
   replay ``ad_versions.payload_zlib`` blobs stored in the scraper's
   ``history.db``.
-- ``pure_ad`` ported from ``bama-scraper/src/fetch.py``. It removes scraper
+- ``pure_ad`` removes scraper
   bookkeeping keys (``computed_publish_date_jalali``, ``fetch_time_ts``) so
   that ``ads.json`` files equal the raw Bama payloads.
 

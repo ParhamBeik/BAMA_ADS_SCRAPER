@@ -140,7 +140,7 @@ class WatchlistViewSet(viewsets.ModelViewSet):
 
         ser = WatchlistAdSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
-        from apps.catalog.models import Ad
+        from apps.core.models import Ad
         ad = get_object_or_404(Ad, code=ser.validated_data["code"])
         watchlist.ads.add(ad)
         return Response({"code": ad.code, "added": True}, status=status.HTTP_201_CREATED)
@@ -155,7 +155,7 @@ class WatchlistViewSet(viewsets.ModelViewSet):
     )
     def remove_ad(self, request, pk=None, code=None):
         watchlist = self.get_object()
-        from apps.catalog.models import Ad
+        from apps.core.models import Ad
         ad = get_object_or_404(Ad, code=code)
         watchlist.ads.remove(ad)
         return Response(status=status.HTTP_204_NO_CONTENT)

@@ -4,11 +4,11 @@ from datetime import datetime, timezone
 
 import pytest
 
-from apps.catalog.models import Ad
-from apps.history.models import FetchRun
+from apps.core.models import Ad
+from apps.core.models import FetchRun
 from apps.jobs.services.dimensions import reset_cache
 from apps.jobs.services.ingest import ingest_ad, reset_price_cache
-from apps.market.models import PriceObservation
+from apps.core.models import PriceObservation
 from apps.parsing import extract_ad, parse_publish_time
 
 

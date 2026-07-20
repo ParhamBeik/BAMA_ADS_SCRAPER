@@ -22,7 +22,7 @@ from apps.accounts.models import (
     Watchlist,
 )
 from apps.accounts.notifications import create_notification, deliver
-from apps.market.models import PriceDropEvent
+from apps.core.models import PriceDropEvent
 from django.core.management.base import BaseCommand
 
 _WINDOW = {"daily": timedelta(days=1), "weekly": timedelta(days=7)}

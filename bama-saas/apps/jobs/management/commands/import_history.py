@@ -1,4 +1,4 @@
-"""Replay ``bama-scraper/data/history.db`` to build price-through-time.
+"""Replay the seed SQLite history DB (``data/bama.db``) to build price-through-time.
 
 Maps each source fetch_run to a Django FetchRun (source=history_replay), then
 processes every observation in global observed-time order so the change-only
@@ -17,7 +17,7 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils import timezone as djtz
 
-from apps.history.models import FetchRun
+from apps.core.models import FetchRun
 from apps.jobs.services.dimensions import reset_cache
 from apps.jobs.services.ingest import ingest_ad, reset_price_cache
 from apps.parsing import extract_ad, parse_publish_time, unpack_payload
@@ -30,7 +30,7 @@ def _ts(value) -> datetime | None:
 
 
 class Command(BaseCommand):
-    help = "Replay bama-scraper history.db to build price-through-time"
+    help = "Replay the seed SQLite history DB into price-through-time"
 
     def add_arguments(self, parser):
         parser.add_argument("--db", default=settings.BAMA_HISTORY_DB_PATH)

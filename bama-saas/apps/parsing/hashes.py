@@ -2,9 +2,9 @@
 
 Ported from ``bama-saas/app/services/ingestion.py``. ``fingerprint`` and
 ``semantic_payload`` here are byte-for-byte equivalent to the authoritative
-``ingestion.py`` versions (and match ``bama-scraper/src/history.py`` too).
+``ingestion.py`` versions (and match the original collector's hashing).
 
-Note: ``bama-scraper/src/history.py`` factors the canonical-JSON encoding into
+Note: the original collector factors the canonical-JSON encoding into
 a separate ``canonical_json`` helper; ``ingestion.py`` inlines the same
 ``json.dumps(..., ensure_ascii=False, sort_keys=True, separators=(",", ":"))``
 call inside ``fingerprint``. The output bytes are identical, so we keep the

@@ -2,7 +2,7 @@
 
 Ported from ``bama-saas/app/services/ingestion.py`` (``_summary``,
 ``diff_payloads``, ``categories_for``). These are identical to the
-``bama-scraper/src/history.py`` versions; the only cosmetic difference is that
+original collector's versions; the only cosmetic difference is that
 ``history.py`` computes the canonical-JSON byte length via its ``canonical_json``
 helper, while ``ingestion.py`` inlines the same ``json.dumps(...)`` call. The
 length comparison (``<= 1000``) and output shape are the same, so the

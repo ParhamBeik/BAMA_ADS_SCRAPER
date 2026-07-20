@@ -4,11 +4,11 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from apps.catalog.models import Ad, Brand, Model, Variant
-from apps.market.models import PriceObservation
-from apps.analytics.services import insights
-from apps.analytics.services.bollinger import bollinger
-from apps.analytics.services.truemean import true_mean
+from apps.core.models import Ad, Brand, Model, Variant
+from apps.core.models import PriceObservation
+from apps.core.services import insights
+from apps.core.services.bollinger import bollinger
+from apps.core.services.truemean import true_mean
 
 UTC = timezone.utc
 

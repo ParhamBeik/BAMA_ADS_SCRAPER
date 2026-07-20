@@ -47,7 +47,7 @@ class SubscriptionSerializer(serializers.ModelSerializer):
 # Phase 5 — engagement (favorites, watchlists, saved searches, alerts, inbox)
 # ---------------------------------------------------------------------------
 
-from apps.catalog.models import Ad  # noqa: E402
+from apps.core.models import Ad  # noqa: E402
 from .models import Alert, Favorite, Notification, SavedSearch, Watchlist  # noqa: E402
 
 
@@ -89,7 +89,7 @@ class WatchlistAdSerializer(serializers.Serializer):
     code = serializers.CharField(required=True)
 
     def validate_code(self, value):
-        from apps.catalog.models import Ad
+        from apps.core.models import Ad
         try:
             Ad.objects.get(code=value)
         except Ad.DoesNotExist as exc:

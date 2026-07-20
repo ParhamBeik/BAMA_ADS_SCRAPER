@@ -2,7 +2,7 @@
 
 Idempotent: a full refresh drops every DealScoreCache row and rebuilds; a
 per-model refresh (``--model``) drops only that model's ads' rows. See
-``apps.analytics.services.deal_score`` for the scoring formula.
+``apps.core.services.deal_score`` for the scoring formula.
 
 Usage:
     python manage.py compute_deal_scores [--min-peers 3] [--model <pk>]
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from django.core.management.base import BaseCommand
 
-from apps.analytics.services.deal_score import compute_deal_scores
+from apps.core.services.deal_score import compute_deal_scores
 
 
 class Command(BaseCommand):

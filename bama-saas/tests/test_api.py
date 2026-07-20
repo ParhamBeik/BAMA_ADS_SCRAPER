@@ -20,14 +20,14 @@ import pytest
 from rest_framework.test import APIClient
 
 from apps.accounts.models import User
-from apps.catalog.models import Ad, Brand, City, Model, Variant
-from apps.history.models import (
+from apps.core.models import Ad, Brand, City, Model, Variant
+from apps.core.models import (
     AdChangeEvent,
     AdObservation,
     AdVersion,
     FetchRun,
 )
-from apps.market.models import PriceObservation
+from apps.core.models import PriceObservation
 
 UTC = timezone.utc
 

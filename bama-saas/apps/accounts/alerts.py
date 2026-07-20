@@ -20,9 +20,9 @@ from __future__ import annotations
 
 from django.utils import timezone
 
-from apps.catalog.filters import AdFilter
-from apps.catalog.models import Ad
-from apps.market.models import PriceDropEvent
+from apps.core.filters import AdFilter
+from apps.core.models import Ad
+from apps.core.models import PriceDropEvent
 
 from .models import Alert, Notification
 from .notifications import create_notification, deliver
@@ -81,7 +81,7 @@ def _eval_undervalued(alert, channels, counters):
     if not alert.model_id:
         return
     # Imported lazily to avoid a circular import at module load time.
-    from apps.analytics.services.insights import undervalued
+    from apps.core.services.insights import undervalued
 
     min_discount = alert.threshold if alert.threshold is not None else 10.0
     result = undervalued(alert.model_id, min_discount_pct=min_discount)

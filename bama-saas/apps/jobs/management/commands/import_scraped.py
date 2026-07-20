@@ -17,7 +17,7 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils import timezone as djtz
 
-from apps.history.models import FetchRun, UnknownTimePhrase
+from apps.core.models import FetchRun, UnknownTimePhrase
 from apps.jobs.services.dimensions import reset_cache
 from apps.jobs.services.ingest import ingest_ad
 from apps.parsing import extract_ad, parse_publish_time

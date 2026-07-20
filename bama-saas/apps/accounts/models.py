@@ -112,7 +112,7 @@ class Favorite(models.Model):
         User, on_delete=models.CASCADE, related_name="favorites"
     )
     ad = models.ForeignKey(
-        "catalog.Ad", on_delete=models.CASCADE, related_name="favorited_by"
+        "core.Ad", on_delete=models.CASCADE, related_name="favorited_by"
     )
     created_at = models.DateTimeField(default=timezone.now)
 
@@ -132,7 +132,7 @@ class Watchlist(models.Model):
         User, on_delete=models.CASCADE, related_name="watchlists"
     )
     name = models.CharField(max_length=120)
-    ads = models.ManyToManyField("catalog.Ad", related_name="watchlists", blank=True)
+    ads = models.ManyToManyField("core.Ad", related_name="watchlists", blank=True)
     created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
@@ -190,7 +190,7 @@ class Alert(models.Model):
         null=True, blank=True,
     )
     ad = models.ForeignKey(
-        "catalog.Ad", on_delete=models.CASCADE, related_name="alerts",
+        "core.Ad", on_delete=models.CASCADE, related_name="alerts",
         null=True, blank=True,
     )
     watchlist = models.ForeignKey(
@@ -198,7 +198,7 @@ class Alert(models.Model):
         null=True, blank=True,
     )
     model = models.ForeignKey(
-        "catalog.Model", on_delete=models.CASCADE, related_name="alerts",
+        "core.Model", on_delete=models.CASCADE, related_name="alerts",
         null=True, blank=True,
     )
     threshold = models.FloatField(
@@ -247,7 +247,7 @@ class Notification(models.Model):
     subject = models.CharField(max_length=255, blank=True, default="")
     body = models.TextField(blank=True, default="")
     related_ad = models.ForeignKey(
-        "catalog.Ad", on_delete=models.SET_NULL, related_name="notifications",
+        "core.Ad", on_delete=models.SET_NULL, related_name="notifications",
         null=True, blank=True,
     )
     dedupe_key = models.CharField(max_length=255, blank=True, default="", db_index=True)

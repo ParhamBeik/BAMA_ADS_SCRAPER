@@ -12,9 +12,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from apps.catalog.models import Ad
-from apps.history.models import AdChangeEvent, AdObservation, AdVersion, FetchRun
-from apps.market.models import PriceDropEvent, PriceObservation
+from apps.core.models import Ad
+from apps.core.models import AdChangeEvent, AdObservation, AdVersion, FetchRun
+from apps.core.models import PriceDropEvent, PriceObservation
 from apps.parsing import categories_for, diff_payloads, fingerprint, payload_hashes, pure_ad
 
 from .dimensions import resolve_dimensions

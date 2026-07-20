@@ -31,10 +31,7 @@ INSTALLED_APPS = [
     "django_filters",
     "corsheaders",
     "apps.accounts",
-    "apps.catalog",
-    "apps.market",
-    "apps.history",
-    "apps.analytics",
+    "apps.core",
     "apps.jobs",
 ]
 
@@ -161,12 +158,12 @@ STALE_AFTER_DAYS = int(os.environ.get("STALE_AFTER_DAYS", "14"))
 # land). A full sweep uses `python manage.py fetch_live` (BAMA_MAX_ADS) instead.
 BAMA_WORKER_FETCH_ADS = int(os.environ.get("BAMA_WORKER_FETCH_ADS", "500"))
 
-# Default to the sibling scraper data dir; in Docker this is mounted read-only at /data.
+# Default to the project's own data dir; in Docker this is mounted read-only at /data.
 BAMA_SCRAPED_DATA_ROOT = os.environ.get(
-    "BAMA_SCRAPED_DATA_ROOT", str(BASE_DIR.parent / "bama-scraper" / "data")
+    "BAMA_SCRAPED_DATA_ROOT", str(BASE_DIR / "data")
 )
 BAMA_HISTORY_DB_PATH = os.environ.get(
-    "BAMA_HISTORY_DB_PATH", str(BASE_DIR.parent / "bama-scraper" / "data" / "history.db")
+    "BAMA_HISTORY_DB_PATH", str(BASE_DIR / "data" / "bama.db")
 )
 
 # ---------------------------------------------------------------------------

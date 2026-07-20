@@ -17,7 +17,7 @@ from django.core.management.base import BaseCommand
 from django.db.models import F
 from django.utils import timezone
 
-from apps.catalog.models import Ad
+from apps.core.models import Ad
 
 
 class Command(BaseCommand):

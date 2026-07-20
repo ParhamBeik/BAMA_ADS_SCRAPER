@@ -21,7 +21,7 @@ from rest_framework.response import Response
 from drf_spectacular.utils import OpenApiResponse, extend_schema
 
 from apps.accounts.permissions import IsStaff
-from apps.history.models import FetchRun
+from apps.core.models import FetchRun
 
 
 class JobAcceptedSerializer(serializers.Serializer):

@@ -18,8 +18,8 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils import timezone
 
-from apps.analytics.models import DailyInventorySnapshot
-from apps.catalog.models import Ad
+from apps.core.models import DailyInventorySnapshot
+from apps.core.models import Ad
 
 
 class Command(BaseCommand):

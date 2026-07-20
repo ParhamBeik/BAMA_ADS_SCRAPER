@@ -24,8 +24,8 @@ from apps.accounts.models import (
     Subscription,
     User,
 )
-from apps.catalog.models import Ad, Brand, City, Model, Variant
-from apps.market.models import PriceDropEvent
+from apps.core.models import Ad, Brand, City, Model, Variant
+from apps.core.models import PriceDropEvent
 
 
 # ---------------------------------------------------------------------------

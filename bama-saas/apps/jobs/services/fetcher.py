@@ -1,6 +1,6 @@
 """Live Bama fetcher: stream ads straight from bama.ir into Postgres.
 
-Ports the small, proven HTTP helpers from ``bama-scraper/src/fetch.py``
+Small, proven HTTP helpers for the bama.ir listing API
 (``create_session``, ``warmup``, ``fetch_page``, ``iter_ads``, the request
 headers, the ``ad.get("type") != "banner"`` filter, and the
 ``SEARCH_URL`` / ``WARMUP_URL`` constants) inline rather than importing them,
@@ -23,12 +23,12 @@ import requests
 from django.conf import settings
 from django.utils import timezone as djtz
 
-from apps.history.models import FetchRun, UnknownTimePhrase
+from apps.core.models import FetchRun, UnknownTimePhrase
 from apps.jobs.services.dimensions import reset_cache
 from apps.jobs.services.ingest import ingest_ad
 from apps.parsing import extract_ad, parse_publish_time
 
-# Constants and headers mirrored from bama-scraper/src/fetch.py.
+# Constants and headers matching what bama.ir's own frontend sends.
 SEARCH_URL = "https://bama.ir/cad/api/search"
 WARMUP_URL = "https://bama.ir/car?image=1&priced=1"
 

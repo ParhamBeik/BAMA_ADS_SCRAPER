@@ -13,7 +13,7 @@ from typing import Any
 from django.db import IntegrityError
 from django.utils.text import slugify
 
-from apps.catalog.models import Brand, City, Dealer, Model, Variant
+from apps.core.models import Brand, City, Dealer, Model, Variant
 
 # Location strings look like "تهران - منطقه ۱" or "بابل"; the first segment is
 # the city. Split on common Bama separators.

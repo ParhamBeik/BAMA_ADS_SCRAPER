@@ -15,15 +15,15 @@ import pytest
 from django.core.management import call_command
 from rest_framework.test import APIClient
 
-from apps.analytics.models import (
+from apps.core.models import (
     DealScoreCache,
     DailyInventorySnapshot,
     MarketSnapshot,
 )
-from apps.analytics.services import metrics
-from apps.analytics.services.deal_score import compute_deal_scores
-from apps.catalog.models import Ad, Brand, City, Dealer, Model, Variant
-from apps.market.models import PriceDropEvent
+from apps.core.services import metrics
+from apps.core.services.deal_score import compute_deal_scores
+from apps.core.models import Ad, Brand, City, Dealer, Model, Variant
+from apps.core.models import PriceDropEvent
 
 UTC = timezone.utc
 _NOW = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)

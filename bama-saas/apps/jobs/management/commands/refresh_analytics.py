@@ -16,8 +16,8 @@ from django.db import transaction
 from django.db.models import Avg, Count, Max, Min, StdDev
 from django.utils import timezone
 
-from apps.analytics.models import PriceStatistics
-from apps.catalog.models import Ad
+from apps.core.models import PriceStatistics
+from apps.core.models import Ad
 
 
 class Command(BaseCommand):
