@@ -27,7 +27,9 @@ Every test opens a fresh `open_store(tmp_path / "bama.db")` — copy that patter
 - **Append-only history is sacred.** `fetch_runs`, `ad_versions`,
   `ad_observations`, `change_events`: every sighting recorded once per (run, code),
   semantic versions reused (volatile keys `time`/`rank` ignored for versioning),
-  repairs use repair origins. Never mutate or delete history rows.
+  repairs use repair origins. Never mutate or delete history rows. Event types:
+  `content_changed` (semantic hash differs), `route_changed` (dim grouping moved),
+  `reappeared` (gap ≥ 14 days between sightings), plus audit-repair origins.
 - **`ads.raw_payload` stays pure Bama JSON.** Scraper bookkeeping goes in columns
   (`pure_ad` strips forbidden keys before storing).
 - **Lifecycle:** re-sighting flips `removed` → `active` and clears `removed_at`
@@ -46,6 +48,15 @@ Every test opens a fresh `open_store(tmp_path / "bama.db")` — copy that patter
   parse to NULL. `audit.py --brand-map` only *bootstraps* alias candidates and can
   over-group distinct brands sharing a Persian acronym (e.g. GMC vs JMC) — a human
   reviews before the file is trusted.
+- **Dim derivation is the routing.** `fetch.derive_dims` splits `detail.title` on
+  "،" → brand/model, applies `brand_aliases.json`, takes `detail.trim` as variant,
+  and detects category by "حواله"/"پیش فروش" markers (default "آگهی ها").
+  `clean_name` folds Arabic→Persian chars (ي→ی, ك→ک) and strips diacritics so
+  spelling twins land in the same group. Changing any of this regroups ads and
+  fires `route_changed` events — intended, but never silent.
+- **Standalone project.** No imports from or to `bama-saas/` — the sibling Django
+  service re-implements payload rules itself and may *read* `data/bama.db`, but
+  this project must never know about it. Own `.gitignore`, `pyproject.toml`, CI.
 - **Tests:** `tests/` use a real temp SQLite via `open_store(tmp_path/"bama.db")`,
   no mocking, no services. Keep them CI-safe (`.github/workflows/ci.yml`, py3.10–3.12).
 - **`data/.writer.lock`** is the inter-process write lock (`history.project_lock`);

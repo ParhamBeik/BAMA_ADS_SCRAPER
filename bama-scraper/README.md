@@ -64,6 +64,27 @@ python src/audit.py --brand-map         # propose brand_aliases.json from ads br
 python src/analyze.py                   # recompute analysis_stats
 ```
 
+## Configuration (env vars)
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `BAMA_MAX_ADS` | `50000` | Stop after this many ads per run |
+| `BAMA_PAGE_PAUSE` | `0.8` | Seconds between page requests |
+| `BAMA_REQUEST_TIMEOUT` | `20` | Per-request timeout (s) |
+| `BAMA_MAX_RETRIES` | `4` | Retries on 429/5xx/network errors |
+| `BAMA_RETRY_BACKOFF` | `2.0` | Initial backoff (s), doubles per retry |
+| `BAMA_MAX_STALE_PAGES` | `3` | Consecutive no-new-code pages before treating the feed as exhausted |
+| `BAMA_COOKIE` | – | Optional cookie header if Bama starts blocking |
+
+## Tests
+
+```bash
+python -m pytest        # 17 tests, real temp SQLite, no network, <1s
+```
+
+CI (`.github/workflows/ci.yml`) runs ruff + pytest on Python 3.10–3.12 for every
+push/PR touching `bama-scraper/`.
+
 ## Querying the data
 
 ```bash
@@ -84,8 +105,13 @@ sqlite3 data/bama.db "SELECT event_type, count(*) FROM change_events GROUP BY ev
 ## Notes
 
 - Stored payloads (`ads.raw_payload`) stay pure Bama JSON; scraper bookkeeping lives in columns.
+- Publish dates: absolute Jalali `detail.time` values parse directly; relative phrases
+  ("دیروز", …) resolve through the curated `data/time_dictionary.json`; unknown phrases are
+  logged once to `data/unknown_times.log` and stay NULL until `audit.py --fix` or a re-sight.
 - Re-sighting a `removed` ad flips it back to `active`; `mark_inactive` only touches ads not
   seen since the run started, so an interrupted run never marks anything removed.
-- `fetch.py` and `audit.py --fix`/`--brand-map` take an exclusive project lock; read-only
-  audit takes a shared lock.
+- `fetch.py` and `audit.py --fix`/`--brand-map` take an exclusive project lock
+  (`data/.writer.lock`); read-only audit takes a shared lock.
+- Ctrl-C during a fetch is safe: the buffer is flushed, the run is marked `interrupted`,
+  and the pipeline (which decides what "vanished") is skipped.
 - Tests use a fresh `open_store(tmp_path/"bama.db")` per test — no services, CI-safe.

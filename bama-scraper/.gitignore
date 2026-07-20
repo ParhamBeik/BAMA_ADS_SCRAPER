@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+.DS_Store
+
+# Runtime data — bama.db is the local data store, regenerable by running fetch.py
+data/bama.db
+data/*.db-shm
+data/*.db-wal
+data/outputs/
+data/*.log
+data/.writer.lock
+
+# Local knowledge graph
+graphify-out/

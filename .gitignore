@@ -12,14 +12,11 @@ __pycache__/
 !.env.example
 !bama-saas/.env.example
 
-# Scraper runtime artifacts (bama.db = local data store, never committed)
-bama-scraper/data/outputs/
-bama-scraper/data/*.log
-bama-scraper/data/.writer.lock
+# Local knowledge graphs + tooling output
 graphify-out/
 /repomix-output.md
 
-# SQLite databases (regenerable by running fetch.py)
+# SQLite databases (safety net; bama-scraper/.gitignore owns its own data rules)
 *.db
 *.db-shm
 *.db-wal
