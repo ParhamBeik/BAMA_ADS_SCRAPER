@@ -13,6 +13,8 @@ from collections import defaultdict
 from django.db.models import Avg, Count, F, Max, Min
 from django.db.models.functions import Trunc
 from django.shortcuts import get_object_or_404
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
@@ -35,6 +37,11 @@ def _opt_int(params, key):
         raise ValueError(f"{key} must be an integer")
 
 
+@extend_schema(
+    tags=["Markets"],
+    responses={200: OpenApiTypes.OBJECT},
+    parameters=[OpenApiParameter("limit", int, OpenApiParameter.QUERY, required=False)],
+)
 @api_view(["GET"])
 def markets(request):
     """Landing: per-model market summary (publish-complete, priced), top-N."""
@@ -61,6 +68,16 @@ def markets(request):
     return Response(list(qs))
 
 
+@extend_schema(
+    tags=["Markets"],
+    responses={200: OpenApiTypes.OBJECT},
+    parameters=[
+        OpenApiParameter("variant", int, OpenApiParameter.QUERY, required=False),
+        OpenApiParameter("year", int, OpenApiParameter.QUERY, required=False),
+        OpenApiParameter("method", str, OpenApiParameter.QUERY, required=False),
+        OpenApiParameter("z", float, OpenApiParameter.QUERY, required=False),
+    ],
+)
 @api_view(["GET"])
 def market_true_mean(request, model_id: int):
     """True-mean (outlier-trimmed) price for a model/variant/year peer group."""
@@ -86,6 +103,15 @@ def market_true_mean(request, model_id: int):
     return Response(data)
 
 
+@extend_schema(
+    tags=["Charts"],
+    responses={200: OpenApiTypes.OBJECT},
+    parameters=[
+        OpenApiParameter("window", int, OpenApiParameter.QUERY, required=False),
+        OpenApiParameter("sigma", float, OpenApiParameter.QUERY, required=False),
+        OpenApiParameter("variant", int, OpenApiParameter.QUERY, required=False),
+    ],
+)
 @api_view(["GET"])
 def market_bollinger(request, model_id: int):
     """Bollinger-style price spectrum over time for a model."""
@@ -104,6 +130,14 @@ def market_bollinger(request, model_id: int):
     return Response(data)
 
 
+@extend_schema(
+    tags=["Market history"],
+    responses={200: OpenApiTypes.OBJECT},
+    parameters=[
+        OpenApiParameter("bucket", str, OpenApiParameter.QUERY, required=False),
+        OpenApiParameter("variant", int, OpenApiParameter.QUERY, required=False),
+    ],
+)
 @api_view(["GET"])
 def market_price_trends(request, model_id: int):
     """Median + count of observed prices per day/week/month for a model."""
@@ -142,6 +176,7 @@ def market_price_trends(request, model_id: int):
                      "bucket": bucket, "series": series})
 
 
+@extend_schema(tags=["Price history"], responses={200: OpenApiTypes.OBJECT})
 @api_view(["GET"])
 def ad_price_history(request, code: str):
     """Single ad's change-only price series over time."""

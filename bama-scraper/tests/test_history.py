@@ -1,11 +1,8 @@
 import sqlite3
-import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
-
-from history import open_history, record_observation, start_run
+from history import record_observation, start_run
+from store import open_store
 
 
 def payload(code: str, price: str = "100", time: str = "دیروز", rank: str = "1") -> dict:

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "bama-scraper"
 version = "1.0.0"
-description = "Bama.ir car ads scraper, audit tool, and leaf analysis plots"
+description = "Bama.ir car ads scraper, single-SQLite snapshot store, and market stats"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
@@ -30,9 +30,6 @@ dependencies = [
     "rich>=13.7.0",
     "pandas>=2.0.0",
     "numpy>=1.24.0",
-    "matplotlib>=3.7.0",
-    "seaborn>=0.12.0",
-    "scipy>=1.10.0",
 ]
 
 [project.optional-dependencies]

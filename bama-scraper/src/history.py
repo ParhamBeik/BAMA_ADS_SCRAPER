@@ -9,84 +9,17 @@ import json
 import sqlite3
 import time
 import zlib
-from pathlib import Path
 from typing import Any, Iterator
 
-from paths import HISTORY_DB_PATH, PROJECT_LOCK_PATH
-
-SCHEMA = """
-PRAGMA foreign_keys=ON;
-CREATE TABLE IF NOT EXISTS fetch_runs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    origin TEXT NOT NULL,
-    status TEXT NOT NULL,
-    started_ts REAL NOT NULL,
-    finished_ts REAL,
-    max_ads INTEGER,
-    fetched_count INTEGER NOT NULL DEFAULT 0,
-    page_count INTEGER NOT NULL DEFAULT 0,
-    reached_end INTEGER NOT NULL DEFAULT 0,
-    error TEXT
-);
-CREATE TABLE IF NOT EXISTS ad_versions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    code TEXT NOT NULL,
-    semantic_hash TEXT NOT NULL,
-    raw_hash TEXT NOT NULL,
-    payload_zlib BLOB NOT NULL,
-    origin TEXT NOT NULL,
-    first_observed_ts REAL NOT NULL,
-    UNIQUE(code, semantic_hash)
-);
-CREATE INDEX IF NOT EXISTS idx_versions_code ON ad_versions(code);
-CREATE TABLE IF NOT EXISTS ad_observations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    run_id INTEGER NOT NULL REFERENCES fetch_runs(id),
-    code TEXT NOT NULL,
-    version_id INTEGER NOT NULL REFERENCES ad_versions(id),
-    observed_ts REAL NOT NULL,
-    publish_phrase TEXT,
-    rank TEXT,
-    canonical_path TEXT NOT NULL,
-    raw_hash TEXT NOT NULL,
-    UNIQUE(run_id, code)
-);
-CREATE INDEX IF NOT EXISTS idx_observations_code_time ON ad_observations(code, observed_ts);
-CREATE TABLE IF NOT EXISTS change_events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    observation_id INTEGER NOT NULL REFERENCES ad_observations(id),
-    code TEXT NOT NULL,
-    previous_version_id INTEGER REFERENCES ad_versions(id),
-    new_version_id INTEGER NOT NULL REFERENCES ad_versions(id),
-    event_type TEXT NOT NULL,
-    categories_json TEXT NOT NULL,
-    changed_paths_json TEXT NOT NULL,
-    changes_json TEXT NOT NULL,
-    origin TEXT NOT NULL,
-    created_ts REAL NOT NULL,
-    UNIQUE(observation_id, event_type)
-);
-CREATE INDEX IF NOT EXISTS idx_events_code_time ON change_events(code, created_ts);
-"""
+from paths import PROJECT_LOCK_PATH
 
 VOLATILE_DETAIL_KEYS = {"time", "rank"}
 REAPPEAR_AFTER_SECONDS = 14 * 86400
 
 
 # ---------------------------------------------------------------------------
-# Database and process locking
+# Process locking
 # ---------------------------------------------------------------------------
-
-def open_history(path: Path = HISTORY_DB_PATH) -> sqlite3.Connection:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path))
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA busy_timeout=5000;")
-    conn.executescript(SCHEMA)
-    conn.commit()
-    return conn
-
 
 @contextlib.contextmanager
 def project_lock(exclusive: bool) -> Iterator[None]:

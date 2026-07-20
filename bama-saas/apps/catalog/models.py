@@ -104,6 +104,10 @@ class Dealer(models.Model):
 class Ad(models.Model):
     """Current snapshot of a single Bama ad, keyed by its `code`."""
 
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Active"
+        REMOVED = "removed", "Removed (not seen within STALE_AFTER_DAYS)"
+
     code = models.CharField(max_length=16, primary_key=True)
 
     # Dimension links. PROTECT prevents deleting a brand/model/variant that
@@ -141,6 +145,14 @@ class Ad(models.Model):
     publish_phrase = models.CharField(max_length=120, blank=True)
     first_seen_at = models.DateTimeField(null=True, blank=True)
     last_seen_at = models.DateTimeField(null=True, blank=True, db_index=True)
+
+    # Lifecycle: ACTIVE while recently observed, REMOVED once unseen longer than
+    # STALE_AFTER_DAYS (set by the worker's mark_inactive_ads command). Re-seeing
+    # a removed ad flips it back to ACTIVE (ingest_ad clears these on update).
+    status = models.CharField(
+        max_length=16, choices=Status.choices, default=Status.ACTIVE, db_index=True
+    )
+    removed_at = models.DateTimeField(null=True, blank=True)
 
     # Long-tail attributes (kept on the snapshot for convenience; source of
     # truth is raw_payload).

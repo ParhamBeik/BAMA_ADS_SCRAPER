@@ -15,6 +15,8 @@ OUTPUT_DIR = DATA_DIR / "outputs"
 ANALYSIS_OUTPUT_DIR = OUTPUT_DIR
 TIME_DICT_PATH = DATA_DIR / "time_dictionary.json"
 UNKNOWN_TIMES_LOG = DATA_DIR / "unknown_times.log"
+BAMA_DB_PATH = DATA_DIR / "bama.db"
+# Legacy stores, kept only for the one-time migrate_to_db.py import.
 CODE_MAP_PATH = DATA_DIR / "code_map.db"
 HISTORY_DB_PATH = DATA_DIR / "history.db"
 PROJECT_LOCK_PATH = DATA_DIR / ".writer.lock"

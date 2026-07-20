@@ -27,6 +27,13 @@ class SubscriptionThrottle(UserRateThrottle):
 
     scope = "subscription"
 
+    def get_rate(self):
+        # UserRateThrottle.__init__ calls get_rate() before allow_request() has
+        # had a chance to set the plan-specific rate. Fall back to the free-tier
+        # rate so instantiation succeeds; allow_request() overrides self.rate
+        # for authenticated users on every request.
+        return _PLAN_RATES[Subscription.PlanType.FREE]
+
     def allow_request(self, request, view):
         user = request.user
         if user and user.is_authenticated:

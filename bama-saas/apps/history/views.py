@@ -6,6 +6,7 @@ views (changes, observations, fetch-runs) for the dashboard.
 
 from django.http import Http404
 from django.shortcuts import get_object_or_404
+from drf_spectacular.utils import extend_schema
 from rest_framework import viewsets
 from rest_framework.decorators import api_view
 from rest_framework.pagination import PageNumberPagination
@@ -35,6 +36,7 @@ class AdVersionsView(APIView):
 
     pagination_class = None
 
+    @extend_schema(responses=AdVersionSerializer(many=True), tags=["History"])
     def get(self, request, code):
         ad = _get_ad(code)
         qs = AdVersion.objects.filter(ad=ad).order_by("-first_observed_at")
@@ -47,6 +49,7 @@ class AdChangesView(APIView):
 
     pagination_class = None
 
+    @extend_schema(responses=AdChangeEventSerializer(many=True), tags=["History"])
     def get(self, request, code):
         ad = _get_ad(code)
         qs = AdChangeEvent.objects.filter(ad=ad).order_by("-created_at")
@@ -63,6 +66,7 @@ class AdTimelineView(APIView):
 
     pagination_class = None
 
+    @extend_schema(responses=TimelineEntrySerializer(many=True), tags=["History"])
     def get(self, request, code):
         ad = _get_ad(code)
         observations = AdObservation.objects.filter(ad=ad)

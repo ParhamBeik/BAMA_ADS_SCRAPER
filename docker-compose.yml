@@ -1,35 +1,15 @@
-services:
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: bama_insight
-      POSTGRES_USER: bama
-      POSTGRES_PASSWORD: bama
-    ports: ["5432:5432"]
-    volumes: ["postgres_data:/var/lib/postgresql/data"]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U bama -d bama_insight"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+# Root entry point for the Bama SaaS stack.
+#
+# The canonical service definitions live in bama-saas/docker-compose.yml
+# (postgres + django + optional pgadmin). This file simply includes them so the
+# whole project can be started from the repo root with a single command:
+#
+#     docker-compose up --build            # postgres + django on :5432 / :8000
+#     docker-compose --profile dev up      # also start pgadmin on :5050
+#
+# Phase 8 will extend *this* file with the frontend, worker, and nginx services
+# once they exist. Do not duplicate service definitions here — edit the included
+# file or add new services below.
 
-  api:
-    build: ./bama-saas
-    environment:
-      DATABASE_URL: postgresql+psycopg://bama:bama@postgres:5432/bama_insight
-      ADMIN_API_KEY: ${ADMIN_API_KEY:-local-development-key}
-      BAMA_MAX_ADS: ${BAMA_MAX_ADS:-50000}
-      BAMA_PAGE_PAUSE: ${BAMA_PAGE_PAUSE:-0.8}
-      STALE_AFTER_DAYS: ${STALE_AFTER_DAYS:-14}
-    ports: ["8000:8000"]
-    depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-
-volumes:
-  postgres_data:
+include:
+  - bama-saas/docker-compose.yml

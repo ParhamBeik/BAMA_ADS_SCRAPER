@@ -14,7 +14,7 @@ from typing import Any
 
 from apps.catalog.models import Ad
 from apps.history.models import AdChangeEvent, AdObservation, AdVersion, FetchRun
-from apps.market.models import PriceObservation
+from apps.market.models import PriceDropEvent, PriceObservation
 from apps.parsing import categories_for, diff_payloads, fingerprint, payload_hashes, pure_ad
 
 from .dimensions import resolve_dimensions
@@ -57,6 +57,10 @@ def _ad_defaults(extracted: dict, dims: dict, observed_at: datetime, publish_at)
         "body_status": g("body_status") or "",
         "fuel": g("fuel") or "",
         "url": g("url") or "",
+        # Being observed now means the ad is active: clear any prior removal
+        # the worker may have recorded during a stale gap.
+        "status": Ad.Status.ACTIVE,
+        "removed_at": None,
         "raw_payload": pure_ad(g("raw_payload") or {}),
     }
 
@@ -121,6 +125,7 @@ def ingest_ad(
     # the ad's immediately-preceding observation.
     price_fp = fingerprint(payload.get("price") or {})
     last_fp = _PRICE_FP_CACHE.get(code)
+    old_price = None
     if last_fp is None:
         latest = (
             PriceObservation.objects.filter(ad=ad)
@@ -128,13 +133,15 @@ def ingest_ad(
             .first()
         )
         last_fp = latest.fingerprint if latest else None
+        old_price = latest.price if latest else None
     price_changed = last_fp != price_fp
+    new_price = extracted.get("current_price")
     if price_changed:
         PriceObservation.objects.create(
             ad=ad,
             fetch_run=run,
             observed_at=observed_at,
-            price=extracted.get("current_price"),
+            price=new_price,
             payment=extracted.get("current_payment"),
             prepayment=extracted.get("current_prepayment"),
             installments=extracted.get("current_installments"),
@@ -142,6 +149,18 @@ def ingest_ad(
             fingerprint=price_fp,
         )
         _PRICE_FP_CACHE[code] = price_fp
+        # A genuine price cut vs the prior observation → record a drop event.
+        # Idempotent: only fires when a new PriceObservation is written, and
+        # re-importing unchanged data writes no new observation.
+        if old_price and new_price is not None and new_price < old_price:
+            PriceDropEvent.objects.create(
+                ad=ad,
+                old_price=old_price,
+                new_price=new_price,
+                drop_amount=old_price - new_price,
+                drop_pct=round((old_price - new_price) / old_price * 100, 2),
+                observed_at=observed_at,
+            )
 
     # 5) Content change events: only for genuinely new versions vs the previous
     # observation (drives the history timeline for re-imports / live fetch).

@@ -30,6 +30,8 @@ class BrandModelsView(ListAPIView):
     pagination_class = None
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return Model.objects.none()
         brand = get_object_or_404(Brand, slug=self.kwargs["brand_slug"])
         return Model.objects.filter(brand=brand).order_by("name_fa")
 
@@ -41,6 +43,8 @@ class ModelVariantsView(ListAPIView):
     pagination_class = None
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return Variant.objects.none()
         model = get_object_or_404(Model, pk=self.kwargs["model_pk"])
         return Variant.objects.filter(model=model).order_by("name_fa")
 

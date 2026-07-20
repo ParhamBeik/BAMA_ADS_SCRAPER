@@ -29,6 +29,7 @@ graphify-out/
 *.db
 *.db-shm
 *.db-wal
+*.bak-nopub
 
 # SaaS runtime and container outputs
 bama-saas/.venv/

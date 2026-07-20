@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Fetch Bama ads into pure JSON payload files and maintain ``code_map.db``."""
+"""Fetch Bama ads into the single ``bama.db`` store and run the auto-pipeline.
+
+Each run records a fetch snapshot: every sighted ad is upserted into the ``ads``
+table (current state + dimensions) and appended to the history tables. After a
+complete run the pipeline marks vanished ads inactive, runs DB integrity checks,
+and refreshes per-category analysis stats -- turning continuous runs into a
+snapshot-grabbing machine for the whole Bama inventory.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +14,6 @@ import datetime
 import json
 import os
 import re
-import sqlite3
 import time
 import unicodedata
 from datetime import timedelta, timezone
@@ -22,16 +28,10 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from paths import (
-    ADS_ROOT,
-    BRAND_ALIASES_PATH,
-    CODE_MAP_PATH,
-    HISTORY_DB_PATH,
-    ROUTE_CONFLICTS_LOG,
-    TIME_DICT_PATH,
-    UNKNOWN_TIMES_LOG,
-)
-from history import finish_run, open_history, project_lock, record_observation, start_run
+from paths import BRAND_ALIASES_PATH, TIME_DICT_PATH, UNKNOWN_TIMES_LOG
+from history import finish_run, project_lock, record_observation, start_run
+from store import open_store, upsert_ad, mark_inactive, counts
+from analyze import parse_price, parse_mileage, parse_year, normalize_transmission
 
 
 SEARCH_URL = "https://bama.ir/cad/api/search"
@@ -39,9 +39,14 @@ WARMUP_URL = "https://bama.ir/car?image=1&priced=1"
 MAX_ADS = int(os.getenv("BAMA_MAX_ADS", "50000"))
 PAGE_PAUSE = float(os.getenv("BAMA_PAGE_PAUSE", "0.8"))
 REQUEST_TIMEOUT = int(os.getenv("BAMA_REQUEST_TIMEOUT", "20"))
+MAX_RETRIES = int(os.getenv("BAMA_MAX_RETRIES", "4"))
+RETRY_BACKOFF = float(os.getenv("BAMA_RETRY_BACKOFF", "2.0"))
+# Stop after this many consecutive pages that add no previously-unseen codes.
+# bama.ir keeps returning already-seen ads on pages past the real inventory, so
+# without this the run churns forever until the server throttles it.
+MAX_STALE_PAGES = int(os.getenv("BAMA_MAX_STALE_PAGES", "3"))
+RETRIABLE_STATUS = frozenset({429, 500, 502, 503, 504})
 BATCH_SIZE = 200
-OUTPUT_ROOT = ADS_ROOT
-ILLEGAL_FS_CHARS = '<>:"/\\|?*'
 FORBIDDEN_AD_KEYS = ("computed_publish_date_jalali", "fetch_time_ts")
 
 HEADERS = {
@@ -65,32 +70,18 @@ _ARABIC_TO_PERSIAN = str.maketrans({
     "ة": "ه",
 })
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS ad_index (
-    code                TEXT PRIMARY KEY,
-    file_path           TEXT NOT NULL,
-    first_seen_ts       REAL,
-    last_seen_ts        REAL,
-    publish_date_jalali TEXT,
-    fetch_time_ts       REAL
-);
-CREATE INDEX IF NOT EXISTS idx_ad_index_file_path ON ad_index(file_path);
-"""
-
 console = Console()
 
 
 # ---------------------------------------------------------------------------
-# Name cleanup and path routing
+# Name cleanup and dimension derivation
 # ---------------------------------------------------------------------------
 
 def clean_name(name: Any) -> str:
-    """Return a safe folder name while preserving readable Persian text."""
+    """Return a safe, readable label preserving Persian text."""
     text = str(name or "")
     if not text:
         return "unknown"
-    for char in ILLEGAL_FS_CHARS:
-        text = text.replace(char, "_")
     text = text.translate(_ARABIC_TO_PERSIAN)
     text = "".join(c for c in text if unicodedata.category(c) != "Mn")
     cleaned = " ".join(text.split())
@@ -105,12 +96,12 @@ def load_brand_aliases(path: Path = BRAND_ALIASES_PATH) -> dict[str, str]:
     return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
 
 
-def intended_path_for_ad(
-    ad: dict[str, Any],
-    output_root: Path = OUTPUT_ROOT,
-    brand_aliases: dict[str, str] | None = None,
-) -> Path:
-    """Build the one canonical file path for an ad from its current payload."""
+def derive_dims(ad: dict[str, Any], brand_aliases: dict[str, str] | None = None) -> dict[str, str]:
+    """Derive brand/model/variant/category grouping columns from an ad payload.
+
+    Replaces the old folder-routing scheme: the same values that used to become
+    directory names are now denormalized columns on the ``ads`` row.
+    """
     brand_aliases = brand_aliases or {}
     detail = ad.get("detail") if isinstance(ad.get("detail"), dict) else {}
     title = str(detail.get("title") or "")
@@ -120,82 +111,41 @@ def intended_path_for_ad(
     model = clean_name(title_parts[1] if len(title_parts) > 1 else "unknown")
     variant = clean_name(detail.get("trim") or "default")
 
-    category_text = "آگهی ها"
+    category = "آگهی ها"
     if "حواله" in title or "حواله" in variant:
-        category_text = "حواله"
+        category = "حواله"
     elif "پیش فروش" in title or "پیش فروش" in variant:
-        category_text = "پیش فروش"
+        category = "پیش فروش"
 
-    return output_root / clean_name(category_text) / brand / model / variant / "ads.json"
+    return {"brand": brand, "model": model, "variant": variant, "category": clean_name(category)}
 
 
 def pure_ad(ad: dict[str, Any]) -> dict[str, Any]:
-    """Keep ads.json equal to Bama payloads, not scraper bookkeeping."""
+    """Keep stored payloads equal to Bama's, not scraper bookkeeping."""
     return {key: value for key, value in ad.items() if key not in FORBIDDEN_AD_KEYS}
 
 
-# ---------------------------------------------------------------------------
-# code_map.db helpers
-# ---------------------------------------------------------------------------
-
-def open_db(path: Path = CODE_MAP_PATH) -> sqlite3.Connection:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path))
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA busy_timeout=5000;")
-    conn.executescript(SCHEMA)
-    conn.commit()
-    return conn
-
-
-def lookup(conn: sqlite3.Connection, code: str) -> sqlite3.Row | None:
-    return conn.execute("SELECT * FROM ad_index WHERE code = ?;", (str(code),)).fetchone()
-
-
-def upsert_map(
-    conn: sqlite3.Connection,
-    code: str,
-    file_path: str,
-    fetch_time_ts: float | None,
+def ad_columns(
+    ad: dict[str, Any],
+    brand_aliases: dict[str, str],
     publish_date_jalali: str | None,
-) -> bool:
-    """Insert/update routing metadata without overwriting known publish dates."""
-    row = lookup(conn, code)
-    if row is None:
-        conn.execute(
-            """
-            INSERT INTO ad_index
-                (code, file_path, first_seen_ts, last_seen_ts, publish_date_jalali, fetch_time_ts)
-            VALUES (?, ?, ?, ?, ?, ?);
-            """,
-            (str(code), file_path, fetch_time_ts, fetch_time_ts, publish_date_jalali, fetch_time_ts),
-        )
-        return publish_date_jalali is not None
-
-    filled = row["publish_date_jalali"] is None and publish_date_jalali is not None
-    conn.execute(
-        """
-        UPDATE ad_index
-           SET file_path = ?,
-               last_seen_ts = ?,
-               fetch_time_ts = ?,
-               publish_date_jalali = COALESCE(publish_date_jalali, ?)
-         WHERE code = ?;
-        """,
-        (file_path, fetch_time_ts, fetch_time_ts, publish_date_jalali, str(code)),
-    )
-    return filled
-
-
-def relocate_map(conn: sqlite3.Connection, code: str, new_path: str) -> None:
-    conn.execute("UPDATE ad_index SET file_path = ? WHERE code = ?;", (new_path, str(code)))
-
-
-def remaining_null_dates(conn: sqlite3.Connection) -> int:
-    return int(conn.execute(
-        "SELECT COUNT(*) AS c FROM ad_index WHERE publish_date_jalali IS NULL;"
-    ).fetchone()["c"])
+    fetch_time_ts: float,
+) -> dict[str, Any]:
+    """Flatten one ad payload into the ``ads`` table column set."""
+    detail = ad.get("detail") if isinstance(ad.get("detail"), dict) else {}
+    price_obj = ad.get("price") if isinstance(ad.get("price"), dict) else {}
+    dims = derive_dims(ad, brand_aliases)
+    return {
+        **dims,
+        "year": parse_year(detail.get("year")),
+        "mileage": parse_mileage(detail.get("mileage")),
+        "price": parse_price(price_obj.get("price")),
+        "price_type": price_obj.get("type"),
+        "transmission": normalize_transmission(detail.get("gear") or detail.get("transmission")),
+        "publish_date_jalali": publish_date_jalali,
+        "fetch_time_ts": fetch_time_ts,
+        "raw_payload": pure_ad(ad),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -286,6 +236,16 @@ def to_jalali_string(moment: datetime.datetime | None) -> str | None:
     return jdatetime.datetime.fromgregorian(datetime=naive).strftime("%Y/%m/%d %H:%M:%S")
 
 
+def compute_publish_date(
+    relative_time: str,
+    fetch_time_ts: float,
+    time_dict: dict[str, dict[str, int] | None],
+) -> str | None:
+    observed_at = datetime.datetime.fromtimestamp(fetch_time_ts, tz=timezone.utc)
+    moment = parse_bama_time(relative_time, observed_at, time_dict, UNKNOWN_TIMES_LOG)
+    return to_jalali_string(moment)
+
+
 # ---------------------------------------------------------------------------
 # Bama HTTP fetching
 # ---------------------------------------------------------------------------
@@ -304,11 +264,29 @@ def warmup(session: requests.Session) -> None:
 
 
 def fetch_page(session: requests.Session, page: int) -> list[dict[str, Any]]:
-    response = session.get(f"{SEARCH_URL}?pageIndex={page}", timeout=REQUEST_TIMEOUT)
-    response.raise_for_status()
-    data = response.json()
-    ads = data.get("data", {}).get("ads", [])
-    return [ad for ad in ads if isinstance(ad, dict) and ad.get("type") != "banner"]
+    """Fetch one page, retrying transient network/server errors with backoff."""
+    url = f"{SEARCH_URL}?pageIndex={page}"
+    delay = RETRY_BACKOFF
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = session.get(url, timeout=REQUEST_TIMEOUT)
+            response.raise_for_status()
+            data = response.json()
+        except requests.HTTPError as error:
+            # Fail fast on hard client errors; back off only on rate-limit/server errors.
+            if error.response is None or error.response.status_code not in RETRIABLE_STATUS:
+                raise
+            retry_error: Exception = error
+        except (requests.Timeout, requests.ConnectionError, ValueError) as error:
+            retry_error = error
+        else:
+            ads = data.get("data", {}).get("ads", [])
+            return [ad for ad in ads if isinstance(ad, dict) and ad.get("type") != "banner"]
+        if attempt + 1 >= MAX_RETRIES:
+            raise retry_error
+        time.sleep(delay)
+        delay *= 2
+    raise RuntimeError("fetch_page exhausted retries without returning")  # pragma: no cover
 
 
 def iter_ads(
@@ -316,208 +294,127 @@ def iter_ads(
     max_ads: int = MAX_ADS,
     page_pause: float = PAGE_PAUSE,
 ) -> Iterator[tuple[dict[str, Any], int]]:
-    """Yield non-banner ads page by page until the limit or feed end."""
+    """Yield non-banner ads page by page until the limit or feed end.
+
+    Codes already yielded this run are skipped, so wrapped/repeated ads on deep
+    pages aren't re-counted; when ``MAX_STALE_PAGES`` consecutive pages add no
+    new code the feed is treated as exhausted and iteration stops.
+    """
     page = 1
     yielded = 0
+    seen: set[str] = set()
+    stale_pages = 0
     while yielded < max_ads:
         ads = fetch_page(session, page)
         if not ads:
             break
+        fresh_on_page = False
         for ad in ads:
+            detail = ad.get("detail") if isinstance(ad.get("detail"), dict) else {}
+            code = detail.get("code")
+            code_s = str(code) if code else ""
+            if code_s and code_s in seen:
+                continue  # already yielded this run; the feed has wrapped
+            if code_s:
+                seen.add(code_s)
+                fresh_on_page = True
             if yielded >= max_ads:
                 break
             yield ad, page
             yielded += 1
+        if fresh_on_page:
+            stale_pages = 0
+        else:
+            stale_pages += 1
+            if stale_pages >= MAX_STALE_PAGES:
+                break
         page += 1
         time.sleep(page_pause)
 
 
 # ---------------------------------------------------------------------------
-# File buffering and self-healing relocation
+# DB writer
 # ---------------------------------------------------------------------------
 
-def relocate_code_to_intended(
-    conn: sqlite3.Connection,
-    output_root: Path,
-    code: str,
-    intended: Path,
-) -> str | None:
-    """Move a mapped code away from its old file when the payload route changes."""
-    intended_rel = intended.relative_to(output_root).as_posix()
-    row = lookup(conn, code)
-    if row is None or row["file_path"] == intended_rel:
-        return None
-
-    old_rel = row["file_path"]
-    old_abs = output_root / old_rel
-    try:
-        data = json.loads(old_abs.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        data = []
-    if not isinstance(data, list):
-        data = []
-
-    kept = [
-        item for item in data
-        if not (isinstance(item, dict) and (item.get("detail") or {}).get("code") == code)
-    ]
-    old_abs.parent.mkdir(parents=True, exist_ok=True)
-    old_abs.write_text(json.dumps(kept, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
-    relocate_map(conn, code, intended_rel)
-    return old_rel
-
-
-class AdFileManager:
-    """Batch ads by destination file and keep JSON, code_map, and history in sync."""
+class AdWriter:
+    """Buffer ads and flush them to the ``ads`` table plus append-only history."""
 
     def __init__(
         self,
-        output_root: Path,
+        conn,
+        run_id: int,
         time_dict: dict[str, dict[str, int] | None],
-        batch_size: int,
-        conn: sqlite3.Connection,
-        history_conn: sqlite3.Connection,
-        history_run_id: int,
-        brand_aliases: dict[str, str] | None = None,
+        brand_aliases: dict[str, str],
+        batch_size: int = BATCH_SIZE,
     ) -> None:
-        self.output_root = output_root
-        self.time_dict = time_dict
-        self.batch_size = batch_size
         self.conn = conn
-        self.history_conn = history_conn
-        self.history_run_id = history_run_id
-        self.brand_aliases = brand_aliases or {}
-        self.buffer: dict[Path, dict[str, tuple[dict[str, Any], float, str | None]]] = {}
-        self.buffer_count = 0
-        self.relocated_old_paths: set[str] = set()
+        self.run_id = run_id
+        self.time_dict = time_dict
+        self.brand_aliases = brand_aliases
+        self.batch_size = batch_size
+        self.buffer: dict[str, tuple[dict[str, Any], float]] = {}
         self.total_new = 0
         self.total_updated = 0
-        self.total_relocated = 0
-        self.total_publish_dates_filled = 0
         self.total_versions_created = 0
         self.total_events_created = 0
-
-    def compute_publish_date(self, relative_time: str, fetch_time_ts: float) -> str | None:
-        observed_at = datetime.datetime.fromtimestamp(fetch_time_ts, tz=timezone.utc)
-        moment = parse_bama_time(relative_time, observed_at, self.time_dict, UNKNOWN_TIMES_LOG)
-        return to_jalali_string(moment)
-
-    def _log_route_conflict(self, code: str, intended: Path, old: Path) -> None:
-        try:
-            ROUTE_CONFLICTS_LOG.parent.mkdir(parents=True, exist_ok=True)
-            with ROUTE_CONFLICTS_LOG.open("a", encoding="utf-8") as handle:
-                handle.write(f"code {code} relocated {old} -> {intended}\n")
-        except OSError:
-            pass
 
     def buffer_ad(self, ad: dict[str, Any]) -> None:
         detail = ad.get("detail") if isinstance(ad.get("detail"), dict) else {}
         code = detail.get("code")
         if not code:
             return
-
-        fetch_time_ts = time.time()
-        publish_date_jalali = self.compute_publish_date(str(detail.get("time") or ""), fetch_time_ts)
-        intended = intended_path_for_ad(ad, self.output_root, self.brand_aliases)
-        # The current Bama payload decides the path. Old map rows are repaired here.
-        old_rel = relocate_code_to_intended(self.conn, self.output_root, str(code), intended)
-        if old_rel is not None:
-            self._log_route_conflict(str(code), intended, self.output_root / old_rel)
-            self.relocated_old_paths.add(old_rel)
-            self.total_relocated += 1
-
-        self.buffer.setdefault(intended, {})[str(code)] = (pure_ad(ad), fetch_time_ts, publish_date_jalali)
-        self.buffer_count += 1
-        if self.buffer_count >= self.batch_size:
+        self.buffer[str(code)] = (ad, time.time())
+        if len(self.buffer) >= self.batch_size:
             self.flush()
 
-    def sweep_emptied_paths(self) -> tuple[int, int]:
-        files_deleted = 0
-        dirs_pruned = 0
-        for rel in sorted(self.relocated_old_paths, key=lambda p: p.count("/"), reverse=True):
-            file_path = self.output_root / rel
-            if not file_path.exists():
-                continue
-            try:
-                data = json.loads(file_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            if isinstance(data, list) and not data:
-                file_path.unlink()
-                files_deleted += 1
-                parent = file_path.parent
-                while parent != self.output_root:
-                    try:
-                        parent.rmdir()
-                    except OSError:
-                        break
-                    dirs_pruned += 1
-                    parent = parent.parent
-        self.relocated_old_paths.clear()
-        return files_deleted, dirs_pruned
-
     def flush(self) -> None:
-        """Write each touched ads.json once, then commit both SQLite databases."""
         if not self.buffer:
             return
-
         batch_new = 0
-        batch_updated = 0
-        batch_filled = 0
-
-        for file_path, ads_to_save in self.buffer.items():
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-            existing: dict[str, dict[str, Any]] = {}
-            if file_path.exists():
-                try:
-                    data = json.loads(file_path.read_text(encoding="utf-8"))
-                except (OSError, json.JSONDecodeError):
-                    data = []
-                if isinstance(data, list):
-                    existing = {
-                        str((item.get("detail") or {}).get("code")): item
-                        for item in data
-                        if isinstance(item, dict) and (item.get("detail") or {}).get("code")
-                    }
-
-            rel_path = file_path.relative_to(self.output_root).as_posix()
-            for code, (ad, fetch_time_ts, publish_date_jalali) in ads_to_save.items():
-                if code in existing:
-                    batch_updated += 1
-                else:
-                    batch_new += 1
-                existing[code] = ad
-                if upsert_map(self.conn, code, rel_path, fetch_time_ts, publish_date_jalali):
-                    batch_filled += 1
-                # One observation per run/code; unchanged semantic payloads reuse versions.
-                version_created, event_created = record_observation(
-                    self.history_conn,
-                    self.history_run_id,
-                    code,
-                    ad,
-                    fetch_time_ts,
-                    rel_path,
-                    "live_fetch",
-                )
-                self.total_versions_created += int(version_created)
-                self.total_events_created += int(event_created)
-
-            file_path.write_text(
-                json.dumps(list(existing.values()), ensure_ascii=False, indent=2, sort_keys=True),
-                encoding="utf-8",
+        for code, (ad, fetch_time_ts) in self.buffer.items():
+            detail = ad.get("detail") if isinstance(ad.get("detail"), dict) else {}
+            publish = compute_publish_date(str(detail.get("time") or ""), fetch_time_ts, self.time_dict)
+            fields = ad_columns(ad, self.brand_aliases, publish, fetch_time_ts)
+            inserted = upsert_ad(self.conn, code, fields, fetch_time_ts)
+            batch_new += int(inserted)
+            # Canonical path = the dim grouping, so route_changed events still fire on regroup.
+            canonical = "/".join((fields["category"], fields["brand"], fields["model"], fields["variant"]))
+            version_created, event_created = record_observation(
+                self.conn, self.run_id, code, fields["raw_payload"], fetch_time_ts, canonical, "live_fetch",
             )
-
+            self.total_versions_created += int(version_created)
+            self.total_events_created += int(event_created)
         self.conn.commit()
-        self.history_conn.commit()
         self.total_new += batch_new
-        self.total_updated += batch_updated
-        self.total_publish_dates_filled += batch_filled
-        console.print(
-            f"[green]Batch saved[/] new={batch_new:,} updated={batch_updated:,} "
-            f"publish_dates_filled={batch_filled:,}"
-        )
+        self.total_updated += len(self.buffer) - batch_new
+        console.print(f"[green]Batch saved[/] new={batch_new:,} updated={len(self.buffer) - batch_new:,}")
         self.buffer.clear()
-        self.buffer_count = 0
+
+
+# ---------------------------------------------------------------------------
+# Auto-pipeline (runs after every complete fetch)
+# ---------------------------------------------------------------------------
+
+def run_pipeline(conn, run_started_ts: float) -> dict[str, int]:
+    """Mark vanished ads inactive, run integrity checks, refresh analysis stats.
+
+    Each step is isolated so a failure logs but does not lose the fetch snapshot.
+    """
+    import audit
+    import analyze
+
+    summary: dict[str, int] = {}
+    summary["marked_inactive"] = mark_inactive(conn, run_started_ts)
+    conn.commit()
+    for name, fn in (("audit", lambda: audit.run_checks(conn)), ("analyze", lambda: analyze.compute_all(conn))):
+        try:
+            fn()
+            conn.commit()
+            summary[f"{name}_ran"] = 1
+        except Exception as error:  # keep the fetch even if a downstream step fails
+            console.print(f"[yellow]{name} step failed: {error}[/yellow]")
+            summary[f"{name}_ran"] = 0
+    return summary
 
 
 # ---------------------------------------------------------------------------
@@ -529,10 +426,10 @@ def fetch_ads() -> None:
     time_dict = load_time_dictionary(TIME_DICT_PATH)
     brand_aliases = load_brand_aliases()
     with project_lock(exclusive=True):
-        conn = open_db(CODE_MAP_PATH)
-        history_conn = open_history(HISTORY_DB_PATH)
-        history_run_id = start_run(history_conn, "live_fetch", MAX_ADS)
-        manager = AdFileManager(OUTPUT_ROOT, time_dict, BATCH_SIZE, conn, history_conn, history_run_id, brand_aliases)
+        conn = open_store()
+        run_started_ts = time.time()
+        run_id = start_run(conn, "live_fetch", MAX_ADS)
+        writer = AdWriter(conn, run_id, time_dict, brand_aliases)
         session = create_session()
         warmup(session)
 
@@ -540,10 +437,8 @@ def fetch_ads() -> None:
         page_count = 0
         reached_end = False
         interrupted = False
-        files_deleted = 0
-        dirs_pruned = 0
-        null_dates = 0
         error_message = None
+        pipeline_summary: dict[str, int] = {}
 
         try:
             try:
@@ -551,7 +446,7 @@ def fetch_ads() -> None:
                     task = progress.add_task("Fetching pages...", total=MAX_ADS)
                     for ad, page in iter_ads(session, MAX_ADS):
                         page_count = max(page_count, page)
-                        manager.buffer_ad(ad)
+                        writer.buffer_ad(ad)
                         total_fetched += 1
                         progress.update(task, advance=1, description=f"Fetching... {total_fetched:,}")
                     reached_end = total_fetched < MAX_ADS
@@ -559,35 +454,27 @@ def fetch_ads() -> None:
                 interrupted = True
                 console.print("\n[yellow]Interrupted; flushing buffered ads before exit...[/yellow]")
 
-            # Even interrupted runs save the final partial batch before closing.
-            manager.flush()
-            files_deleted, dirs_pruned = manager.sweep_emptied_paths()
-            null_dates = remaining_null_dates(conn)
+            writer.flush()
         except Exception as error:
             error_message = str(error)
-            finish_run(history_conn, history_run_id, "failed", total_fetched, page_count, reached_end, error_message)
-            raise
-        finally:
-            if error_message is None:
-                finish_run(
-                    history_conn,
-                    history_run_id,
-                    "interrupted" if interrupted else "completed",
-                    total_fetched,
-                    page_count,
-                    reached_end,
-                )
-            conn.commit()
-            history_conn.commit()
+            finish_run(conn, run_id, "failed", total_fetched, page_count, reached_end, error_message)
             conn.close()
-            history_conn.close()
+            raise
+
+        finish_run(conn, run_id, "interrupted" if interrupted else "completed",
+                   total_fetched, page_count, reached_end)
+        # Only a complete run knows which ads truly vanished; skip inactivation on interrupt.
+        if not interrupted:
+            pipeline_summary = run_pipeline(conn, run_started_ts)
+        totals = counts(conn)
+        conn.close()
 
     console.print(Panel.fit(
         f"{'Fetch interrupted safely' if interrupted else 'Fetch completed'}\n"
-        f"fetched={total_fetched:,} new={manager.total_new:,} updated={manager.total_updated:,}\n"
-        f"relocated={manager.total_relocated:,} publish_dates_filled={manager.total_publish_dates_filled:,}\n"
-        f"history_versions_created={manager.total_versions_created:,} history_events_created={manager.total_events_created:,}\n"
-        f"remaining_null_dates={null_dates:,} emptied_files={files_deleted:,} pruned_dirs={dirs_pruned:,}",
+        f"fetched={total_fetched:,} new={writer.total_new:,} updated={writer.total_updated:,}\n"
+        f"history_versions_created={writer.total_versions_created:,} history_events_created={writer.total_events_created:,}\n"
+        f"ads_active={totals['ads_active']:,} ads_removed={totals['ads_removed']:,}\n"
+        f"pipeline={pipeline_summary}",
         title="Summary",
     ))
 

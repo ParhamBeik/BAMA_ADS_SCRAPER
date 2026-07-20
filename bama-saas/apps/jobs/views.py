@@ -15,12 +15,20 @@ from typing import Callable
 
 from django.core.management import call_command
 from django.db import connection
-from rest_framework import status
+from rest_framework import status, serializers
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
+from drf_spectacular.utils import OpenApiResponse, extend_schema
 
 from apps.accounts.permissions import IsStaff
 from apps.history.models import FetchRun
+
+
+class JobAcceptedSerializer(serializers.Serializer):
+    """202 response body for an async admin job trigger."""
+    status = serializers.CharField()
+    command = serializers.CharField()
+    poll = serializers.CharField(required=False)
 
 
 def _running(source: str) -> bool:
@@ -63,6 +71,12 @@ def _accepted(command: str, **extra) -> Response:
     return Response(payload, status=status.HTTP_202_ACCEPTED)
 
 
+@extend_schema(
+    tags=["Admin · Jobs"],
+    request=None,
+    responses={202: JobAcceptedSerializer, 409: None},
+    description="Trigger an async live Bama fetch (operator-only).",
+)
 @api_view(["POST"])
 @permission_classes([IsStaff])
 def trigger_fetch(request):
@@ -80,6 +94,12 @@ def trigger_fetch(request):
     return _accepted("fetch_live", poll="GET /api/fetch-runs/?source=live_fetch")
 
 
+@extend_schema(
+    tags=["Admin · Jobs"],
+    request=None,
+    responses={202: JobAcceptedSerializer, 409: None},
+    description="Trigger an async bulk import of scraped JSON (operator-only).",
+)
 @api_view(["POST"])
 @permission_classes([IsStaff])
 def trigger_import(request):
@@ -98,6 +118,12 @@ def trigger_import(request):
     return _accepted("import_scraped", poll="GET /api/fetch-runs/?source=bulk_import")
 
 
+@extend_schema(
+    tags=["Admin · Jobs"],
+    request=None,
+    responses={202: JobAcceptedSerializer},
+    description="Rebuild PriceStatistics aggregates (operator-only).",
+)
 @api_view(["POST"])
 @permission_classes([IsStaff])
 def trigger_refresh(request):
@@ -108,3 +134,36 @@ def trigger_refresh(request):
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
     _spawn("refresh_analytics", **opts)
     return _accepted("refresh_analytics")
+
+
+@extend_schema(
+    tags=["Admin · Jobs"],
+    request=None,
+    responses={202: JobAcceptedSerializer},
+    description="Rebuild per-ad DealScoreCache (the best-deal board). Operator-only.",
+)
+@api_view(["POST"])
+@permission_classes([IsStaff])
+def trigger_deal_scores(request):
+    """POST /api/admin/jobs/deal-scores/ — rebuild DealScoreCache (async)."""
+    try:
+        opts = {**_opt(request.data, "min_peers", int),
+                **_opt(request.data, "model", int)}
+    except ValueError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    _spawn("compute_deal_scores", **opts)
+    return _accepted("compute_deal_scores")
+
+
+@extend_schema(
+    tags=["Admin · Jobs"],
+    request=None,
+    responses={202: JobAcceptedSerializer},
+    description="Evaluate every enabled user Alert and dispatch notifications. Operator-only.",
+)
+@api_view(["POST"])
+@permission_classes([IsStaff])
+def trigger_evaluate_alerts(request):
+    """POST /api/admin/jobs/evaluate-alerts/ — run alert evaluation now (async)."""
+    _spawn("evaluate_alerts")
+    return _accepted("evaluate_alerts")

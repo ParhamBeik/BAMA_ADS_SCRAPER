@@ -27,6 +27,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "rest_framework_simplejwt",
     "rest_framework_simplejwt.token_blacklist",
+    "drf_spectacular",
     "django_filters",
     "corsheaders",
     "apps.accounts",
@@ -113,6 +114,21 @@ REST_FRAMEWORK = {
     ),
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 50,
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+}
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "Bama SaaS API",
+    "DESCRIPTION": "Market-intelligence REST API for the Iranian used-car market "
+                   "(catalog, market analytics, price history, alerts, watchlists).",
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+    "COMPONENT_SPLIT_REQUEST": True,
+    # JWT bearer auth in the docs UI.
+    "SECURITY": [{"jwtAuth": []}],
+    "COMPONENT_SECURITY_SCHEMES": {
+        "jwtAuth": {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"},
+    },
 }
 
 SIMPLE_JWT = {
@@ -140,6 +156,11 @@ BAMA_COOKIE = os.environ.get("BAMA_COOKIE", "")
 ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "")
 STALE_AFTER_DAYS = int(os.environ.get("STALE_AFTER_DAYS", "14"))
 
+# Per-tick fetch size for the background worker. Intentionally small: the worker
+# runs every ~5 minutes and only needs the newest pages (where new/changed ads
+# land). A full sweep uses `python manage.py fetch_live` (BAMA_MAX_ADS) instead.
+BAMA_WORKER_FETCH_ADS = int(os.environ.get("BAMA_WORKER_FETCH_ADS", "500"))
+
 # Default to the sibling scraper data dir; in Docker this is mounted read-only at /data.
 BAMA_SCRAPED_DATA_ROOT = os.environ.get(
     "BAMA_SCRAPED_DATA_ROOT", str(BASE_DIR.parent / "bama-scraper" / "data")
@@ -147,3 +168,47 @@ BAMA_SCRAPED_DATA_ROOT = os.environ.get(
 BAMA_HISTORY_DB_PATH = os.environ.get(
     "BAMA_HISTORY_DB_PATH", str(BASE_DIR.parent / "bama-scraper" / "data" / "history.db")
 )
+
+# ---------------------------------------------------------------------------
+# Notification delivery (Phase 5). Email defaults to the console backend so dev
+# never opens a real SMTP socket; set EMAIL_BACKEND/EMAIL_HOST in prod. Telegram
+# is purely opt-in via TELEGRAM_BOT_TOKEN (empty = Telegram silently skipped).
+# ---------------------------------------------------------------------------
+EMAIL_BACKEND = os.environ.get(
+    "EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend"
+)
+EMAIL_HOST = os.environ.get("EMAIL_HOST", "")
+EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
+EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "true").lower() == "true"
+DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "noreply@bama.local")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+
+# ---------------------------------------------------------------------------
+# Logging — console handler for the bama.* loggers used by the worker pipeline.
+# The cron runner redirects stdout/stderr to logs/cron.log, so a console handler
+# is environment-agnostic (no FileHandler dir-creation pitfalls across host/Docker).
+# ---------------------------------------------------------------------------
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "worker": {
+            "format": "%(asctime)s %(levelname)s %(name)s: %(message)s",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "worker",
+        },
+    },
+    "loggers": {
+        "bama": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+    },
+}
