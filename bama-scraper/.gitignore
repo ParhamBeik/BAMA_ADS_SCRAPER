@@ -17,3 +17,5 @@ data/.writer.lock
 
 # Local knowledge graph
 graphify-out/
+*.egg-info/
+
