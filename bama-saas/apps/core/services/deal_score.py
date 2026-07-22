@@ -96,3 +96,17 @@ def compute_deal_scores(*, min_peers: int = 3, model_id: int | None = None) -> d
         DealScoreCache.objects.bulk_create(objs, batch_size=500)
 
     return {"scored": len(objs), "min_peers": min_peers, "model_id": model_id}
+
+
+def refresh_cohort_deal_scores(model_ids: set[int] | list[int], *, min_peers: int = 3) -> dict:
+    """Refresh deal scores incrementally for a set of model IDs."""
+    total_scored = 0
+    refreshed_models = 0
+    for mid in set(model_ids):
+        if mid is None:
+            continue
+        res = compute_deal_scores(min_peers=min_peers, model_id=mid)
+        total_scored += res.get("scored", 0)
+        refreshed_models += 1
+    return {"refreshed_models": refreshed_models, "total_scored": total_scored}
+

@@ -138,6 +138,7 @@ def run_pipeline(
     *,
     fetch: bool = True,
     fetch_max_ads: Optional[int] = None,
+    mode: str = "delta",
     steps: Optional[set[str]] = None,
     fetch_attempts: int = 3,
     fetch_retry_delay: float = 5.0,
@@ -152,6 +153,8 @@ def run_pipeline(
     fetch_max_ads : int | None
         Per-tick fetch size. None defers to the ``fetch_live`` command default
         (which reads BAMA_WORKER_FETCH_ADS / BAMA_MAX_ADS from settings).
+    mode : str
+        Ingestion mode: "delta" (fast-delta with early-stopping) or "full" (full scan).
     steps : set[str] | None
         Explicit subset of STEP_ORDER to run. None means every enabled step.
     fetch_attempts / fetch_retry_delay :
@@ -162,13 +165,13 @@ def run_pipeline(
         enabled.discard("fetch")
 
     report = PipelineReport(started_at=timezone.now())
-    logger.info("pipeline start steps=[%s]", ",".join(s for s in STEP_ORDER if s in enabled))
+    logger.info("pipeline start mode=%s steps=[%s]", mode, ",".join(s for s in STEP_ORDER if s in enabled))
 
     for name in STEP_ORDER:
         if name not in enabled:
             continue
         if name == "fetch":
-            opts = {}
+            opts = {"mode": mode}
             if fetch_max_ads is not None:
                 opts["max_ads"] = fetch_max_ads
             report.steps.append(_exec_cmd_step(
@@ -182,3 +185,4 @@ def run_pipeline(
     report.finished_at = timezone.now()
     logger.info("%s", report.summary())
     return report
+

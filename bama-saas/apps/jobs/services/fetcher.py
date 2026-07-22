@@ -103,16 +103,17 @@ def iter_ads(
 
 def fetch_live(
     *,
+    mode: str = "delta",
     max_ads: int | None = None,
     page_pause: float | None = None,
     request_timeout: int | None = None,
+    max_stale_pages: int | None = None,
 ) -> FetchRun:
     """Stream live Bama ads into Postgres via the shared ingest pipeline.
 
-    Returns the persisted :class:`FetchRun`. ``KeyboardInterrupt`` flushes the
-    run as ``SUCCEEDED`` (the partial state is already in Postgres); any other
-    exception marks it ``FAILED`` with ``run.error``. ``finished_at`` is always
-    set and the row saved in ``finally``.
+    Supports ``mode="delta"`` (fast-delta with early stopping on stale pages) and
+    ``mode="full"`` (full inventory scan). Returns the persisted :class:`FetchRun`
+    with ``run.affected_model_ids`` populated for downstream score refreshes.
     """
     max_ads = int(max_ads if max_ads is not None else settings.BAMA_MAX_ADS)
     page_pause = float(
@@ -124,6 +125,24 @@ def fetch_live(
         else settings.BAMA_REQUEST_TIMEOUT
     )
 
+    # Watermark gap detection: scale stale page threshold if downtime > 15m
+    last_successful = (
+        FetchRun.objects.filter(
+            source=FetchRun.Source.LIVE_FETCH, status=FetchRun.Status.SUCCEEDED
+        )
+        .order_by("-finished_at")
+        .first()
+    )
+    effective_max_stale = max_stale_pages
+    if effective_max_stale is None:
+        effective_max_stale = 2 if mode == "delta" else 9999
+
+    if last_successful and last_successful.finished_at and mode == "delta":
+        gap_minutes = (djtz.now() - last_successful.finished_at).total_seconds() / 60.0
+        if gap_minutes > 15.0:
+            extra_pages = int(gap_minutes // 15.0)
+            effective_max_stale = min(20, effective_max_stale + extra_pages)
+
     run = FetchRun.objects.create(
         source=FetchRun.Source.LIVE_FETCH,
         status=FetchRun.Status.RUNNING,
@@ -133,6 +152,7 @@ def fetch_live(
     )
 
     reset_cache()
+    affected_model_ids: set[int] = set()
 
     def record_unknown(phrase: str) -> None:
         obj, created = UnknownTimePhrase.objects.get_or_create(phrase=phrase)
@@ -143,16 +163,31 @@ def fetch_live(
         obj.save(update_fields=["last_fetch_run"])
 
     interrupted = False
+    stale_pages_count = 0
+    current_page_number = 1
+    page_new_count = 0
+
     try:
         try:
             session = create_session(settings.BAMA_COOKIE or None)
             warmup(session, request_timeout)
-            for ad, _page in iter_ads(
+            for ad, page in iter_ads(
                 session,
                 max_ads=max_ads,
                 page_pause=page_pause,
                 request_timeout=request_timeout,
             ):
+                if page != current_page_number:
+                    if mode == "delta":
+                        if page_new_count == 0:
+                            stale_pages_count += 1
+                            if stale_pages_count >= effective_max_stale:
+                                break
+                        else:
+                            stale_pages_count = 0
+                    current_page_number = page
+                    page_new_count = 0
+
                 observed_at = datetime.now(timezone.utc)
                 extracted = extract_ad(ad, observed_at)
                 if not extracted:
@@ -163,7 +198,7 @@ def fetch_live(
                     observed_at,
                     on_unknown=record_unknown,
                 )
-                _, created, price_changed = ingest_ad(
+                ad_obj, created, price_changed = ingest_ad(
                     extracted,
                     run=run,
                     observed_at=observed_at,
@@ -173,12 +208,21 @@ def fetch_live(
                 run.fetched_count += 1
                 if created:
                     run.created_count += 1
+                    page_new_count += 1
                 else:
                     run.updated_count += 1
+                    if price_changed:
+                        page_new_count += 1
+
                 if price_changed:
                     run.price_change_count += 1
+
+                if ad_obj and ad_obj.model_id:
+                    affected_model_ids.add(ad_obj.model_id)
+
                 if run.fetched_count and run.fetched_count % SAVE_EVERY == 0:
                     run.save()
+
         except KeyboardInterrupt:
             # Partial state is already in Postgres; flush as SUCCEEDED.
             interrupted = True
@@ -198,4 +242,6 @@ def fetch_live(
         run.save()
         reset_cache()
 
+    run.affected_model_ids = affected_model_ids  # type: ignore[attr-defined]
     return run
+

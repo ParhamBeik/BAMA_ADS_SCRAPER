@@ -28,6 +28,12 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument(
+            "--mode",
+            choices=["delta", "full"],
+            default="delta",
+            help="Ingestion mode for fetch step: 'delta' (fast-delta with early stopping) or 'full' (full scan)",
+        )
+        parser.add_argument(
             "--skip-fetch",
             action="store_true",
             help="Skip the live fetch — run only local maintenance steps (no network).",
@@ -70,10 +76,12 @@ class Command(BaseCommand):
         report = run_pipeline(
             fetch=not options["skip_fetch"],
             fetch_max_ads=options["max_ads"],
+            mode=options["mode"],
             steps=steps,
             fetch_attempts=options["fetch_attempts"],
             fetch_retry_delay=options["fetch_retry_delay"],
         )
+
 
         for s in report.steps:
             line = self.style.SUCCESS(f"  {s.name}: ok ({s.duration_s:.1f}s)") if s.ok \
