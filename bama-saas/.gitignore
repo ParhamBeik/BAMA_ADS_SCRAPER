@@ -21,6 +21,6 @@ data/
 postgres_data/
 
 # Frontend build artefacts
-web/node_modules/
-web/dist/
-web/openapi.json
+ui/web/node_modules/
+ui/web/dist/
+ui/web/openapi.json

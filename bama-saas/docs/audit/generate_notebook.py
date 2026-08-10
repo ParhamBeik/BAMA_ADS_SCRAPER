@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Generate the Bama SaaS Readiness Audit Notebook.
 
-Run: python3 bama-saas/audit/generate_notebook.py
-Produces: bama-saas/audit/bama_saas_readiness_audit.ipynb
+Run: python3 bama-saas/docs/audit/generate_notebook.py
+Produces: bama-saas/docs/audit/bama_saas_readiness_audit.ipynb
 """
 import json
 import sys

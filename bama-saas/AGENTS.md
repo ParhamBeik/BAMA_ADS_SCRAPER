@@ -1,6 +1,6 @@
 # Bama SaaS Agent Notes
 
-- Backend-first. `frontend/` is a working no-build SPA (vanilla ES modules, hash
+- Backend-first. `ui/legacy/` is a working no-build SPA (vanilla ES modules, hash
   router, vendored Chart.js) — not a placeholder.
 - The SaaS is a Django 5.2 / DRF project. Schema lives in Django models and is
   migrated via Django migrations only — there is no Alembic, no SQLAlchemy, no

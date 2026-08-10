@@ -26,8 +26,10 @@ bama-saas/
 │   │                       models/, serializers/, views/ split by those themes
 │   ├── jobs/               management commands + ingestion services (no models)
 │   └── parsing/            zero-Django pure-Python Bama payload rules (ported)
-├── frontend/               no-build Persian SPA (vanilla ES modules)
-├── web/                    React + Vite + TypeScript workspaces (see "Frontend")
+├── ui/
+│   ├── legacy/             no-build Persian SPA (vanilla ES modules)
+│   └── web/                React + Vite + TypeScript workspaces (see "Frontend")
+├── docs/                   implementation status and audit artifacts
 ├── deploy/worker/          cron installer + runner scripts (pipeline, sweep, alerts, digest)
 ├── tests/                  pytest-django: parsing, verification, analytics, crawler, pipeline
 ├── manage.py
@@ -363,9 +365,9 @@ WHERE observed_at > now() - interval '1 day' GROUP BY rule ORDER BY 2 DESC;
 
 Two live side by side until parity:
 
-- `frontend/` — the working no-build Persian SPA (vanilla ES modules, hash
+- `ui/legacy/` — the working no-build Persian SPA (vanilla ES modules, hash
   router, vendored Chart.js).
-- `web/` — **React + Vite + TypeScript**, five workspaces: Market Overview
+- `ui/web/` — **React + Vite + TypeScript**, five workspaces: Market Overview
   (public), Buyer Explorer, Research (subscription), My Market, Operations
   (staff). `npm run dev` proxies `/api` to Django so the browser sees one origin
   and dev has no CORS/cookie-domain difference from production.
@@ -387,7 +389,7 @@ Three decisions there are worth knowing before changing anything:
   and *unavailable* — the last being the backend refusing to compute from too
   little data. That is a real answer, not an error, and never an empty chart.
 
-See `web/README.md` for the commands.
+See `ui/web/README.md` for the commands.
 
 ## Tests
 
