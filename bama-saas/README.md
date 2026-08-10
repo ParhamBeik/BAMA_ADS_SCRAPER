@@ -84,6 +84,24 @@ Two things that will bite you without a `.env`:
 The compose stack has its own `postgres_data` volume — it is a **separate
 database** from any native PostgreSQL you run locally.
 
+### Production VPS
+
+`docker-compose.prod.yml` runs an internal-only PostgreSQL database, Gunicorn,
+the in-container scheduler, and the built React frontend behind nginx. Only the
+frontend joins the shared `vps-edge` network; the database and backend remain on
+this project's private network.
+
+```bash
+cp .env.production.example .env.production
+chmod 600 .env.production
+# Start the edge stack from portfolio-saas/deploy/edge first.
+BACKUP_PASSPHRASE_FILE=/root/secrets/bama-backup-passphrase deploy/vps/deploy.sh
+```
+
+The passphrase file must be outside the repository with mode `400` or `600`.
+The first deployment skips the pre-deploy backup because no database exists yet;
+all later deployments refuse to continue unless the encrypted backup succeeds.
+
 ## Management commands
 
 All commands run via `python manage.py <command>`.

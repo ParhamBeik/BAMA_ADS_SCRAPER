@@ -1,0 +1,9 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Known documentation placeholder"
+condition = "AND"
+regexTarget = "line"
+regexes = ['''choose-a-secret''']
+paths = ['''bama-saas/README\.md''']

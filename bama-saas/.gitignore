@@ -13,6 +13,9 @@ __pycache__/
 logs/
 *.log
 .env
+.env.production
+!.env.production.example
+backups/
 
 # Local seed data (SQLite snapshot; large, regenerable)
 data/

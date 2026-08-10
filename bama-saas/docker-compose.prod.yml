@@ -1,0 +1,130 @@
+x-backend-env: &backend-env
+  DJANGO_SETTINGS_MODULE: config.settings.prod
+  SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY}
+  ALLOWED_HOSTS: ${ALLOWED_HOSTS:?set ALLOWED_HOSTS}
+  CORS_ORIGINS: ${CORS_ORIGINS:?set CORS_ORIGINS}
+  ADMIN_API_KEY: ${ADMIN_API_KEY:?set ADMIN_API_KEY}
+  DATABASE_URL: postgresql://${POSTGRES_USER:-bama}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-bama_saas}
+  BAMA_MAX_ADS: ${BAMA_MAX_ADS:-50000}
+  BAMA_PAGE_PAUSE: ${BAMA_PAGE_PAUSE:-0.8}
+  BAMA_REQUEST_TIMEOUT: ${BAMA_REQUEST_TIMEOUT:-20}
+  BAMA_COOKIE: ${BAMA_COOKIE:-}
+  BAMA_WORKER_FETCH_ADS: ${BAMA_WORKER_FETCH_ADS:-500}
+  EMAIL_BACKEND: ${EMAIL_BACKEND:-django.core.mail.backends.console.EmailBackend}
+  EMAIL_HOST: ${EMAIL_HOST:-}
+  EMAIL_PORT: ${EMAIL_PORT:-587}
+  EMAIL_HOST_USER: ${EMAIL_HOST_USER:-}
+  EMAIL_HOST_PASSWORD: ${EMAIL_HOST_PASSWORD:-}
+  EMAIL_USE_TLS: ${EMAIL_USE_TLS:-true}
+  DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-noreply@localhost}
+  TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-bama_saas}
+      POSTGRES_USER: ${POSTGRES_USER:-bama}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bama} -d ${POSTGRES_DB:-bama_saas}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 2g
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    restart: "no"
+    logging: *logging
+    depends_on:
+      db:
+        condition: service_healthy
+    environment: *backend-env
+    volumes:
+      - staticfiles:/app/staticfiles
+    command: sh -c "python manage.py migrate --noinput && python manage.py collectstatic --noinput"
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    restart: unless-stopped
+    logging: *logging
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment: *backend-env
+    expose: ["8000"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -H 'Host: ${BAMA_DOMAIN:?set BAMA_DOMAIN}' -H 'X-Forwarded-Proto: https' http://localhost:8000/api/db/health/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 1536m
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    restart: unless-stopped
+    logging: *logging
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment: *backend-env
+    command: sh deploy/worker/run_worker.sh
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2g
+
+  frontend:
+    build:
+      context: ./ui/web
+      dockerfile: Dockerfile.prod
+    restart: unless-stopped
+    logging: *logging
+    depends_on:
+      backend:
+        condition: service_healthy
+    expose: ["80"]
+    volumes:
+      - staticfiles:/static:ro
+    networks:
+      default:
+      edge:
+        aliases: [bama-frontend]
+
+volumes:
+  postgres_data:
+  staticfiles:
+
+networks:
+  edge:
+    external: true
+    name: vps-edge

@@ -23,8 +23,8 @@ def db_health(_request):
         with connection.cursor() as cursor:
             cursor.execute("SELECT 1")
         return JsonResponse({"status": "ok"})
-    except Exception as exc:
-        return JsonResponse({"status": "error", "detail": str(exc)}, status=500)
+    except Exception:
+        return JsonResponse({"status": "error"}, status=500)
 
 
 urlpatterns = [

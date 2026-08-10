@@ -13,3 +13,5 @@ staticfiles
 .pytest_cache
 graphify-out
 data
+ui
+tests
