@@ -1,74 +1,29 @@
-"""Analytics models: precomputed price statistics + a generic result cache."""
+"""Analytics models: daily cohort snapshots, the market index, deal scores, and
+the whole-market rollup.
 
-import uuid
+``PriceStatistics`` used to live here and has been removed. It was rebuilt on a
+schedule and read by nothing — no view, no serializer, no service — so it was
+pure write cost plus a standing invitation to build on numbers nobody validated.
+"""
 
 from django.db import models
 
 
-class PriceStatistics(models.Model):
-    """Aggregated price stats per market slice (refreshed by a command)."""
-
-    brand = models.ForeignKey(
-        "core.Brand", on_delete=models.SET_NULL, related_name="stats",
-        null=True, blank=True,
-    )
-    model = models.ForeignKey(
-        "core.Model", on_delete=models.SET_NULL, related_name="stats",
-        null=True, blank=True,
-    )
-    variant = models.ForeignKey(
-        "core.Variant", on_delete=models.SET_NULL, related_name="stats",
-        null=True, blank=True,
-    )
-    year = models.IntegerField(null=True, blank=True)
-    time_window = models.CharField(max_length=16, default="all")  # all / 30d / 90d / 365d
-
-    mean = models.FloatField(null=True, blank=True)
-    median = models.FloatField(null=True, blank=True)
-    std_dev = models.FloatField(null=True, blank=True)
-    min_price = models.BigIntegerField(null=True, blank=True)
-    max_price = models.BigIntegerField(null=True, blank=True)
-    count = models.IntegerField(default=0)
-
-    calculated_at = models.DateTimeField(null=True, blank=True)
-    refreshed_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        db_table = "analytics_pricestatistics"
-        ordering = ("brand", "model", "variant", "year")
-        constraints = [
-            models.UniqueConstraint(
-                fields=("brand", "model", "variant", "year", "time_window"),
-                name="uq_stats_market_window",
-            ),
-        ]
-
-    def __str__(self) -> str:
-        return f"{self.brand_id}/{self.model_id}/{self.year}/{self.time_window}"
-
-
-class AnalyticsCache(models.Model):
-    """Generic keyed cache for derived series (e.g. Bollinger bands)."""
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    metric_key = models.CharField(max_length=255, unique=True)
-    payload = models.JSONField()
-    expires_at = models.DateTimeField(null=True, blank=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        db_table = "analytics_cache"
-
-    def __str__(self) -> str:
-        return self.metric_key
-
-
 class DailyInventorySnapshot(models.Model):
-    """One row per (model, variant, year, date) — the inventory-trend backbone.
+    """One row per (model, variant, year_jalali, date) — the cohort backbone.
 
     Refreshed daily (idempotently) by the worker's ``daily_snapshot`` command
-    from publish-complete, priced, ACTIVE ads. Powers inventory-count and
-    median-price-over-time charts and growth/decline deltas vs the prior day.
+    from publish-complete, priced, ACTIVE, ``verified()`` ads. Powers
+    inventory-count and median-price-over-time charts, growth/decline deltas vs
+    the prior day, and — the reason the cohort key matters — the matched-cohort
+    market index in ``apps/core/services/index.py``.
+
+    The cohort key is ``year_jalali``, never the raw ``Ad.year``. Bama publishes
+    model years in either calendar depending on brand, so a ``year``-keyed
+    snapshot split each real cohort into two half-populated rows with two wrong
+    medians, and the index could not match a cohort across consecutive days at
+    all. The column was renamed rather than merely repurposed so the two
+    meanings can never be silently mixed in one series.
     """
 
     model = models.ForeignKey(
@@ -79,7 +34,7 @@ class DailyInventorySnapshot(models.Model):
         "core.Variant", on_delete=models.SET_NULL, related_name="daily_snapshots",
         null=True, blank=True,
     )
-    year = models.IntegerField(null=True, blank=True)
+    year_jalali = models.IntegerField(null=True, blank=True)
     date = models.DateField(db_index=True)
 
     ad_count = models.IntegerField(default=0)
@@ -96,16 +51,21 @@ class DailyInventorySnapshot(models.Model):
         ordering = ("-date", "model")
         constraints = [
             models.UniqueConstraint(
-                fields=("model", "variant", "year", "date"),
+                fields=("model", "variant", "year_jalali", "date"),
                 name="uq_snapshot_market_date",
             ),
         ]
         indexes = [
             models.Index(fields=("model", "date"), name="snap_model_date_idx"),
+            # The index walks day-by-day over one cohort: (cohort..., date).
+            models.Index(
+                fields=("model", "variant", "year_jalali", "date"),
+                name="snap_cohort_date_idx",
+            ),
         ]
 
     def __str__(self) -> str:
-        return f"{self.model_id}/{self.year}/{self.date} ({self.ad_count})"
+        return f"{self.model_id}/{self.year_jalali}/{self.date} ({self.ad_count})"
 
 
 class DealScoreCache(models.Model):
@@ -132,6 +92,61 @@ class DealScoreCache(models.Model):
 
     def __str__(self) -> str:
         return f"{self.ad_id} score={self.score}"
+
+
+class MarketIndex(models.Model):
+    """Chained, composition-controlled price index — one row per (scope, date).
+
+    The raw market median answers "what does a car cost today", which is not the
+    same question as "did prices move". If cheap models flood the feed the median
+    falls while no individual car changed price; that is a *mix* change, and the
+    live data shows exactly this — inventory grew 21.7k → 33.7k over eight days
+    while the median fell 4.4%, with no way to tell how much of the fall was real.
+
+    This index removes the mix effect by never comparing different cars. Each day
+    it measures the price change *within* each (model, variant, year_jalali)
+    cohort, then averages those changes weighted by cohort size and chains the
+    result onto the previous day. A cohort that appears or disappears changes the
+    weights but contributes no return, so composition cannot move the index on
+    its own.
+
+    ``index_value`` is 100 at the first date with data. ``return_pct`` is that
+    day's aggregate move; ``cohort_count`` / ``ad_count`` are the sample behind
+    it, so a reader can tell a genuine 2% move from one computed off three cars.
+    """
+
+    class Scope(models.TextChoices):
+        MARKET = "market", "Whole market"
+        BRAND = "brand", "Per brand"
+        MODEL = "model", "Per model"
+
+    scope = models.CharField(max_length=16, choices=Scope.choices)
+    # Null for the market-wide series; Brand.slug or Model.pk as text otherwise,
+    # so one table serves all three levels without three nullable FKs.
+    scope_id = models.CharField(max_length=160, null=True, blank=True)
+    date = models.DateField()
+
+    index_value = models.FloatField()
+    return_pct = models.FloatField(null=True, blank=True)
+    cohort_count = models.IntegerField(default=0)
+    ad_count = models.IntegerField(default=0)
+
+    calculated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "analytics_marketindex"
+        ordering = ("scope", "scope_id", "date")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("scope", "scope_id", "date"), name="uq_index_scope_date"
+            ),
+        ]
+        indexes = [
+            models.Index(fields=("scope", "scope_id", "date"), name="idx_scope_date"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.scope}:{self.scope_id or '*'}@{self.date} = {self.index_value:.2f}"
 
 
 class MarketSnapshot(models.Model):

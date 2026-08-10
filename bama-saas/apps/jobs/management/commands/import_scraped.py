@@ -86,13 +86,19 @@ class Command(BaseCommand):
                         if publish_at is None or not price or price <= 0:
                             run.skipped_count += 1
                             continue
-                        _, created, price_changed = ingest_ad(
+                        result = ingest_ad(
                             extracted,
                             run=run,
                             observed_at=observed_at,
                             publish_at=publish_at,
                             dealer=raw.get("dealer"),
                         )
+                        ad_obj = result.ad
+                        created, price_changed = result.created, result.price_changed
+                        # None => hard rule fired; quarantined, never persisted.
+                        if ad_obj is None:
+                            run.skipped_count += 1
+                            continue
                         run.fetched_count += 1
                         if created:
                             run.created_count += 1

@@ -6,6 +6,7 @@ from rest_framework.generics import ListAPIView
 
 from apps.core.filters import AdFilter
 from apps.core.models import Ad, Brand, Model, Variant
+from apps.core.services.quality import verified
 from apps.core.serializers import (
     AdSerializer,
     BrandSerializer,
@@ -68,7 +69,16 @@ class AdViewSet(viewsets.ReadOnlyModelViewSet):
     )
 
     def get_queryset(self):
-        qs = Ad.objects.all()
+        # verified() and not the bare table: a row that failed a hard rule is one
+        # the source itself sent broken, and it was still being listed and
+        # filtered on here while every analytical read excluded it. The catalog
+        # and the statistics have to describe the same population or a user can
+        # find an ad the market summary says does not exist.
+        #
+        # Cohort outliers are NOT excluded — that flag says "not believable as a
+        # market price", and hiding the listing would delete the suspiciously
+        # cheap car a buyer came to find. It is serialized instead.
+        qs = verified(Ad.objects)
         # Detail view should be able to fetch any ad by code; only the list
         # view applies the publish-complete restriction.
         if self.action == "list":

@@ -17,7 +17,7 @@ import hashlib
 import json
 from typing import Any
 
-from apps.parsing.constants import VOLATILE_DETAIL_KEYS
+from apps.parsing.constants import VOLATILE_PAYLOAD_PATHS
 
 
 def fingerprint(value: Any) -> str:
@@ -26,20 +26,33 @@ def fingerprint(value: Any) -> str:
     return hashlib.sha256(packed.encode()).hexdigest()
 
 
+def _drop_path(node: Any, parts: tuple[str, ...]) -> None:
+    """Remove one dotted path from a nested dict, in place. Missing is fine."""
+    for part in parts[:-1]:
+        node = node.get(part) if isinstance(node, dict) else None
+        if not isinstance(node, dict):
+            return
+    if isinstance(node, dict):
+        node.pop(parts[-1], None)
+
+
 def semantic_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """Drop fields that change every fetch but do not mean the ad content changed."""
+    """Drop fields that change every fetch but do not mean the ad content changed.
+
+    See ``VOLATILE_PAYLOAD_PATHS`` for which fields and the measured reason why.
+    """
     normalized = json.loads(json.dumps(payload, ensure_ascii=False))
-    detail = normalized.get("detail")
-    if isinstance(detail, dict):
-        for key in VOLATILE_DETAIL_KEYS:
-            detail.pop(key, None)
+    for path in VOLATILE_PAYLOAD_PATHS:
+        _drop_path(normalized, tuple(path.split(".")))
     return normalized
 
 
 def payload_hashes(payload: dict[str, Any]) -> tuple[str, str]:
     """Return ``(raw_hash, semantic_hash)`` for change detection.
 
-    ``raw_hash`` covers the whole payload; ``semantic_hash`` ignores volatile
-    ``detail.time`` / ``detail.rank`` observation-only fields.
+    ``raw_hash`` covers the whole payload byte for byte and is the permanent
+    record; ``semantic_hash`` ignores the observation-only and dealer-wide fields
+    listed in ``VOLATILE_PAYLOAD_PATHS``, and is what decides "is this a new
+    version of the ad".
     """
     return fingerprint(payload), fingerprint(semantic_payload(payload))

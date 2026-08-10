@@ -32,20 +32,20 @@ _ERROR_MAX = 500
 def send_email(user, subject: str, body: str) -> bool:
     """Send a transactional email to the user. True on success.
 
-    ``fail_silently=True`` keeps a bad address / SMTP hiccup from raising;
-    the caller records the outcome on the Notification row instead.
+    We set fail_silently=False so that SMTP errors raise exceptions and
+    can be caught and correctly marked as FAILED in the database.
     """
     if not user.email:
         return False
     try:
-        send_mail(
+        sent = send_mail(
             subject,
             body,
             settings.DEFAULT_FROM_EMAIL,
             [user.email],
-            fail_silently=True,
+            fail_silently=False,
         )
-        return True
+        return bool(sent)
     except Exception:  # pragma: no cover - defensive
         logger.exception("email send failed for user=%s", getattr(user, "pk", None))
         return False

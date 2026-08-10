@@ -28,6 +28,12 @@ class PriceObservation(models.Model):
     installments = models.IntegerField(null=True, blank=True)
     price_type = models.CharField(max_length=64, blank=True)
     fingerprint = models.CharField(max_length=64, db_index=True)
+    # Flags describing this *transition*, not the ad — see verify_temporal.py.
+    # A 10x overnight move is a unit switch, and without this it is stored as a
+    # genuine price change and (on the way back down) surfaces to users as a
+    # spectacular price drop. The row is kept either way: we know one of the two
+    # prices is wrong, not which, so discarding it would lose real history.
+    quality_flags = models.JSONField(default=list, blank=True)
 
     class Meta:
         db_table = "market_priceobservation"

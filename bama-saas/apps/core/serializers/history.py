@@ -38,10 +38,14 @@ class AdVersionSerializer(serializers.ModelSerializer):
             "ad_code",
             "semantic_hash",
             "raw_hash",
-            "payload",
             "origin",
             "first_observed_at",
         )
+        # ``payload`` is deliberately absent: it is the whole scraped record for
+        # that version, so exposing it here reopened exactly the hole closed on
+        # AdSerializer — the version timeline is public and would have served the
+        # full payload once per version. Staff read it via the provenance
+        # endpoint; the change *events* already describe what actually differed.
 
 
 class AdObservationSerializer(serializers.ModelSerializer):

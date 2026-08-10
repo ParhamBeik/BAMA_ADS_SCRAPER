@@ -18,8 +18,8 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
 
-from apps.core.models import MarketSnapshot
-from apps.core.models import Ad
+from apps.core.models import Ad, DailyInventorySnapshot, MarketSnapshot
+from apps.core.services.quality import verified
 
 
 class Command(BaseCommand):
@@ -42,33 +42,35 @@ class Command(BaseCommand):
         else:
             date = timezone.now().date()
 
-        active = list(
-            Ad.objects.filter(
-                status=Ad.Status.ACTIVE,
-                current_price__gt=0,
-                publish_at__isnull=False,
-            ).values("current_price", "first_seen_at", "brand_id", "brand__slug")
-        )
+        today = timezone.now().date()
+        if date > today:
+            raise CommandError("--date cannot be in the future")
 
-        prices = [a["current_price"] for a in active]
-        new_count = sum(
-            1 for a in active
-            if a["first_seen_at"] and a["first_seen_at"].date() == date
-        )
-        brands: dict = defaultdict(int)
-        for a in active:
-            slug = a["brand__slug"]
-            if slug:
-                brands[slug] += 1
+        if date == today:
+            active_count, prices, brands = self._from_live_ads()
+            new_count = Ad.objects.filter(first_seen_at__date=date).count()
+        else:
+            # `Ad` is a *current*-snapshot table: its status column says what is
+            # live now, not what was live on a past date. Reading it while
+            # backfilling stamped today's active_count onto every historical row.
+            # DailyInventorySnapshot is per-date by construction (and
+            # backfill_snapshots reconstructs it from sightings), so it is the
+            # only honest source for a day that has already passed.
+            active_count, prices, brands = self._from_snapshots(date)
+            if active_count is None:
+                raise CommandError(
+                    f"No DailyInventorySnapshot rows for {date}; run "
+                    f"`backfill_snapshots` first. Refusing to write today's "
+                    f"numbers under a past date."
+                )
+            new_count = 0  # not reconstructable per past day; see backfill_snapshots
 
-        removed_count = Ad.objects.filter(
-            removed_at__date=date
-        ).count()
+        removed_count = Ad.objects.filter(removed_at__date=date).count()
 
         snapshot, _ = MarketSnapshot.objects.update_or_create(
             date=date,
             defaults={
-                "active_count": len(active),
+                "active_count": active_count,
                 "new_count": new_count,
                 "removed_count": removed_count,
                 "median_price": int(statistics.median(prices)) if prices else None,
@@ -80,5 +82,50 @@ class Command(BaseCommand):
         )
         self.stdout.write(self.style.SUCCESS(
             f"MarketSnapshot for {date}: {snapshot.active_count} active, "
-            f"{snapshot.new_count} new, {snapshot.removed_count} removed."
+            f"{snapshot.new_count} new, {snapshot.removed_count} removed "
+            f"({'live' if date == today else 'reconstructed'})."
         ))
+
+    @staticmethod
+    def _from_live_ads():
+        """Today: read the current Ad table directly."""
+        rows = list(
+            verified(Ad.objects)
+            .filter(
+                status=Ad.Status.ACTIVE,
+                current_price__gt=0,
+                publish_at__isnull=False,
+            ).values("current_price", "brand__slug")
+        )
+        brands: dict = defaultdict(int)
+        for r in rows:
+            if r["brand__slug"]:
+                brands[r["brand__slug"]] += 1
+        return len(rows), [r["current_price"] for r in rows], brands
+
+    @staticmethod
+    def _from_snapshots(date):
+        """A past date: rebuild from that day's per-cohort snapshot rows.
+
+        Each cohort contributes its median once per ad it held, so the resulting
+        distribution is the cohort-median distribution weighted by cohort size —
+        an approximation of the true per-ad spread, but one that is *as of the
+        right day*, which reading `Ad` is not.
+        """
+        rows = list(
+            DailyInventorySnapshot.objects.filter(
+                date=date, median_price__isnull=False
+            ).values("ad_count", "median_price", "model__brand__slug")
+        )
+        if not rows:
+            return None, [], {}
+        prices: list[int] = []
+        brands: dict = defaultdict(int)
+        active_count = 0
+        for r in rows:
+            n = r["ad_count"] or 0
+            active_count += n
+            prices.extend([r["median_price"]] * n)
+            if r["model__brand__slug"]:
+                brands[r["model__brand__slug"]] += n
+        return active_count, prices, brands

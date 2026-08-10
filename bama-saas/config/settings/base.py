@@ -66,10 +66,22 @@ TEMPLATES = [
 WSGI_APPLICATION = "config.wsgi.application"
 ASGI_APPLICATION = "config.asgi.application"
 
+# This project has exactly ONE database: the Postgres that docker-compose runs,
+# published on host port 5433 (5432 inside the container network).
+#
+# The fallback below is deliberately 5433, NOT the conventional 5432. A native
+# PostgreSQL install commonly owns 5432 and may well have a same-named database
+# sitting on it; defaulting there means a host-run `manage.py` silently reads
+# and writes a different, stale copy of the data while the containers keep using
+# the real one. Pointing the fallback at the compose port makes host tools and
+# containers agree, and makes a stopped stack fail loudly (connection refused)
+# instead of quietly succeeding against the wrong database.
+#
+# In Docker this is never consulted: compose sets DATABASE_URL explicitly.
 DATABASES = {
     "default": dj_database_url.config(
         default=os.environ.get(
-            "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/bama_saas"
+            "DATABASE_URL", "postgresql://postgres:postgres@localhost:5433/bama_saas"
         ),
         conn_max_age=600,
         conn_health_checks=True,
@@ -138,7 +150,10 @@ SIMPLE_JWT = {
 
 CORS_ALLOWED_ORIGINS = [
     origin.strip()
-    for origin in os.environ.get("CORS_ORIGINS", "http://localhost:5173").split(",")
+    for origin in os.environ.get(
+        "CORS_ORIGINS",
+        "http://localhost:5173,http://localhost:8080,http://127.0.0.1:8080",
+    ).split(",")
     if origin.strip()
 ]
 
@@ -151,7 +166,6 @@ BAMA_PAGE_PAUSE = float(os.environ.get("BAMA_PAGE_PAUSE", "0.8"))
 BAMA_REQUEST_TIMEOUT = int(os.environ.get("BAMA_REQUEST_TIMEOUT", "20"))
 BAMA_COOKIE = os.environ.get("BAMA_COOKIE", "")
 ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "")
-STALE_AFTER_DAYS = int(os.environ.get("STALE_AFTER_DAYS", "14"))
 
 # Per-tick fetch size for the background worker. Intentionally small: the worker
 # runs every ~5 minutes and only needs the newest pages (where new/changed ads

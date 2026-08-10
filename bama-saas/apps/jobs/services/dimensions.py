@@ -26,37 +26,44 @@ def reset_cache() -> None:
     _CACHE.clear()
 
 
-def _brand(name: str | None):
+def _brand(name: str | None) -> tuple[Any, bool]:
+    """Resolve a brand. Second element is True when this call minted it."""
     if not name:
-        return None
+        return None, False
     name = name.strip()
     key = ("brand", name)
     if key in _CACHE:
-        return _CACHE[key]
+        # Already resolved this run; whoever minted it reported that then.
+        return _CACHE[key], False
     brand = Brand.objects.filter(name_fa=name).first()
+    minted = False
     if brand is None:
         slug = slugify(name, allow_unicode=True) or name
+        minted = True
         try:
             brand = Brand.objects.create(name_fa=name, slug=slug)
         except IntegrityError:
             # Slug collided with a different brand name; keep the name unique.
-            brand = Brand.objects.filter(name_fa=name).first() or Brand.objects.create(
-                name_fa=name, slug=f"{slug}-{name[:40]}"
-            )
+            existing = Brand.objects.filter(name_fa=name).first()
+            if existing is not None:
+                brand, minted = existing, False
+            else:
+                brand = Brand.objects.create(name_fa=name, slug=f"{slug}-{name[:40]}")
     _CACHE[key] = brand
-    return brand
+    return brand, minted
 
 
-def _model(brand, name: str | None):
+def _model(brand, name: str | None) -> tuple[Any, bool]:
+    """Resolve a model. Second element is True when this call minted it."""
     if not brand or not name:
-        return None
+        return None, False
     name = name.strip()
     key = ("model", brand.pk, name)
     if key in _CACHE:
-        return _CACHE[key]
-    model, _ = Model.objects.get_or_create(brand=brand, name_fa=name)
+        return _CACHE[key], False
+    model, minted = Model.objects.get_or_create(brand=brand, name_fa=name)
     _CACHE[key] = model
-    return model
+    return model, minted
 
 
 def _variant(model, name: str | None):
@@ -123,15 +130,27 @@ def resolve_dimensions(
     city_location: str | None,
     dealer: dict | None = None,
 ) -> dict[str, Any]:
-    brand = _brand(brand_name)
-    model = _model(brand, model_name)
+    """Resolve every dimension for one ad.
+
+    ``minted`` names the dimension levels this ad brought into existence. The
+    caller flags the ad so a Bama title-format change surfaces as a spike in one
+    place instead of silently growing the catalog.
+    """
+    brand, brand_minted = _brand(brand_name)
+    model, model_minted = _model(brand, model_name)
     variant = _variant(model, trim_name)
     city = _city(city_location)
     dealer_obj = _dealer(dealer)
+    minted = []
+    if brand_minted:
+        minted.append("brand")
+    if model_minted:
+        minted.append("model")
     return {
         "brand": brand,
         "model": model,
         "variant": variant,
         "city": city,
         "dealer": dealer_obj,
+        "minted": minted,
     }

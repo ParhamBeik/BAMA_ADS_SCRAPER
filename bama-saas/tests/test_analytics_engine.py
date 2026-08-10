@@ -13,6 +13,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from django.core.management import call_command
+from django.core.management.base import CommandError
+from django.utils import timezone as django_timezone
 from rest_framework.test import APIClient
 
 from apps.core.models import (
@@ -55,7 +57,9 @@ def catalog(db):
             Ad.objects.create(
                 code=f"a{i}", brand=brand, model=model, variant=variant,
                 city=city, dealer=dealer, title=f"۲۰۶ شماره {i}",
-                year=1399, mileage=100_000 + i * 10_000,
+                year=1399, year_jalali=1399, year_gregorian=2020,
+                year_calendar="jalali",
+                mileage=100_000 + i * 10_000,
                 current_price=1_000_000_000,
                 publish_at=_NOW - timedelta(days=i),
                 first_seen_at=_NOW - timedelta(days=i),
@@ -65,14 +69,16 @@ def catalog(db):
     # Below the median: 20% discount → scores highest. Fresh (age 0).
     cheap = Ad.objects.create(
         code="cheap", brand=brand, model=model, variant=variant, city=city,
-        dealer=dealer, title="۲۰۶ ارزان", year=1400, mileage=20_000,
+        dealer=dealer, title="۲۰۶ ارزان", year=1399, year_jalali=1399,
+        year_gregorian=2020, year_calendar="jalali", mileage=20_000,
         current_price=800_000_000,
         publish_at=_NOW, first_seen_at=_NOW, last_seen_at=_NOW,
     )
     # Removed ad — sold after 5 days. Used by time_on_market / fast_sellers.
     removed = Ad.objects.create(
         code="sold", brand=brand, model=model, variant=variant, city=city,
-        dealer=dealer, title="۲۰۶ فروخته شده", year=1398, mileage=150_000,
+        dealer=dealer, title="۲۰۶ فروخته شده", year=1398, year_jalali=1398,
+        year_gregorian=2019, year_calendar="jalali", mileage=150_000,
         current_price=950_000_000,
         publish_at=_NOW - timedelta(days=20),
         first_seen_at=_NOW - timedelta(days=20),
@@ -116,9 +122,11 @@ def test_compute_deal_scores_orders_cheap_first(catalog):
 def test_compute_deal_scores_skips_small_peer_group(catalog):
     """A separate model with only 2 ads is below min_peers → not scored."""
     other_model = Model.objects.create(brand=catalog["brand"], name_fa="پژو ۲۰۷")
+    other_variant = Variant.objects.create(model=other_model, name_fa="تیپ ۲")
     for i in range(2):
         Ad.objects.create(
             code=f"other{i}", brand=catalog["brand"], model=other_model,
+            variant=other_variant, year_jalali=1399, year_calendar="jalali",
             current_price=500_000_000, publish_at=_NOW, first_seen_at=_NOW,
         )
     res = compute_deal_scores(min_peers=3)
@@ -150,8 +158,14 @@ def test_compute_deal_scores_idempotent(catalog):
 
 @pytest.mark.django_db
 def test_market_snapshot_builds_row(catalog):
-    today = _NOW.date()
-    call_command("market_snapshot", "--date", today.isoformat())
+    """No --date: the live path, reading the current Ad table.
+
+    Deliberately not `--date <a past day>`. `Ad.status` describes what is live
+    *now*, so the command only reads it for today; a past date is rebuilt from
+    that day's DailyInventorySnapshot rows instead.
+    """
+    today = django_timezone.now().date()
+    call_command("market_snapshot")
     snap = MarketSnapshot.objects.get(date=today)
     # 6 equal-priced + the cheap one = 7 active priced.
     assert snap.active_count == 7
@@ -164,23 +178,52 @@ def test_market_snapshot_builds_row(catalog):
 @pytest.mark.django_db
 def test_market_snapshot_counts_removed_on_date(db):
     """An ad removed today counts toward removed_count for today."""
+    now = django_timezone.now()
     brand = Brand.objects.create(slug="x", name_fa="ایکس")
     Ad.objects.create(
-        code="rm", brand=brand, current_price=0, publish_at=_NOW,
-        status=Ad.Status.REMOVED, removed_at=_NOW,
+        code="rm", brand=brand, current_price=0, publish_at=now,
+        status=Ad.Status.REMOVED, removed_at=now,
     )
-    today = _NOW.date()
-    call_command("market_snapshot", "--date", today.isoformat())
-    snap = MarketSnapshot.objects.get(date=today)
+    call_command("market_snapshot")
+    snap = MarketSnapshot.objects.get(date=now.date())
     assert snap.removed_count == 1
 
 
 @pytest.mark.django_db
 def test_market_snapshot_idempotent(catalog):
-    today = _NOW.date()
-    call_command("market_snapshot", "--date", today.isoformat())
-    call_command("market_snapshot", "--date", today.isoformat())
+    today = django_timezone.now().date()
+    call_command("market_snapshot")
+    call_command("market_snapshot")
     assert MarketSnapshot.objects.filter(date=today).count() == 1
+
+
+@pytest.mark.django_db
+def test_market_snapshot_refuses_past_date_without_snapshots(catalog):
+    """Backfilling a past date must not stamp today's numbers onto it.
+
+    Reading `Ad` for a past date wrote the *current* active_count under every
+    historical row, which silently flattened the whole inventory series.
+    """
+    past = django_timezone.now().date() - timedelta(days=3)
+    with pytest.raises(CommandError):
+        call_command("market_snapshot", "--date", past.isoformat())
+
+
+@pytest.mark.django_db
+def test_market_snapshot_reconstructs_past_date_from_snapshots(catalog):
+    """With cohort rows present, a past date is rebuilt as of that day."""
+    past = django_timezone.now().date() - timedelta(days=3)
+    DailyInventorySnapshot.objects.create(
+        model=catalog["model"], variant=catalog["variant"], year_jalali=1399,
+        date=past, ad_count=4, new_count=0, median_price=900_000_000,
+        mean_price=900_000_000, min_price=900_000_000, max_price=900_000_000,
+    )
+    call_command("market_snapshot", "--date", past.isoformat())
+    snap = MarketSnapshot.objects.get(date=past)
+    # 4 ads as of that day — not the 7 currently live.
+    assert snap.active_count == 4
+    assert snap.median_price == 900_000_000
+    assert snap.brand_breakdown.get("peugeot") == 4
 
 
 # ---------------------------------------------------------------------------
@@ -227,11 +270,11 @@ def test_metrics_inventory_trend(catalog):
     today = _NOW.date()
     yesterday = today - timedelta(days=1)
     DailyInventorySnapshot.objects.create(
-        model=model, variant=catalog["variant"], year=1399, date=yesterday,
+        model=model, variant=catalog["variant"], year_jalali=1399, date=yesterday,
         ad_count=5, new_count=0, median_price=1_000_000_000,
     )
     DailyInventorySnapshot.objects.create(
-        model=model, variant=catalog["variant"], year=1399, date=today,
+        model=model, variant=catalog["variant"], year_jalali=1399, date=today,
         ad_count=7, new_count=2, median_price=1_000_000_000,
     )
     res = metrics.inventory_trend(model.id, days=90)
@@ -260,20 +303,21 @@ def test_metrics_time_on_market(catalog):
     # 6 ads at publish ages 0..5 days + the cheap ad at age 0.
     assert res["active_count"] == 7
     assert res["median_days_listed"] >= 0
-    # One removed ad sold after 5 days (20 → 15 days ago).
+    # One removed ad left the feed after 5 days (first seen 20 → removed 15
+    # days ago). "Delisted", not "sold": the feed cannot tell us which.
     assert res["removed_count"] == 1
-    assert res["median_days_to_sell"] == 5
+    assert res["median_days_to_delist"] == 5
 
 
 @pytest.mark.django_db
-def test_metrics_fast_sellers(catalog):
+def test_metrics_fast_movers(catalog):
     model = catalog["model"]
-    rows = metrics.fast_sellers(model.id)
+    rows = metrics.fast_movers(model.id)
     assert rows
-    sold = rows[0]
-    assert sold["code"] == "sold"
-    assert sold["days_to_sell"] == 5
-    assert sold["last_price"] == 950_000_000
+    delisted = rows[0]
+    assert delisted["code"] == "sold"
+    assert delisted["days_to_delist"] == 5
+    assert delisted["last_price"] == 950_000_000
 
 
 @pytest.mark.django_db

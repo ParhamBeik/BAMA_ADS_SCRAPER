@@ -8,6 +8,7 @@ from django.urls import path
 from rest_framework.routers import DefaultRouter
 
 from apps.core import views
+from apps.core.views import research
 
 app_name = "core"
 
@@ -50,9 +51,22 @@ urlpatterns = [
     path("analytics/dealers/", views.dealers, name="dealers"),
     path("analytics/inventory-trends/<int:model_id>/", views.inventory_trend, name="inventory-trend"),
     path("analytics/market-overview/", views.market_overview, name="market-overview"),
+    path("analytics/market-index/", views.market_index, name="market-index"),
     path("analytics/time-on-market/<int:model_id>/", views.time_on_market, name="time-on-market"),
-    path("analytics/fast-sellers/<int:model_id>/", views.fast_sellers, name="fast-sellers"),
+    path("analytics/fast-movers/<int:model_id>/", views.fast_movers, name="fast-movers"),
     path("analytics/price-drops/", views.price_drops, name="price-drops"),
+
+    # --- research: the three insight products (see views/research.py) ---
+    path("analytics/overview/", research.overview_view, name="market-overview-public"),
+    path("research/liquidity/<int:model_id>/", research.liquidity_view, name="liquidity"),
+    path("research/price-position/<int:model_id>/", research.price_position_view, name="price-position"),
+    path("research/negotiation/<int:model_id>/", research.negotiation_view, name="negotiation"),
+    path("research/depreciation/<int:model_id>/", research.depreciation_view, name="depreciation"),
+    path("research/dispersion/", research.dispersion_view, name="dispersion"),
+    path("research/retention/", research.retention_view, name="retention"),
+    path("research/regional/", research.regional_view, name="regional-adjusted"),
+    path("ads/<str:code>/fair-price/", research.fair_price_view, name="fair-price"),
+    path("ads/<str:code>/identity/", research.ad_identity_view, name="ad-identity"),
 
     # --- analytics: newest / oldest listings ---
     path("analytics/newest/", views.newest, name="newest"),

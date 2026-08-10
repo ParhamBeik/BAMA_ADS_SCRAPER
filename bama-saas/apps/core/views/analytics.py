@@ -14,9 +14,11 @@ from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
-from apps.core.models import DealScoreCache
+from apps.core.models import DealScoreCache, MarketIndex
 from apps.core.services import metrics
 from apps.core.services import insights
+from apps.core.services.index import read_index
+from apps.core.services.quality import verified, verified_by_ad
 from apps.core.models import Ad, Model
 
 
@@ -92,8 +94,12 @@ def insight(request, model_id: int, kind: str):
 # ---------------------------------------------------------------------------
 
 def _deal_score_qs():
+    # Gated on the read side as well as at build time. The cache is rebuilt
+    # periodically, so between an ad going bad and the next rebuild its stale
+    # score is still served — and a deal score is the single most acted-upon
+    # number on the site.
     return (
-        DealScoreCache.objects.select_related("ad")
+        verified_by_ad(DealScoreCache.objects.select_related("ad"))
         .annotate(
             model_name=F("ad__model__name_fa"),
             brand_name=F("ad__brand__name_fa"),
@@ -275,6 +281,61 @@ def market_overview(request):
 @extend_schema(
     tags=["Analytics"],
     responses={200: OpenApiTypes.OBJECT},
+    parameters=[
+        OpenApiParameter("scope", str, OpenApiParameter.QUERY, required=False,
+                         enum=["market", "brand", "model"]),
+        OpenApiParameter("id", str, OpenApiParameter.QUERY, required=False,
+                         description="Brand slug or model id; omit for scope=market."),
+        OpenApiParameter("days", int, OpenApiParameter.QUERY, required=False),
+    ],
+)
+@api_view(["GET"])
+def market_index(request):
+    """Composition-controlled price index (base 100).
+
+    Unlike the raw median, this cannot move because the mix of listings changed
+    — only because prices within a cohort changed. See
+    ``apps/core/services/index.py``.
+    """
+    params = request.query_params
+    scope = params.get("scope", MarketIndex.Scope.MARKET)
+    if scope not in MarketIndex.Scope.values:
+        return Response(
+            {"detail": f"scope must be one of {sorted(MarketIndex.Scope.values)}"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    scope_id = params.get("id") or None
+    if scope != MarketIndex.Scope.MARKET and not scope_id:
+        return Response({"detail": f"scope={scope} requires ?id="},
+                        status=status.HTTP_400_BAD_REQUEST)
+    if scope == MarketIndex.Scope.MARKET:
+        scope_id = None  # the market series is keyed on NULL, never on a stray ?id
+    try:
+        days = max(2, min(int(params.get("days", 90)), 3650))
+    except (TypeError, ValueError):
+        return Response({"detail": "days must be an integer"},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    series = read_index(scope, scope_id, days=days)
+    latest = series[-1] if series else None
+    return Response({
+        "scope": scope,
+        "scope_id": scope_id,
+        "base_value": 100.0,
+        "latest_index": latest["index_value"] if latest else None,
+        # Total move across the returned window, which is what a reader actually
+        # wants ("prices are up 3% this month"), not the raw index level.
+        "change_pct": (
+            round((latest["index_value"] / series[0]["index_value"] - 1) * 100, 2)
+            if latest and series[0]["index_value"] else None
+        ),
+        "series": series,
+    })
+
+
+@extend_schema(
+    tags=["Analytics"],
+    responses={200: OpenApiTypes.OBJECT},
 )
 @api_view(["GET"])
 def time_on_market(request, model_id: int):
@@ -289,12 +350,13 @@ def time_on_market(request, model_id: int):
     ],
 )
 @api_view(["GET"])
-def fast_sellers(request, model_id: int):
+def fast_movers(request, model_id: int):
+    """Listings that left the feed fastest. Leaving ≠ sold — see metrics docstring."""
     try:
         limit = _clamp_limit(request.query_params, default=20, lo=1, hi=500)
     except ValueError as exc:
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-    return Response(metrics.fast_sellers(model_id, limit=limit))
+    return Response(metrics.fast_movers(model_id, limit=limit))
 
 
 @extend_schema(
@@ -329,7 +391,11 @@ def _listings_by_publish(order_sign: str, params):
         limit = _clamp_limit(params, default=20, lo=1, hi=200)
     except ValueError as exc:
         raise ValueError(str(exc))
-    qs = Ad.objects.filter(
+    # verified(): this is a listing endpoint, and it was reading the bare table
+    # while every other analytical surface excluded hard-failed rows. "Newest
+    # listings" showing an ad the rest of the site refuses to count is the kind
+    # of inconsistency users report and nobody can reproduce.
+    qs = verified(Ad.objects).filter(
         status=Ad.Status.ACTIVE, publish_at__isnull=False
     )
     if model is not None:

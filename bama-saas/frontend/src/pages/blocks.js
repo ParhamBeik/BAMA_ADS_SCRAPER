@@ -43,3 +43,39 @@ export function inventoryBlock(modelId, days = 90) {
   }
   return { node, render };
 }
+
+// The composition-controlled index. Worth its own block rather than another
+// line on the price chart: it answers a different question from the median —
+// "did prices move" instead of "what does a car cost" — and the two disagree
+// sharply whenever the mix of listings shifts.
+export function marketIndexBlock({ scope = "market", id = null, days = 90 } = {}) {
+  const node = card("شاخص قیمت بازار (پایه ۱۰۰)", [
+    el("div", { class: "muted", id: "miSummary", text: "در حال بارگذاری…" }),
+    el("div", { class: "chart-box" }, [el("canvas", { id: "miChart" })]),
+  ]);
+  async function render() {
+    const params = { scope, days };
+    if (id) params.id = id;
+    const res = await api.get("/api/analytics/market-index/", params)
+      .catch(() => ({ series: [] }));
+    const s = res.series || [];
+    const summary = $("#miSummary");
+    if (!s.length) {
+      summary.textContent = "داده‌ای برای این بازه موجود نیست.";
+      return;
+    }
+    const pct = res.change_pct ?? 0;
+    const dir = pct > 0 ? "رشد" : pct < 0 ? "افت" : "بدون تغییر";
+    summary.textContent =
+      `${dir} ${Math.abs(pct).toFixed(2)}٪ در ${s.length} روز — ` +
+      `بر پایه ${s[s.length - 1].cohort_count} گروه هم‌رده. ` +
+      `این شاخص تنها تغییر قیمت را می‌سنجد، نه تغییر ترکیب آگهی‌ها.`;
+    lineChart($("#miChart"), {
+      labels: s.map(x => date(x.date)),
+      datasets: [
+        { label: "شاخص قیمت", data: s.map(x => x.index_value), borderColor: chartColors.blue },
+      ],
+    });
+  }
+  return { node, render };
+}

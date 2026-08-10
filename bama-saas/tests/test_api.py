@@ -70,7 +70,12 @@ def catalog(db):
                 variant=variant,
                 city=city,
                 title=f"مدل تست {i}",
+                # year is the raw Bama value; year_jalali is the canonical cohort
+                # key that filters and peer grouping now use.
                 year=1399,
+                year_jalali=1399,
+                year_gregorian=2020,
+                year_calendar=Ad.YearCalendar.JALALI,
                 mileage=100_000 + i * 40_000,
                 current_price=1_000_000_000 + i * 20_000_000,
                 publish_at=_NOW - timedelta(days=i),
@@ -571,24 +576,16 @@ def test_admin_import_staff_is_202(staff_client):
 def test_admin_refresh_staff_is_202(staff_client):
     client, _ = staff_client
     with patch("apps.jobs.views._spawn") as mock_spawn:
-        resp = client.post(
-            "/api/admin/jobs/refresh-analytics/", {"min_count": 3}, format="json"
-        )
+        resp = client.post("/api/admin/jobs/refresh-analytics/", {}, format="json")
     assert resp.status_code == 202, resp.content
     body = resp.json()
-    assert body["command"] == "refresh_analytics"
-    mock_spawn.assert_called_once_with("refresh_analytics", min_count=3)
-
-
-@pytest.mark.django_db
-def test_admin_refresh_bad_input_is_400(staff_client):
-    client, _ = staff_client
-    with patch("apps.jobs.views._spawn"):
-        resp = client.post(
-            "/api/admin/jobs/refresh-analytics/", {"min_count": "x"}, format="json"
-        )
-    assert resp.status_code == 400, resp.content
-    assert "detail" in resp.json()
+    # The URL is unchanged but the work behind it is not: it used to run
+    # refresh_analytics, which rebuilt a table nothing read, so pressing the
+    # button had no observable effect. It now rebuilds the real derived
+    # analytics. The old ``min_count`` argument was a PriceStatistics concept and
+    # no longer exists, so there is no input left to validate.
+    assert body["command"] == "run_pipeline"
+    mock_spawn.assert_called_once_with("run_pipeline", skip_fetch=True)
 
 
 @pytest.mark.django_db

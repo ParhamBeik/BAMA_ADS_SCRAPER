@@ -18,9 +18,25 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument(
             "--mode",
-            choices=["delta", "full"],
+            choices=["delta", "full", "backfill"],
             default="delta",
-            help="Ingestion mode: 'delta' (fast-delta with early stopping) or 'full' (full scan)",
+            help=(
+                "Ingestion mode: 'delta' (early-stopping sweep from page 0), "
+                "'full' (page 0 to end of feed), or 'backfill' "
+                "(explicit --start-page/--end-page range for gap repair)"
+            ),
+        )
+        parser.add_argument(
+            "--start-page",
+            type=int,
+            default=None,
+            help="0-based first pageIndex (required for backfill; else resume/0)",
+        )
+        parser.add_argument(
+            "--end-page",
+            type=int,
+            default=None,
+            help="0-based last pageIndex, inclusive (backfill only)",
         )
         parser.add_argument(
             "--max-stale-pages",
@@ -50,8 +66,9 @@ class Command(BaseCommand):
 
     def handle(self, *args, **opts):
         self.stdout.write(
-            f"Starting live fetch [mode={opts['mode']}] (max_ads={opts['max_ads']}, "
-            f"page_pause={opts['page_pause']}, "
+            f"Starting live fetch [mode={opts['mode']}] "
+            f"(start_page={opts['start_page']}, end_page={opts['end_page']}, "
+            f"max_ads={opts['max_ads']}, page_pause={opts['page_pause']}, "
             f"request_timeout={opts['request_timeout']})"
         )
         run = fetch_live(
@@ -60,20 +77,19 @@ class Command(BaseCommand):
             page_pause=opts["page_pause"],
             request_timeout=opts["request_timeout"],
             max_stale_pages=opts["max_stale_pages"],
+            start_page=opts["start_page"],
+            end_page=opts["end_page"],
         )
 
-        affected = getattr(run, "affected_model_ids", set())
-        if affected:
-            from apps.core.services.deal_score import refresh_cohort_deal_scores
-            res = refresh_cohort_deal_scores(affected)
-            self.stdout.write(
-                f"Refreshed deal scores for {res['refreshed_models']} model cohorts "
-                f"({res['total_scored']} ads scored)."
-            )
-
+        # Deliberately no deal-score refresh here. run_pipeline's `deal_scores`
+        # step rebuilds the whole board immediately after this command on every
+        # tick, so doing a cohort refresh first was scoring the same ads twice.
+        # crawl_gaps keeps its own refresh — it runs outside the pipeline.
         self.stdout.write(
             self.style.SUCCESS(
-                f"Done. status={run.status} fetched={run.fetched_count} "
+                f"Done. status={run.status} stop_reason={run.stop_reason} "
+                f"pages_fetched={run.pages_fetched} deepest_rank={run.deepest_rank} "
+                f"reached_end={run.reached_end} fetched={run.fetched_count} "
                 f"created={run.created_count} updated={run.updated_count} "
                 f"skipped={run.skipped_count} price_changes={run.price_change_count}"
             )

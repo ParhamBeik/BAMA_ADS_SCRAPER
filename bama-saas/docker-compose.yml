@@ -2,6 +2,7 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: bama-postgres
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-bama_saas}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
@@ -9,7 +10,11 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      # Host port is configurable and defaults to 5433, because a native
+      # PostgreSQL install commonly already owns 5432 and the bind would fail.
+      # The container-internal port stays 5432, so DATABASE_URL below is
+      # unaffected. Override with POSTGRES_HOST_PORT in .env.
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-bama_saas}"]
       interval: 5s
@@ -21,6 +26,7 @@ services:
   django:
     build: .
     container_name: bama-django
+    restart: unless-stopped
     env_file:
       - path: .env
         required: false
@@ -30,12 +36,16 @@ services:
       BAMA_SCRAPED_DATA_ROOT: /data
       BAMA_HISTORY_DB_PATH: /data/bama.db
       ADMIN_API_KEY: ${ADMIN_API_KEY:-}
-      SECRET_KEY: ${SECRET_KEY:-}
+      # Must not be empty: an empty value still *sets* the env var, which
+      # overrides the dev fallback in settings/base.py and makes SimpleJWT fail
+      # at import with "SECRET_KEY must not be empty". This stack runs
+      # config.settings.dev; set a real SECRET_KEY in .env for anything else.
+      SECRET_KEY: ${SECRET_KEY:-django-insecure-dev-compose-key-not-for-production}
     volumes:
       - .:/app
       - ./data:/data:ro
     ports:
-      - "8000:8000"
+      - "8001:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -46,6 +56,35 @@ services:
       timeout: 5s
       retries: 12
       start_period: 30s
+    networks:
+      - bama-network
+
+  # The stack's own scheduler: with this running, `docker compose up` is all it
+  # takes for the data to keep refreshing — no host cron, no .env needed.
+  # Do NOT also install the host crontab (deploy/worker/install_cron.sh): the two
+  # lock against different /tmp namespaces and would fetch concurrently.
+  worker:
+    build: .
+    container_name: bama-worker
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-bama_saas}
+      DJANGO_SETTINGS_MODULE: config.settings.dev
+      BAMA_SCRAPED_DATA_ROOT: /data
+      BAMA_HISTORY_DB_PATH: /data/bama.db
+      SECRET_KEY: ${SECRET_KEY:-django-insecure-dev-compose-key-not-for-production}
+    volumes:
+      - .:/app
+      - ./data:/data:ro
+    depends_on:
+      # Waits for django, not postgres: django owns `migrate`, and the worker
+      # must not fetch against a half-migrated schema.
+      django:
+        condition: service_healthy
+    restart: unless-stopped
+    command: sh deploy/worker/run_worker.sh
     networks:
       - bama-network
 

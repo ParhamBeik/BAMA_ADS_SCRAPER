@@ -21,10 +21,19 @@ def model():
     return model
 
 
-def _mk_ad(code, model, price, *, mileage=None, year=1399, days_ago=0):
+def _mk_ad(code, model, price, *, mileage=None, year=1399, days_ago=0,
+           year_jalali=None, year_calendar="jalali"):
+    """`year` is the raw Bama value; `year_jalali` is the canonical cohort key.
+
+    Defaults to ``year_jalali == year`` (the Jalali case). Pass them separately
+    to build a Gregorian-labelled ad that belongs to the same Jalali cohort.
+    """
+    jalali = year if year_jalali is None else year_jalali
     return Ad.objects.create(
         code=code, model=model, brand=model.brand,
         current_price=price, mileage=mileage, year=year,
+        year_jalali=jalali, year_gregorian=jalali + 621,
+        year_calendar=year_calendar,
         publish_at=datetime(2026, 7, 1, tzinfo=UTC) - timedelta(days=days_ago),
     )
 
@@ -96,3 +105,40 @@ def test_depreciation_negative_slope(model):
     assert res["available"] is True
     assert res["slope_per_km"] < 0
     assert res["delta_per_10k_km"] < 0
+
+
+@pytest.mark.django_db
+def test_mixed_calendar_years_share_one_cohort(model):
+    """The regression: 1401 and 2022 are the SAME model year.
+
+    Bama labels model years in either calendar, so raw ``Ad.year`` holds 1401
+    for one ad and 2022 for the other. Grouping on ``year`` split them into two
+    cohorts of 1; grouping on ``year_jalali`` must yield one cohort of 2.
+    """
+    _mk_ad("jalali", model, 1_000_000_000, year=1401, year_jalali=1401)
+    _mk_ad("greg", model, 1_200_000_000, year=2022, year_jalali=1401,
+           year_calendar="gregorian")
+    # A genuinely different model year must NOT join the cohort.
+    _mk_ad("other", model, 900_000_000, year=1399, year_jalali=1399)
+
+    res = true_mean(model.id, year=1401)
+    assert res["count_before"] == 2
+    assert res["year"] == 1401  # public API still echoes back "year"
+
+    depth = insights.market_depth(model.id, year=1401)
+    assert depth["count"] == 2
+    assert insights.liquidity(model.id, year=1401)["count"] == 2
+
+
+@pytest.mark.django_db
+def test_year_filter_excludes_unparseable_year(model):
+    """Ads with year_jalali IS NULL never join a cohort."""
+    _mk_ad("ok1", model, 1_000_000_000, year=1401, year_jalali=1401)
+    _mk_ad("ok2", model, 1_100_000_000, year=1401, year_jalali=1401)
+    Ad.objects.create(
+        code="unknown", model=model, brand=model.brand,
+        current_price=1_050_000_000, year=None, year_jalali=None,
+        year_calendar="unknown",
+        publish_at=datetime(2026, 7, 1, tzinfo=UTC),
+    )
+    assert true_mean(model.id, year=1401)["count_before"] == 2

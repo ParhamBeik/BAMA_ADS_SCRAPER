@@ -2,7 +2,7 @@
 // workspaces. Chart blocks are reused from blocks.js (no duplicated logic).
 import { api } from "../api.js";
 import { lineChart, barChart, chartColors } from "../charts.js";
-import { priceChartsBlock, inventoryBlock } from "./blocks.js";
+import { priceChartsBlock, inventoryBlock, marketIndexBlock } from "./blocks.js";
 import { dealTable, dropTable } from "./browse.js";
 import { $, el, clear, append, card, stat, table, empty, badge, runPage, price, num, pct, date, ago } from "../ui.js";
 
@@ -33,8 +33,11 @@ export async function analytics(view = Ctx()) {
       api.get("/api/analytics/newest/", { limit: 6 }).catch(() => []),
       api.get("/api/analytics/oldest/", { limit: 6 }).catch(() => []),
     ]);
+    const indexBlk = marketIndexBlock({ scope: "market", days: 90 });
     clear(view);
     append(view, [
+      // Top of the page: the one number that says whether the market moved.
+      indexBlk.node,
       card("پربازارترین برندها", [rankTable(brands, "name")]),
       el("div", { class: "grid cols-2" }, [
         card("شهرها (قیمت میانه)", [table(["شهر", "آگهی", "قیمت میانه"], regional, { renderRow: r => el("tr", {}, [el("td", { text: r.city_name }), el("td", { class: "mono", text: num(r.ad_count) }), el("td", { class: "mono", text: price(r.median_price) })]) })]),
@@ -46,6 +49,8 @@ export async function analytics(view = Ctx()) {
       ]),
       card("کاهش قیمت‌ها (۳۰ روز)", [drops.length ? dropTable(drops) : empty()]),
     ]);
+    // Chart.js needs the canvas in the document before it can draw.
+    await indexBlk.render();
   });
 }
 

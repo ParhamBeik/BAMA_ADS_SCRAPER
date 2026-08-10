@@ -11,8 +11,12 @@ class AdFilter(django_filters.FilterSet):
     variant = django_filters.NumberFilter(field_name="variant_id", lookup_expr="exact")
     city = django_filters.NumberFilter(field_name="city_id", lookup_expr="exact")
 
-    year_min = django_filters.NumberFilter(field_name="year", lookup_expr="gte")
-    year_max = django_filters.NumberFilter(field_name="year", lookup_expr="lte")
+    # `year_min`/`year_max` keep their public names but range-filter on
+    # `year_jalali`: raw `Ad.year` mixes Jalali (1399) and Gregorian (2025) in
+    # one column, so a range over it is meaningless. Incoming values are
+    # therefore interpreted as JALALI.
+    year_min = django_filters.NumberFilter(field_name="year_jalali", lookup_expr="gte")
+    year_max = django_filters.NumberFilter(field_name="year_jalali", lookup_expr="lte")
 
     price_min = django_filters.NumberFilter(
         field_name="current_price", lookup_expr="gte"

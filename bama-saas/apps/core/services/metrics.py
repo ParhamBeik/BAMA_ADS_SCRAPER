@@ -19,6 +19,7 @@ from django.utils import timezone
 from apps.core.models import DailyInventorySnapshot, MarketSnapshot
 from apps.core.models import Ad
 from apps.core.models import PriceDropEvent
+from apps.core.services.quality import verified, verified_by_ad
 
 _DIM_FIELDS = {
     "brands": ("model__brand_id", "model__brand__slug", "model__brand__name_fa"),
@@ -29,10 +30,25 @@ _DIM_FIELDS = {
 
 def _active_priced_qs():
     """ACTIVE, priced, publish-complete queryset — the standard live-market slice."""
-    return Ad.objects.filter(
+    return verified(Ad.objects).filter(
         status=Ad.Status.ACTIVE,
         current_price__gt=0,
         publish_at__isnull=False,
+    )
+
+
+def _removed_qs():
+    """REMOVED ads with both lifecycle timestamps — the delisting slice.
+
+    Separate from ``_active_priced_qs`` because the lifecycle metrics need
+    REMOVED rather than ACTIVE, but it still goes through ``verified()``: a
+    hard-flagged row is no more usable for a duration statistic than for a
+    price one.
+    """
+    return verified(Ad.objects).filter(
+        status=Ad.Status.REMOVED,
+        first_seen_at__isnull=False,
+        removed_at__isnull=False,
     )
 
 
@@ -133,11 +149,19 @@ def inventory_trend(model_id: int, days: int = 90) -> dict:
 
     series = []
     for date, g in sorted(by_date.items()):
-        # Volume-weighted median across the day's slices.
+        # Volume-weighted median across the day's slices (true weighted median).
         if g["prices"]:
-            total = sum(w for _, w in g["prices"])
-            weighted = sum(p * w for p, w in g["prices"]) / total if total else 0
-            median_price = int(weighted)
+            sorted_pairs = sorted(g["prices"], key=lambda x: x[0])
+            total_weight = sum(w for _, w in sorted_pairs)
+            cumulative_weight = 0
+            median_price = None
+            for val, w in sorted_pairs:
+                cumulative_weight += w
+                if cumulative_weight >= total_weight / 2:
+                    median_price = val
+                    break
+            if median_price is None and sorted_pairs:
+                median_price = sorted_pairs[0][0]
         else:
             median_price = None
         series.append({
@@ -183,23 +207,24 @@ def market_overview(days: int = 90) -> list:
 
 
 def time_on_market(model_id: int) -> dict:
-    """Active days-listed + removed days-to-sale distribution for a model."""
+    """Days-listed for live ads + days-to-delisting for removed ones.
+
+    "Removed" means the ad left the Bama feed. That can be a sale, an expiry, or
+    the seller withdrawing it, and the payload does not distinguish them — so
+    these are *delisting* durations, deliberately not called days-to-sell. They
+    are an upper bound on time-to-sale and nothing stronger.
+    """
     now = timezone.now()
     active_rows = list(
-        Ad.objects.filter(
-            status=Ad.Status.ACTIVE, model_id=model_id, publish_at__isnull=False
-        ).values_list("publish_at", flat=True)
+        _active_priced_qs()
+        .filter(model_id=model_id)
+        .values_list("publish_at", flat=True)
     )
     days_listed = [(now - p).days for p in active_rows if p]
     removed_rows = list(
-        Ad.objects.filter(
-            status=Ad.Status.REMOVED,
-            model_id=model_id,
-            first_seen_at__isnull=False,
-            removed_at__isnull=False,
-        ).values_list("first_seen_at", "removed_at")
+        _removed_qs().filter(model_id=model_id).values_list("first_seen_at", "removed_at")
     )
-    days_to_sell = [
+    days_to_delist = [
         (removed_at - first_seen).days for first_seen, removed_at in removed_rows
     ]
     return {
@@ -207,32 +232,40 @@ def time_on_market(model_id: int) -> dict:
         "active_count": len(days_listed),
         "avg_days_listed": round(statistics.mean(days_listed), 1) if days_listed else 0,
         "median_days_listed": int(statistics.median(days_listed)) if days_listed else 0,
-        "removed_count": len(days_to_sell),
-        "avg_days_to_sell": round(statistics.mean(days_to_sell), 1) if days_to_sell else 0,
-        "median_days_to_sell": int(statistics.median(days_to_sell)) if days_to_sell else 0,
+        "removed_count": len(days_to_delist),
+        "avg_days_to_delist": (
+            round(statistics.mean(days_to_delist), 1) if days_to_delist else 0
+        ),
+        "median_days_to_delist": (
+            int(statistics.median(days_to_delist)) if days_to_delist else 0
+        ),
     }
 
 
-def fast_sellers(model_id: int, limit: int = 20) -> list:
-    """REMOVED ads for a model with both timestamps, sorted by ascending age."""
+def fast_movers(model_id: int, limit: int = 20) -> list:
+    """Removed ads for a model, shortest time-on-feed first.
+
+    Named "movers", not "sellers": leaving the feed is not evidence of a sale
+    (see :func:`time_on_market`). Short-lived listings are still the useful
+    signal — they are where demand is, whatever ended them.
+    """
     rows = list(
-        Ad.objects.filter(
-            status=Ad.Status.REMOVED,
-            model_id=model_id,
-            first_seen_at__isnull=False,
-            removed_at__isnull=False,
-        ).values("code", "first_seen_at", "removed_at", "current_price", "year")
+        _removed_qs()
+        .filter(model_id=model_id)
+        .values("code", "first_seen_at", "removed_at", "current_price", "year_jalali")
     )
     out = [
         {
             "code": r["code"],
-            "days_to_sell": (r["removed_at"] - r["first_seen_at"]).days,
+            "days_to_delist": (r["removed_at"] - r["first_seen_at"]).days,
             "last_price": r["current_price"],
-            "year": r["year"],
+            # Response key stays "year"; the value is the canonical Jalali cohort
+            # year, since raw `Ad.year` mixes Jalali and Gregorian.
+            "year": r["year_jalali"],
         }
         for r in rows
     ]
-    out.sort(key=lambda x: x["days_to_sell"])
+    out.sort(key=lambda x: x["days_to_delist"])
     return out[:limit]
 
 
@@ -244,9 +277,11 @@ def price_drops(
 ) -> list:
     """Recent PriceDropEvent rows, joined to ad, filtered by min_pct and model."""
     since = timezone.now() - timedelta(days=days)
-    qs = PriceDropEvent.objects.filter(
-        observed_at__gte=since,
-        drop_pct__gte=min_pct,
+    # Filter by the *ad's* quality, not the event's: a drop on a hard-flagged ad
+    # is a drop between two unusable prices. `verified()` builds an Ad-queryset
+    # exclusion, so apply it via the ad__code join rather than to the events.
+    qs = verified_by_ad(
+        PriceDropEvent.objects.filter(observed_at__gte=since, drop_pct__gte=min_pct)
     )
     if model_id is not None:
         qs = qs.filter(ad__model_id=model_id)
@@ -255,7 +290,7 @@ def price_drops(
             "ad__code",
             "ad__title",
             "ad__url",
-            "ad__year",
+            "ad__year_jalali",
             "old_price",
             "new_price",
             "drop_amount",
@@ -268,7 +303,7 @@ def price_drops(
             "code": r["ad__code"],
             "title": r["ad__title"],
             "url": r["ad__url"],
-            "year": r["ad__year"],
+            "year": r["ad__year_jalali"],
             "old_price": r["old_price"],
             "new_price": r["new_price"],
             "drop_amount": r["drop_amount"],

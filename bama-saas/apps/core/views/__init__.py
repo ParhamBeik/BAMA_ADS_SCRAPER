@@ -28,7 +28,8 @@ from apps.core.views.analytics import (
     dealers,
     deal_score_detail,
     deal_scores,
-    fast_sellers,
+    fast_movers,
+    market_index,
     insight,
     inventory_trend,
     market_overview,
@@ -52,5 +53,5 @@ __all__ = [
     # analytics
     "insight", "deal_scores", "deal_score_detail", "rankings", "regional",
     "dealers", "inventory_trend", "market_overview", "time_on_market",
-    "fast_sellers", "price_drops", "newest", "oldest",
+    "fast_movers", "price_drops", "newest", "oldest", "market_index",
 ]

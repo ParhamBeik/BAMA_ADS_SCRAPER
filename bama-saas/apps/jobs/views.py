@@ -10,7 +10,9 @@ gating is intentionally not applied here — these are operator-only endpoints.
 
 from __future__ import annotations
 
+import logging
 import threading
+from io import StringIO
 from typing import Callable
 
 from django.core.management import call_command
@@ -20,8 +22,15 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from drf_spectacular.utils import OpenApiResponse, extend_schema
 
+from django.shortcuts import get_object_or_404
+from drf_spectacular.types import OpenApiTypes
+
 from apps.accounts.permissions import IsStaff
-from apps.core.models import FetchRun
+from apps.core.models import Ad, AdVersion, FetchRun, JobRun
+from apps.jobs.services.health import run_checks
+from apps.jobs.services.pipeline import record_job
+
+logger = logging.getLogger("bama.jobs")
 
 
 class JobAcceptedSerializer(serializers.Serializer):
@@ -42,11 +51,21 @@ def _spawn(command: str, **opts) -> None:
 
     Django hands each thread its own connection; a detached thread outliving the
     request must release it or the pool leaks one connection per job.
+
+    The work is wrapped in a JobRun so an operator-triggered job leaves the same
+    trace as a scheduled one. Without it these threads returned 202 and then
+    vanished: a job that died in the thread was indistinguishable from one that
+    finished, because nothing but the response had ever been recorded.
     """
 
     def _run() -> None:
         try:
-            call_command(command, **opts)
+            with record_job(command, triggered_by=JobRun.Trigger.ADMIN) as job:
+                buf = StringIO()
+                call_command(command, stdout=buf, **opts)
+                job.detail = buf.getvalue().strip()[:4000]
+        except Exception:  # noqa: BLE001 — recorded on the JobRun; nothing to raise to
+            logger.exception("admin job %s failed", command)
         finally:
             connection.close()
 
@@ -122,18 +141,23 @@ def trigger_import(request):
     tags=["Admin · Jobs"],
     request=None,
     responses={202: JobAcceptedSerializer},
-    description="Rebuild PriceStatistics aggregates (operator-only).",
+    description=(
+        "Rebuild every derived analytic — snapshots, market index, deal scores — "
+        "without fetching. Operator-only."
+    ),
 )
 @api_view(["POST"])
 @permission_classes([IsStaff])
 def trigger_refresh(request):
-    """POST /api/admin/jobs/refresh-analytics/ — rebuild PriceStatistics (async)."""
-    try:
-        opts = _opt(request.data, "min_count", int)
-    except ValueError as exc:
-        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-    _spawn("refresh_analytics", **opts)
-    return _accepted("refresh_analytics")
+    """POST /api/admin/jobs/refresh-analytics/ — rebuild the derived analytics.
+
+    Kept at its original URL but repointed. It used to run ``refresh_analytics``,
+    which rebuilt ``PriceStatistics`` — a table no view, serializer or service
+    ever read. The button therefore did nothing observable. It now runs the local
+    half of the pipeline, which is what "refresh analytics" always implied.
+    """
+    _spawn("run_pipeline", skip_fetch=True)
+    return _accepted("run_pipeline")
 
 
 @extend_schema(
@@ -167,3 +191,88 @@ def trigger_evaluate_alerts(request):
     """POST /api/admin/jobs/evaluate-alerts/ — run alert evaluation now (async)."""
     _spawn("evaluate_alerts")
     return _accepted("evaluate_alerts")
+
+
+@extend_schema(
+    tags=["Admin · Jobs"],
+    responses={200: OpenApiTypes.OBJECT},
+    description=(
+        "Raw provenance for one ad: the stored payload and every version's "
+        "payload. Operator-only — this is the whole scraped record, which is why "
+        "it is no longer part of the public ad serializer."
+    ),
+)
+@api_view(["GET"])
+@permission_classes([IsStaff])
+def ad_provenance(request, code: str):
+    """GET /api/admin/ads/<code>/provenance/ — the unabridged record."""
+    ad = get_object_or_404(Ad, code=code)
+    versions = (
+        AdVersion.objects.filter(ad=ad)
+        .order_by("first_observed_at")
+        .values("id", "semantic_hash", "raw_hash", "origin", "first_observed_at", "payload")
+    )
+    return Response({
+        "code": ad.code,
+        "quality_flags": ad.quality_flags,
+        "cohort_flags": ad.cohort_flags,
+        "raw_payload": ad.raw_payload,
+        "versions": list(versions),
+    })
+
+
+@extend_schema(
+    tags=["Admin · Jobs"],
+    responses={200: OpenApiTypes.OBJECT},
+    description="Recent scheduled-job outcomes, newest first, including skips.",
+)
+@api_view(["GET"])
+@permission_classes([IsStaff])
+def jobs_overview(request):
+    """GET /api/admin/jobs/overview/ — did the scheduled work actually run?
+
+    The question JobRun exists to answer. A step that was skipped because its
+    prerequisite failed shows up here as ``skipped``, distinct from both success
+    and silence.
+    """
+    limit = min(int(request.query_params.get("limit", 50)), 200)
+    rows = JobRun.objects.all()[:limit].values(
+        "name", "status", "triggered_by", "started_at", "finished_at",
+        "duration_s", "detail", "error",
+    )
+    latest: dict[str, dict] = {}
+    for row in rows:
+        latest.setdefault(row["name"], row)
+    return Response({"latest_per_job": list(latest.values()), "recent": list(rows)})
+
+
+@extend_schema(
+    tags=["Admin · Jobs"],
+    responses={200: OpenApiResponse(description="All checks passed."),
+               503: OpenApiResponse(description="At least one check failed.")},
+    description=(
+        "Crawl health: sweep freshness, failed runs, ingest-reject spikes, "
+        "coverage gaps, ingest progress. Read-only. Operator-only."
+    ),
+)
+@api_view(["GET"])
+@permission_classes([IsStaff])
+def crawl_health(request):
+    """GET /api/admin/jobs/crawl-health/ — is the crawler actually working?
+
+    Synchronous and read-only, unlike its POST siblings: it runs a handful of
+    aggregate queries and the answer is the point, so there is nothing to poll.
+    Returns 503 when unhealthy so an uptime monitor can watch this URL directly.
+    """
+    checks = run_checks()
+    ok = all(c.ok for c in checks)
+    return Response(
+        {
+            "ok": ok,
+            "checks": [
+                {"name": c.name, "ok": c.ok, "detail": c.detail, "data": c.data}
+                for c in checks
+            ],
+        },
+        status=status.HTTP_200_OK if ok else status.HTTP_503_SERVICE_UNAVAILABLE,
+    )

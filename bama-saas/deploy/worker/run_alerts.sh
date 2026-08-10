@@ -33,4 +33,10 @@ fi
 mkdir -p "$PROJECT_DIR/logs"
 export DJANGO_SETTINGS_MODULE="${DJANGO_SETTINGS_MODULE:-config.settings.dev}"
 
-exec "$PYTHON_BIN" manage.py evaluate_alerts "$@"
+LOCK="${BAMA_ALERTS_LOCK:-/tmp/bama-saas-alerts.lock}"
+if command -v flock >/dev/null 2>&1; then
+    exec flock -n "$LOCK" "$PYTHON_BIN" manage.py evaluate_alerts "$@"
+else
+    echo "bama.alerts: flock not found on this host; running unlocked." >&2
+    exec "$PYTHON_BIN" manage.py evaluate_alerts "$@"
+fi

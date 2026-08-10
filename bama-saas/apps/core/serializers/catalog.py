@@ -70,7 +70,10 @@ class AdSerializer(serializers.ModelSerializer):
     )
     city_id = serializers.IntegerField(read_only=True)
     city_name = serializers.CharField(source="city.name_fa", read_only=True, default="")
-    raw_payload = serializers.JSONField(read_only=True)
+    # Verdicts, not raw data: a listing the cohort pass could not believe should
+    # say so to whoever is looking at it rather than quietly leaving the market
+    # statistics. See apps/jobs/services/verify_cohort.py.
+    cohort_flags = serializers.JSONField(read_only=True)
 
     class Meta:
         model = Ad
@@ -93,5 +96,11 @@ class AdSerializer(serializers.ModelSerializer):
             "city_id",
             "city_name",
             "url",
-            "raw_payload",
+            "cohort_flags",
         )
+        # raw_payload is deliberately absent. It is the entire scraped record —
+        # dealer contact details, internal identifiers, promotion state, every
+        # field the source ever sent — and it was being served on the public list
+        # endpoint, which also made every ad response many times larger than the
+        # curated fields anyone actually reads. It remains available to staff at
+        # /api/admin/ads/<code>/provenance/.

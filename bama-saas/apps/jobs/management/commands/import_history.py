@@ -103,13 +103,18 @@ class Command(BaseCommand):
                     if publish_at is None or not price or price <= 0:
                         skipped += 1
                         continue
-                    _, _, pc = ingest_ad(
+                    result = ingest_ad(
                         extracted,
                         run=run,
                         observed_at=observed_at,
                         publish_at=publish_at,
                         dealer=payload.get("dealer"),
                     )
+                    ad_obj, pc = result.ad, result.price_changed
+                    # None => hard rule fired; quarantined, never persisted.
+                    if ad_obj is None:
+                        skipped += 1
+                        continue
                     if pc:
                         price_changes += 1
                     processed += 1

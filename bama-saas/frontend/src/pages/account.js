@@ -7,7 +7,7 @@ const Ctx = () => document.getElementById("view");
 const JOBS = [
   { path: "/api/admin/jobs/fetch/", label: "فچ زنده باما", desc: "دریافت آگهی‌های جدید" },
   { path: "/api/admin/jobs/import/", label: "ایمپورت داده", desc: "بارگذاری JSON اسکریپ‌شده" },
-  { path: "/api/admin/jobs/refresh-analytics/", label: "بازسازی تحلیل‌ها", desc: "بسط PriceStatistics" },
+  { path: "/api/admin/jobs/refresh-analytics/", label: "بازسازی تحلیل‌ها", desc: "بازسازی تحلیل‌ها" },
   { path: "/api/admin/jobs/deal-scores/", label: "محاسبه Deal Score", desc: "بازسازی کش امتیاز معامله" },
   { path: "/api/admin/jobs/evaluate-alerts/", label: "ارزیابی هشدارها", desc: "اجرای هشدارها و ارسال نوتیف" },
 ];

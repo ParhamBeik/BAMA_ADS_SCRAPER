@@ -18,6 +18,7 @@ import statistics
 import numpy as np
 
 from apps.core.models import Ad
+from apps.core.services.quality import verified
 
 
 def _percentile_trim(prices: list[int], lo_pct: float = 5, hi_pct: float = 95) -> list[int]:
@@ -47,13 +48,18 @@ def true_mean(
     z: float = 2.0,
 ) -> dict:
     qs = (
-        Ad.objects.filter(model_id=model_id, current_price__gt=0)
+        verified(Ad.objects)
+        .filter(model_id=model_id, current_price__gt=0)
         .exclude(publish_at__isnull=True)
     )
     if variant_id:
         qs = qs.filter(variant_id=variant_id)
     if year:
-        qs = qs.filter(year=year)
+        # An incoming `year` is interpreted as JALALI: `Ad.year` is the raw Bama
+        # value and mixes calendars (1399 and 2025 in one column), so it is not
+        # a usable cohort key. `year_jalali` is canonical, and filtering on it
+        # also drops unparseable years (NULL) from the peer group.
+        qs = qs.filter(year_jalali=year)
 
     prices = list(qs.values_list("current_price", flat=True))
     count_before = len(prices)

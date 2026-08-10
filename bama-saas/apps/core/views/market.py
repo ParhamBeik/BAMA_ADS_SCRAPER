@@ -11,8 +11,8 @@ import statistics
 from collections import defaultdict
 
 from django.db.models import Avg, Count, F, Max, Min
-from django.db.models.functions import Trunc
 from django.shortcuts import get_object_or_404
+from django.views.decorators.cache import cache_page
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import status
@@ -20,11 +20,16 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
 from apps.core.services.bollinger import bollinger
+from apps.core.services.quality import verified, verified_by_ad
 from apps.core.services.truemean import true_mean
 from apps.core.models import Ad, Model
 from apps.core.models import PriceObservation
 
 _BUCKET_CHOICES = {"day", "week", "month"}
+
+# Shorter than the 5-minute worker tick, so a cached landing page is never more
+# than one cycle behind the data it summarises.
+MARKETS_CACHE_SECONDS = 120
 
 
 def _opt_int(params, key):
@@ -42,15 +47,22 @@ def _opt_int(params, key):
     responses={200: OpenApiTypes.OBJECT},
     parameters=[OpenApiParameter("limit", int, OpenApiParameter.QUERY, required=False)],
 )
+@cache_page(MARKETS_CACHE_SECONDS)
 @api_view(["GET"])
 def markets(request):
-    """Landing: per-model market summary (publish-complete, priced), top-N."""
+    """Landing: per-model market summary (publish-complete, priced), top-N.
+
+    Cached: this aggregates every priced ad in the database on each call and the
+    underlying data only changes when the worker ticks. Safe to share across
+    users — the response contains no per-user data.
+    """
     try:
         limit = max(1, min(int(request.query_params.get("limit", 100)), 500))
     except ValueError:
         limit = 100
     qs = (
-        Ad.objects.filter(current_price__gt=0, publish_at__isnull=False)
+        verified(Ad.objects)
+        .filter(current_price__gt=0, publish_at__isnull=False)
         .annotate(
             model_name=F("model__name_fa"),
             brand_slug=F("model__brand__slug"),
@@ -150,7 +162,9 @@ def market_price_trends(request, model_id: int):
 
     # Pull the priced change-only series and bucket+median in Python so the trend
     # is outlier-robust (median), not mean-skewed.
-    qs = PriceObservation.objects.filter(ad__model_id=model.id, price__gt=0)
+    qs = verified_by_ad(
+        PriceObservation.objects.filter(ad__model_id=model.id, price__gt=0)
+    )
     if variant:
         qs = qs.filter(ad__variant_id=variant)
     rows = qs.values_list("observed_at", "price")

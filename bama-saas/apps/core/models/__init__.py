@@ -7,11 +7,10 @@ analytics) so the code is easy to navigate; the DB tables keep their original
 """
 
 from apps.core.models.analytics import (
-    AnalyticsCache,
     DailyInventorySnapshot,
     DealScoreCache,
+    MarketIndex,
     MarketSnapshot,
-    PriceStatistics,
 )
 from apps.core.models.catalog import (
     Ad,
@@ -25,9 +24,14 @@ from apps.core.models.history import (
     AdChangeEvent,
     AdObservation,
     AdVersion,
-    AuditRun,
+    DataQualitySnapshot,
     FetchRun,
+    JobRun,
+    ListingEpisode,
+    IngestReject,
+    PageCoverage,
     UnknownTimePhrase,
+    VehicleIdentity,
 )
 from apps.core.models.price import PriceDropEvent, PriceObservation
 
@@ -36,10 +40,12 @@ __all__ = [
     "Brand", "Model", "Variant", "City", "Dealer", "Ad",
     # history / provenance
     "FetchRun", "AdVersion", "AdObservation", "AdChangeEvent",
-    "AuditRun", "UnknownTimePhrase",
+    "UnknownTimePhrase", "PageCoverage", "IngestReject",
+    "DataQualitySnapshot", "JobRun",
+    "VehicleIdentity", "ListingEpisode",
     # market / price
     "PriceObservation", "PriceDropEvent",
     # analytics
-    "PriceStatistics", "AnalyticsCache", "DailyInventorySnapshot",
-    "DealScoreCache", "MarketSnapshot",
+    "DailyInventorySnapshot",
+    "DealScoreCache", "MarketSnapshot", "MarketIndex",
 ]

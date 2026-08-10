@@ -12,17 +12,23 @@ import numpy as np
 from django.utils import timezone
 
 from apps.core.models import Ad
+from apps.core.services.quality import verified, without_cohort_outliers
 
 
 def _peer_qs(model_id, variant_id=None, year=None):
     qs = (
-        Ad.objects.filter(model_id=model_id, current_price__gt=0)
+        verified(Ad.objects)
+        .filter(model_id=model_id, current_price__gt=0)
         .exclude(publish_at__isnull=True)
     )
     if variant_id:
         qs = qs.filter(variant_id=variant_id)
     if year:
-        qs = qs.filter(year=year)
+        # An incoming `year` is interpreted as JALALI: `Ad.year` is the raw Bama
+        # value and mixes calendars (1399 and 2025 in one column), so it is not
+        # a usable cohort key. `year_jalali` is canonical, and filtering on it
+        # also drops unparseable years (NULL) from the peer group.
+        qs = qs.filter(year_jalali=year)
     return qs
 
 
@@ -46,7 +52,9 @@ def market_depth(model_id, variant_id=None, year=None) -> dict:
 def undervalued(model_id, variant_id=None, year=None, min_discount_pct: float = 10.0, limit: int = 20) -> dict:
     """Listings priced well below the peer median (peer_count ≥ 5)."""
     qs = _peer_qs(model_id, variant_id, year)
-    rows = list(qs.values("code", "current_price", "year", "mileage", "url", "title"))
+    # Response key stays "year" (public API), but the value is the canonical
+    # Jalali cohort year, not the raw mixed-calendar `Ad.year`.
+    rows = list(qs.values("code", "current_price", "year_jalali", "mileage", "url", "title"))
     if len(rows) < 5:
         return {"model_id": model_id, "variant_id": variant_id, "year": year,
                 "peer_count": len(rows), "median": None, "listings": []}
@@ -57,7 +65,7 @@ def undervalued(model_id, variant_id=None, year=None, min_discount_pct: float = 
         discount_pct = (median - r["current_price"]) / median * 100 if median else 0
         if discount_pct >= min_discount_pct:
             listings.append({
-                "code": r["code"], "price": r["current_price"], "year": r["year"],
+                "code": r["code"], "price": r["current_price"], "year": r["year_jalali"],
                 "mileage": r["mileage"], "title": r["title"], "url": r["url"],
                 "median": int(median),
                 "discount_pct": round(discount_pct, 2),
@@ -71,9 +79,18 @@ def undervalued(model_id, variant_id=None, year=None, min_discount_pct: float = 
 
 
 def depreciation(model_id, variant_id=None, min_points: int = 6) -> dict:
-    """OLS price-vs-mileage: how much value each 10,000 km costs the model."""
+    """OLS price-vs-mileage: how much value each 10,000 km costs the model.
+
+    Cohort outliers are excluded here and nowhere else in this module. Ordinary
+    least squares minimises *squared* error, so it has a breakdown point of zero:
+    one 4-billion-toman Pride can set the slope on its own, and this slope is then
+    reused by the deal score and by the cohort outlier pass itself. The percentile
+    statistics above are order statistics and shrug off a single bad value, and
+    ``undervalued`` deliberately keeps outliers because a suspiciously cheap car is
+    the thing a buyer came to see.
+    """
     rows = list(
-        _peer_qs(model_id, variant_id)
+        without_cohort_outliers(_peer_qs(model_id, variant_id))
         .exclude(mileage__isnull=True)
         .exclude(mileage=0)
         .values_list("mileage", "current_price")

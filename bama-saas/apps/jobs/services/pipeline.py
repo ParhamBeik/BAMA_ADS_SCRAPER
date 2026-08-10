@@ -8,13 +8,21 @@ Each step reuses an existing primitive rather than reimplementing it:
     mark_inactive     (local)  — flips stale ACTIVE ads to REMOVED.
     daily_snapshot    (local)  — idempotently refreshes today's per-slice inventory.
     market_snapshot   (local)  — idempotently refreshes today's whole-market rollup.
+    market_index      (local)  — chains cohort medians into the price index;
+                                 must follow daily_snapshot, whose rows it reads.
     deal_scores       (local)  — rebuilds per-ad DealScoreCache (best-deal board).
-    refresh_analytics (local)  — rebuilds PriceStatistics aggregates.
 
-Steps are independent: a failure in one is logged but does not abort the others,
-so a flaky live fetch still lets the cheap local steps keep analytics fresh. The
-network fetch is retried with exponential backoff; the local steps are not (they
-only touch the DB and either succeed or fail loudly).
+``refresh_analytics`` used to be a step here. It has been deleted outright: the
+only table it wrote, ``PriceStatistics``, was read by no view, serializer or
+service, so every one of its runs was pure cost.
+
+Steps are largely independent — a failure in one is logged and the rest still
+run, so a flaky live fetch does not stop the cheap local steps from keeping
+analytics fresh. The exception is a declared prerequisite (``_DEPENDS_ON``): a
+step whose input never refreshed is *skipped* rather than allowed to publish a
+plausible number computed from yesterday. Every step records a JobRun either way.
+The network fetch is retried with exponential backoff; the local steps are not
+(they only touch the DB and either succeed or fail loudly).
 
 User-facing alert evaluation and digests are NOT in this 5-minute pipeline —
 they run on their own slower crons (see deploy/worker/) so a flaky email/Telegram
@@ -44,19 +52,42 @@ logger = logging.getLogger("bama.worker")
 STEP_ORDER = (
     "fetch",
     "mark_inactive",
+    "episodes",
     "daily_snapshot",
+    "market_index",
     "market_snapshot",
     "deal_scores",
-    "refresh_analytics",
 )
 
 # Local step name → management command. The network step (fetch) is special-cased.
 _LOCAL_COMMANDS = {
     "mark_inactive": "mark_inactive_ads",
+    # After removal marking: an episode ends when an ad stops being seen.
+    "episodes": "sync_episodes",
     "daily_snapshot": "daily_snapshot",
+    # Strictly after daily_snapshot: the index is chained arithmetic over the
+    # rows that command writes, so running it first would index yesterday.
+    "market_index": "build_market_index",
     "market_snapshot": "market_snapshot",
     "deal_scores": "compute_deal_scores",
-    "refresh_analytics": "refresh_analytics",
+    # No refresh_analytics: PriceStatistics, the only table it wrote, was read by
+    # nothing and has been removed along with the command.
+}
+
+
+# Steps that must not run when a prerequisite failed, because they would produce
+# a plausible-looking number from data that was never refreshed.
+#
+# Only the real chain is listed. A failed *fetch* deliberately does NOT cascade:
+# the local steps are idempotent maintenance over what is already stored, and
+# stopping them on a transient network blip would mean one flaky minute costs a
+# day of snapshots. mark_inactive_ads is separately safe — it needs two completed
+# sweeps on record, which a failed fetch does not produce.
+_DEPENDS_ON = {
+    # The index is chained arithmetic over the rows daily_snapshot writes, so on a
+    # failed snapshot it would extend the series using yesterday's inventory and
+    # report the gap as a real market move.
+    "market_index": ("daily_snapshot",),
 }
 
 
@@ -106,13 +137,75 @@ def _retry(fn: Callable, *, attempts: int, base_delay: float, label: str):
             time.sleep(delay)
 
 
+def record_job(name: str, *, triggered_by: str = "scheduler"):
+    """Context manager that persists one JobRun row around a unit of work.
+
+    Every scheduled step routes through here, so "did it run?" stops being a
+    question you answer by reading container logs. Yields the row so a caller can
+    annotate it; marks it failed and re-raises on exception.
+    """
+    from apps.core.models import JobRun
+
+    return _JobRecorder(JobRun, name, triggered_by)
+
+
+class _JobRecorder:
+    def __init__(self, model, name: str, triggered_by: str):
+        self.model, self.name, self.triggered_by = model, name, triggered_by
+        self.row = None
+        self._start = 0.0
+
+    def __enter__(self):
+        self._start = time.monotonic()
+        self.row = self.model.objects.create(
+            name=self.name,
+            status=self.model.Status.RUNNING,
+            triggered_by=self.triggered_by,
+            started_at=timezone.now(),
+        )
+        return self.row
+
+    def __exit__(self, exc_type, exc, tb):
+        self.row.duration_s = time.monotonic() - self._start
+        self.row.finished_at = timezone.now()
+        if exc is not None:
+            self.row.status = self.model.Status.FAILED
+            self.row.error = str(exc)[:4000]
+        elif self.row.status == self.model.Status.RUNNING:
+            self.row.status = self.model.Status.OK
+        self.row.save()
+        return False  # never swallow
+
+
+def record_skipped(name: str, reason: str) -> None:
+    """Persist the fact that a step did not run because a prerequisite failed.
+
+    A step that was skipped and a step that succeeded look identical when only
+    failures are recorded, which is exactly how stale analytics get mistaken for
+    fresh ones.
+    """
+    from apps.core.models import JobRun
+
+    JobRun.objects.create(
+        name=name,
+        status=JobRun.Status.SKIPPED,
+        started_at=timezone.now(),
+        finished_at=timezone.now(),
+        duration_s=0.0,
+        detail=reason,
+    )
+
+
 def _exec_cmd_step(
-    name: str, command: str, *, retry: Optional[dict] = None, **opts
+    name: str, command: str, *, retry: Optional[dict] = None,
+    triggered_by: str = "scheduler", **opts
 ) -> StepResult:
     """Run one management command as a step.
 
     The command must raise on failure (call_command does) so an optional retry
-    policy can fire. Captures stdout into ``detail`` for the report.
+    policy can fire. Captures stdout into ``detail`` for the report, and persists
+    a JobRun row either way — this is the one place every scheduled step passes
+    through, so it is the only place that has to remember.
     """
     start = time.monotonic()
     buf = StringIO()
@@ -122,12 +215,14 @@ def _exec_cmd_step(
         call_command(command, **call_opts)
 
     try:
-        runner = run_once if retry is None else lambda: _retry(run_once, label=name, **retry)
-        runner()
-        dur = time.monotonic() - start
-        detail = buf.getvalue().strip().replace("\n", " | ")
-        logger.info("step=%s OK duration=%.1fs %s", name, dur, detail)
-        return StepResult(name, True, detail, dur)
+        with record_job(name, triggered_by=triggered_by) as job:
+            runner = run_once if retry is None else lambda: _retry(run_once, label=name, **retry)
+            runner()
+            dur = time.monotonic() - start
+            detail = buf.getvalue().strip().replace("\n", " | ")
+            job.detail = detail[:4000]
+            logger.info("step=%s OK duration=%.1fs %s", name, dur, detail)
+            return StepResult(name, True, detail, dur)
     except Exception as exc:  # noqa: BLE001
         dur = time.monotonic() - start
         logger.exception("step=%s FAILED duration=%.1fs err=%s", name, dur, exc)
@@ -167,20 +262,32 @@ def run_pipeline(
     report = PipelineReport(started_at=timezone.now())
     logger.info("pipeline start mode=%s steps=[%s]", mode, ",".join(s for s in STEP_ORDER if s in enabled))
 
+    failed: set[str] = set()
     for name in STEP_ORDER:
         if name not in enabled:
+            continue
+        blocker = next((p for p in _DEPENDS_ON.get(name, ()) if p in failed), None)
+        if blocker:
+            reason = f"prerequisite {blocker!r} failed"
+            logger.warning("step=%s SKIPPED (%s)", name, reason)
+            record_skipped(name, reason)
+            report.steps.append(StepResult(name, False, f"skipped: {reason}", 0.0))
+            failed.add(name)
             continue
         if name == "fetch":
             opts = {"mode": mode}
             if fetch_max_ads is not None:
                 opts["max_ads"] = fetch_max_ads
-            report.steps.append(_exec_cmd_step(
+            result = _exec_cmd_step(
                 "fetch", "fetch_live",
                 retry={"attempts": fetch_attempts, "base_delay": fetch_retry_delay},
                 **opts,
-            ))
+            )
         else:
-            report.steps.append(_exec_cmd_step(name, _LOCAL_COMMANDS[name]))
+            result = _exec_cmd_step(name, _LOCAL_COMMANDS[name])
+        report.steps.append(result)
+        if not result.ok:
+            failed.add(name)
 
     report.finished_at = timezone.now()
     logger.info("%s", report.summary())

@@ -34,4 +34,10 @@ mkdir -p "$PROJECT_DIR/logs"
 export DJANGO_SETTINGS_MODULE="${DJANGO_SETTINGS_MODULE:-config.settings.dev}"
 
 KIND="${1:-daily}"
-exec "$PYTHON_BIN" manage.py send_digest --kind "$KIND"
+LOCK="${BAMA_DIGEST_LOCK:-/tmp/bama-saas-digest.lock}"
+if command -v flock >/dev/null 2>&1; then
+    exec flock -n "$LOCK" "$PYTHON_BIN" manage.py send_digest --kind "$KIND"
+else
+    echo "bama.digest: flock not found on this host; running unlocked." >&2
+    exec "$PYTHON_BIN" manage.py send_digest --kind "$KIND"
+fi

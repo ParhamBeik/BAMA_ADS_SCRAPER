@@ -2,183 +2,124 @@
 
 Backend stack: **Django 5.2 + DRF + SimpleJWT + drf-spectacular + PostgreSQL**
 (Python ≥ 3.11). PostgreSQL-only (GIN indexes, `django.contrib.postgres`) —
-SQLite is not supported. The previous FastAPI + SQLAlchemy + Alembic
-implementation has been fully replaced.
+SQLite is not supported.
 
-The work below is split into **Foundation** (pre-existing infrastructure,
-shipped before the MVP-completion pass) and **MVP completion** (the four phases
-delivered on top of it — database completion, analytics engine, premium
-features, and the finished OpenAPI-documented REST surface).
+**382 tests pass. OpenAPI schema is warning-free.**
 
-## Foundation (pre-existing) ✅
+## What exists
 
-- **Infra:** `docker-compose.yml` (`postgres:16-alpine` + `django` + `dev`-profile
-  `pgadmin`); split settings `config/settings/{base,dev,prod}.py`; `Dockerfile`,
-  `requirements.txt`, `manage.py`.
-- **Auth/users:** email-based custom `User` (UUID pk); SimpleJWT (access 15 m /
-  refresh 7 d, rotating + blacklisted) at `/api/auth/{register,login,refresh,me}/`;
-  `Subscription` (free/pro/enterprise, `monthly_api_limit`, `api_usage_count`)
-  auto-created on registration; `SubscriptionThrottle` + `MonthlyQuotaThrottle`.
-- **Catalog:** normalized `Brand→Model→Variant→City→Dealer→Ad` (Ad PK is `code`;
-  `raw_payload` JSONB + GIN index).
-- **Provenance (append-only):** `FetchRun`, `AdVersion` (semantic-hash dedup),
-  `AdObservation`, `AdChangeEvent`, `AuditRun`.
-- **Price-through-time (change-only):** `PriceObservation` (per ad), plus
-  `payment` / `prepayment` / `installments` / `price_type`.
-- **Ingestion:** shared `apps/jobs/services/ingest.py` (snapshot upsert → immutable
-  version → per-run observation → change-only price → content change events);
-  `import_scraped`, `import_history`, `fetch_live`, `refresh_analytics`.
-- **Baseline analytics:** `truemean` (z-score/percentile outlier trim), `bollinger`
-  (SMA bands), `insights` (liquidity / market_depth / undervalued / depreciation);
-  `PriceStatistics` (precomputed) + `AnalyticsCache`.
+| Area | State |
+| --- | --- |
+| Catalog | Normalized `Brand→Model→Variant→City→Dealer→Ad`; `Ad` pk is `code`, hot columns + `raw_payload` JSONB with GIN. |
+| Provenance | Append-only `FetchRun`, `AdVersion` (semantic-hash dedup), `AdObservation`, `AdChangeEvent`, `PageCoverage`, `IngestReject`. |
+| Price history | Change-only `PriceObservation` + `PriceDropEvent`. |
+| Crawler | `fetch_live` delta/full/backfill, adaptive 429/5xx backoff, checkpoint resume (SIGTERM-safe), confirmed end-of-feed, `PageCoverage` ledger, `crawl_gaps` repair. |
+| Verification | **Four layers.** Row rules (`verify.py`, incl. cross-field contradictions) → temporal rules vs the ad's own past (`verify_temporal.py`) → cohort-relative outliers by median/MAD (`verify_cohort.py`) → daily distribution drift (`drift.py`). Hard failures quarantine in `IngestReject`; everything else flags. Reads go through `quality.verified` / `verified_by_ad` / `without_cohort_outliers`. |
+| Identity | `VehicleIdentity` + `ListingEpisode`. Cars are matched on Bama's per-vehicle image folder uuid, which it reuses across relistings — 65 uuids cover 139 codes. Shared identity is classified by dates: overlapping = duplicate listing, sequential = relist. |
+| Insight products | **Liquidity** (Kaplan-Meier with right-censoring, hazard by price position), **fair price** (explainable components + measured negotiation room + dispersion leaderboard), **retention** (per-year medians, cohort-adjusted regional spreads). |
+| Job visibility | `JobRun` records every scheduled step including `skipped` when a prerequisite failed. `GET /api/admin/jobs/overview/`. |
+| Frontend (new) | `web/` — React + Vite + TypeScript, five workspaces, types generated from the OpenAPI schema, light/dark/system. Runs alongside the old SPA until parity. |
+| Analytics | true-mean, Bollinger (median-based), liquidity, market depth, undervalued, depreciation, rankings, regional, dealers, inventory trend, time-on-market, fast movers, price drops, mileage-adjusted deal scores. |
+| **Market index** | **Matched-cohort chained index** (`services/index.py`) — the composition-controlled answer to "did prices move". Market/brand/model scopes. |
+| Monitoring | `crawl_health` — sweep freshness, failed runs, ingest-reject spikes, coverage gaps, ingest progress. CLI (exit 1) + `GET /api/admin/jobs/crawl-health/` (503). |
+| Engagement | Favorites, watchlists, saved searches, alerts, notification inbox; subscription-aware throttles on writes. |
+| Frontend | **Working** no-build Persian SPA: vanilla ES modules, hash router, vendored Chart.js, 5 page modules. Not a placeholder. |
+| Worker | cron (`install_cron.sh`) **or** the in-container loop (`run_worker.sh`); they refuse to run together. |
 
-## MVP completion
+## The market index — why it exists
 
-### Phase 3 — Database completion ✅
+The raw market median answers "what does a car cost today", which is *not*
+"did prices move". Measured on the live 54k-ad database:
 
-Added the tables the product needs without disturbing the existing schema (no
-duplicates of existing models). New migrations: `catalog/0003`,
-`analytics/0002`, plus the accounts-engagement migration.
-
-- **`catalog.Ad`** — `status` (`ACTIVE`/`REMOVED`) + `removed_at`; `mark_inactive_ads`
-  flips ads not seen for N hours to `REMOVED` and stamps `removed_at`.
-- **`analytics.DailyInventorySnapshot`** — per-day active/new/removed counts +
-  price spread (written by `daily_snapshot`).
-- **`analytics.MarketSnapshot`** — per-day market-wide rollup + brand breakdown
-  (written by `market_snapshot`).
-- **`analytics.DealScoreCache`** — per-ad deal score, discount %, peer median,
-  components (one-to-one with `Ad`; written by `compute_deal_scores`).
-- **`market.PriceDropEvent`** — every price decrease (amount + %, indexed); emitted
-  inline by the ingestion pipeline on each detected price drop.
-- **`accounts` engagement** — `Favorite` (unique user+ad), `Watchlist` (M2M ads),
-  `SavedSearch` (params JSON + `notify` + `last_checked_at`), `Alert`
-  (`price_drop`/`undervalued`/`new_listing`, polymorphic target, threshold,
-  channels), `Notification` (channel + status + dedupe key); `User.telegram_chat_id`.
-
-### Phase 4 — Analytics engine ✅
-
-Reuses the existing `truemean`/`bollinger`/`insights`/`PriceStatistics` services;
-adds two new ones and exposes everything over the API.
-
-- **`analytics/services/deal_score.py`** — `compute_deal_scores(min_peers=3,
-  model_id=None)`: scores each ad against its (brand,model,variant,year) peer
-  group via `discount_pct * exp(-age_days/90)`, full-refreshed into
-  `DealScoreCache`.
-- **`analytics/services/metrics.py`** — rankings (brands/models/variants),
-  regional pricing, dealer statistics, inventory trend, market overview,
-  time-on-market, fast sellers, price drops. Medians computed in Python
-  (no ORM median aggregate) to stay outlier-robust.
-- **11 new endpoints** under `/api/analytics/` (see API section).
-- **Pipeline integration:** `run_pipeline` now runs `mark_inactive →
-  daily_snapshot → market_snapshot → deal_scores → refresh_analytics`.
-
-### Phase 5 — Premium features ✅
-
-- **Engagement CRUD** (owner-scoped, JWT-authenticated): favorites, watchlists
-  (with nested ad membership), saved searches, alerts, read-only notification
-  inbox — all mounted at `/api/<resource>/`.
-- **Notification delivery** (`accounts/notifications.py`): `send_email`
-  (console backend by default), `send_telegram` (silent skip when no token/
-  chat_id), `create_notification` (dedupes on `dedupe_key`), `deliver` (never
-  raises). Channels: in-app / email / telegram.
-- **Alert evaluation** (`accounts/alerts.py` + `evaluate_alerts` command):
-  `price_drop`, `undervalued`, `new_listing` handlers fan out notifications.
-- **Digests:** `send_digest --kind daily|weekly` per active user.
-- **Throttle wiring:** `SubscriptionThrottle` (burst by plan) +
-  `MonthlyQuotaThrottle` (atomic `F()` increment, hard monthly cap) now attached
-  to every engagement **write** viewset — the latent `get_rate()` crash is fixed.
-
-### Phase 6 — API (OpenAPI-documented) ✅
-
-- **drf-spectacular** added; `DEFAULT_SCHEMA_CLASS` set; `SPECTACULAR_SETTINGS`
-  declares the JWT security scheme. **`manage.py spectacular` is warning- and
-  error-free** (54 paths, 19 tag groups). Every function-based view carries
-  `@extend_schema` *above* `@api_view` (the order matters — underneath, the
-  `responses` override is lost).
-- **Interactive docs:** `GET /api/schema/` (OpenAPI 3), `GET /api/docs/`
-  (Swagger UI), `GET /api/redoc/`.
-- **Admin job triggers** (IsStaff-gated, run in a daemon thread, return 202):
-  `/api/admin/jobs/{fetch,import,refresh-analytics,deal-scores,evaluate-alerts}/`.
-- All endpoint groups tagged for the docs UI: `auth`, `brands`, `models`, `ads`,
-  `Markets`, `Charts`, `Market history`, `Price history`, `Analytics`, `History`,
-  `changes`, `observations`, `fetch-runs`, `favorites`, `watchlists`,
-  `saved-searches`, `alerts`, `notifications`, `Admin · Jobs`.
-
-## Background worker ✅
-
-Linux cron + `flock` (no Celery). `deploy/worker/install_cron.sh` installs three
-auto-managed entries (idempotent, distinct markers):
-
-| Cadence | Runner | Does |
+| Window | Raw median | Matched-cohort index |
 | --- | --- | --- |
-| `*/5 * * * *` | `run_pipeline.sh` | fetch + maintain + snapshots + deal scores + analytics |
-| `*/30 * * * *` | `run_alerts.sh` | evaluate user alerts → notifications |
-| `17 8 * * *` | `run_digest.sh` | per-user daily digest (weekly is a manual run) |
+| Jul 5 → Aug 7 | **−6.7%** | **+0.45%** |
 
-`run_pipeline` = `fetch_live` → `mark_inactive_ads` → `daily_snapshot` →
-`market_snapshot` → `compute_deal_scores` → `refresh_analytics`.
+The median's swing was not a market move. On Jul 16 crawl coverage collapsed to
+3,063 ads and the median "rose" 37%; when coverage recovered it "crashed" 31%.
+The index reported ~0% through both, because it only ever compares a cohort
+against itself and cohorts present on just one of two dates contribute no
+return. The old `price-trends` endpoint bucketed on `observed_at` — crawl time —
+so it was measuring crawler behaviour and calling it the market.
 
-## Testing ✅
+## Data-integrity invariants
 
-`pytest` + `pytest-django`. **95 tests pass** on the live Homebrew Postgres DB
-(`postgresql@18:5432`, db `bama_saas`, user `parham` — Docker is unavailable in
-this environment, so verification is via Homebrew PG, not `docker compose`).
+- **Cohort key is `year_jalali`, never raw `Ad.year`.** Bama publishes model
+  years in either calendar depending on brand (36,782 Jalali vs 20,480
+  Gregorian), so `year` mixes 1399 and 2025 in one column.
+- **Zero kilometres is 0, not NULL** (~33% of ads).
+- **Removal is proven, not guessed.** An ad is `REMOVED` when absent from the
+  last two *completed* (`reached_end`) sweeps. The old `STALE_AFTER_DAYS=14`
+  wall-clock rule, against a 6-hourly sweep, had left `removed_count` at 0 on
+  every snapshot date ever taken. Fewer than two sweeps on record ⇒ nothing is
+  marked, so a stalled crawler can never be read as an empty market.
+- **Deal scores are mileage-adjusted** to the cohort's median mileage, using the
+  slope `insights.depreciation()` already fits — applied only when that fit is
+  available, explains enough variance, and slopes downward.
+- **Leaving the feed is not a sale.** `fast_movers` / `days_to_delist`, never
+  "sold": the payload cannot distinguish sold from expired from withdrawn.
 
-- `tests/test_parsing.py` — pure-Python, no DB.
-- `tests/test_analytics.py` + `tests/test_analytics_engine.py` — analytics services
-  + the Phase-4 engine (30 tests).
-- `tests/test_importer.py` — ingestion pipeline.
-- `tests/test_premium.py` — Phase-5 engagement + alerts + digest (15 tests).
+## Worker pipeline
 
-## Known issues / deferred
+Every ~5 min: `fetch → mark_inactive → episodes → daily_snapshot → market_index →
+market_snapshot → deal_scores`.
 
-- **Frontend is deferred.** The project is backend-first; `frontend/` is an empty
-  placeholder.
-- **`docker compose` v2 plugin required** (use `docker compose …`, not the legacy
-  Python `docker-compose`). Not exercised in this environment — verified via
-  Homebrew PG instead.
-- **Celery/Redis still stubbed** (commented in `docker-compose.yml`). The worker
-  is cron + daemon-thread admin jobs; a real queue is a future hardening step.
-- **Email delivery** defaults to the console backend; set SMTP env vars
-  (`EMAIL_HOST`/`EMAIL_HOST_USER`/`EMAIL_HOST_PASSWORD`/`EMAIL_USE_TLS`) for
-  production. Telegram delivery is a no-op until `TELEGRAM_BOT_TOKEN` is set.
+Every 6 h (sweep): `fetch_live --mode full → crawl_gaps → flag_cohort_outliers →
+data_quality → crawl_health`.
 
-## Verification commands
+Steps record a `JobRun` either way, and a step whose declared prerequisite failed
+is recorded as `skipped` rather than silently not running — `market_index` is
+chained arithmetic over `daily_snapshot`'s rows, so running it on a failed
+snapshot would publish the gap as a real market move. A failed *fetch*
+deliberately does not cascade: the local steps are idempotent maintenance over
+stored data, and one flaky minute should not cost a day of snapshots.
+
+`refresh_analytics` is gone entirely, along with the `PriceStatistics` table it
+wrote — no view, serializer or service ever read it.
+
+## Known gaps / deferred
+
+- **Catalog aliases are detected but not merged.** Bama renames models in ad
+  titles (`تیگو 8 پرو مکس (F8 PRO MAX)` → `(F8)`), and each spelling becomes its
+  own catalog row, so one car's cohort is split across two. `confirm_dimensions
+  --aliases` reports them, keyed on the same ad code appearing under two names.
+  Merging needs a human: some near-matches (`سوناتا` vs `سوناتا هیبرید`) are
+  genuinely different cars, and a wrong merge is unrecoverable.
+- **Survival medians go degenerate on backfilled history.** `mark_inactive_ads`
+  closed thousands of episodes at one timestamp, so durations cluster and every
+  cohort's median lands on the same day. Fixed-horizon survival
+  (`still_listed_at_30d`) reads correctly through it and is reported alongside;
+  the medians will spread out as episodes close organically.
+- **No real-terms (deflated) series.** Prices are nominal Toman, so an
+  inflationary rise and a real one look identical. Deliberate — adding an
+  FX/CPI deflator means a second ingest source with its own reliability story.
+- **Detail pages are not fetched** — and are not needed. The listing feed already
+  carries description, images, specs, dealer and authenticity data; description
+  length, image count, seller authentication and the source's modified timestamp
+  are promoted to typed columns. Engine, battery, range and promotion state stay
+  in the JSONB until something reads them.
+- **`new_count` means first-*seen*, not newly-published.** Median lag between
+  `publish_at` and `first_seen_at` is ~8 days, so backfill inflates it.
+- **Celery/Redis still stubbed**; the worker is cron/loop + daemon threads.
+- **Email** defaults to the console backend; Telegram is a no-op without
+  `TELEGRAM_BOT_TOKEN`.
+
+## Verification
 
 ```bash
-# Local (Homebrew PG; DATABASE_URL defaults to postgresql://parham@localhost:5432/bama_saas)
+docker compose up -d postgres worker
 python manage.py migrate
-python manage.py createsuperuser
-python manage.py runserver          # http://localhost:8000/api/ and /admin/
+pytest                                    # 382 passing
+python manage.py spectacular --format openapi-json --urlconf config.urls
 
-# OpenAPI docs (Phase 6)
-python manage.py spectacular --format openapi-json --urlconf config.urls   # 0 warnings
-# then visit /api/docs/ (Swagger) or /api/redoc/
+python manage.py backfill_snapshots --days 40   # history from provenance
+python manage.py daily_snapshot
+python manage.py build_market_index
+python manage.py crawl_health             # exit 1 when unhealthy
 
-# Seed + analytics
-python manage.py import_scraped
-python manage.py import_history
-python manage.py refresh_analytics --min-count 3
-
-# MVP-completion commands (Phase 3-5)
-python manage.py mark_inactive_ads            # flip stale ads → REMOVED
-python manage.py daily_snapshot               # write DailyInventorySnapshot for today
-python manage.py market_snapshot              # write MarketSnapshot for today
-python manage.py compute_deal_scores          # rebuild DealScoreCache
-python manage.py evaluate_alerts              # user alerts → notifications
-python manage.py send_digest --kind daily     # (or --kind weekly)
-
-# Full worker pipeline (Phase 2 / Phase 4 integration)
-python manage.py run_pipeline
-
-# Worker cron
-deploy/worker/install_cron.sh                 # install the 3 auto-managed crontab entries
-
-# Tests
-pytest                                        # 95 passing
+curl -s 'localhost:8000/api/analytics/market-index/?days=90' | jq
 ```
 
 ---
 
-**Last updated:** 2026-07-18
-**Status:** Foundation + MVP Phases 3–6 complete; 95 tests green; OpenAPI schema clean.
+**Last updated:** 2026-08-09

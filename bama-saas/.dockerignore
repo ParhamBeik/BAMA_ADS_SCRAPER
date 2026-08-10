@@ -12,3 +12,4 @@ node_modules
 staticfiles
 .pytest_cache
 graphify-out
+data

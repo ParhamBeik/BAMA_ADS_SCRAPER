@@ -258,7 +258,7 @@ export async function modelPage(view = Ctx(), params = {}) {
         stat("ارزش واقعی بازار", price(truemean.mean || truemean.median), `میانه: ${price(truemean.median)} · بازه منصفانه: ${price(truemean.fair_min)}`, ""),
         stat("نمونه‌های بررسی‌شده", num(truemean.count_after), `از ${num(truemean.count_before)} پس از حذف پرت`),
         stat("میانگین روزهای نمایش", num(tom.avg_days_listed), `میانه ${num(tom.median_days_listed)} روز`),
-        stat("فروش سریع", num(tom.removed_count), `میانه ${num(tom.median_days_to_sell)} روز تا فروش`),
+        stat("حذف‌شده از فهرست", num(tom.removed_count), `میانه ${num(tom.median_days_to_delist)} روز تا حذف`),
       ]),
       priceBlk.node,
       el("div", { class: "grid cols-2" }, [

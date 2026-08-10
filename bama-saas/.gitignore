@@ -19,3 +19,8 @@ data/
 
 # Local DB volume
 postgres_data/
+
+# Frontend build artefacts
+web/node_modules/
+web/dist/
+web/openapi.json
