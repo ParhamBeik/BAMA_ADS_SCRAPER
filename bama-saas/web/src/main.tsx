@@ -1,0 +1,37 @@
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { BrowserRouter } from "react-router-dom";
+import { App } from "./App";
+import { ThemeProvider } from "./theme";
+import "./styles.css";
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      // Analytics are rebuilt on a schedule, not per request, so refetching on
+      // every window focus would be pure load for an identical answer.
+      refetchOnWindowFocus: false,
+      staleTime: 60_000,
+      // A 403 means "you do not have this tier" and a 404 means "not there".
+      // Retrying either is noise; only transient failures are worth a second go.
+      retry: (count, error: unknown) => {
+        const status = (error as { status?: number })?.status;
+        if (status && status < 500) return false;
+        return count < 2;
+      },
+    },
+  },
+});
+
+createRoot(document.getElementById("root")!).render(
+  <StrictMode>
+    <QueryClientProvider client={queryClient}>
+      <ThemeProvider>
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>
+      </ThemeProvider>
+    </QueryClientProvider>
+  </StrictMode>,
+);

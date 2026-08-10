@@ -1,0 +1,21 @@
+{
+  "captured_at": "2026-08-01T12:00:00Z",
+  "git_commit": "c5d1868e2e411beb763ac523cda0c4fd62e056a1",
+  "database_size_bytes": 340787200,
+  "latest_ad_seen": "2026-07-26T22:56:07.729710Z",
+  "counts": {
+    "catalog_ad": 28728,
+    "history_fetchrun": 71,
+    "history_pagecoverage": 2219,
+    "history_adversion": 32384,
+    "history_adobservation": 66102,
+    "history_adchangeevent": 3637,
+    "history_ingestreject": 54,
+    "market_priceobservation": 29005,
+    "market_pricedropevent": 179,
+    "analytics_dailyinventorysnapshot": 2989,
+    "analytics_marketsnapshot": 1,
+    "analytics_dealscorecache": 10344,
+    "analytics_pricestatistics": 1677
+  }
+}

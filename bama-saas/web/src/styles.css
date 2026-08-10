@@ -1,0 +1,238 @@
+/*
+ * One token set, two themes.
+ *
+ * Every colour below is defined for both schemes and referenced only through a
+ * variable, so "does this work in light mode" stops being a per-component
+ * question. The names carry over from the old app.css so the mapping is
+ * traceable.
+ *
+ * Semantic colours are separated from surface colours on purpose: green and red
+ * mean direction (up, down) and must not be reused for decoration, or a chart
+ * legend stops meaning anything. Amber is reserved for confidence and staleness
+ * warnings, which is the one thing this product must never let a user miss.
+ */
+
+:root {
+  --radius: 10px;
+  --sidebar-w: 232px;
+  --font: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* Persian source text renders in a face that actually has the glyphs. */
+  --font-fa: "Vazirmatn", "Tahoma", var(--font);
+
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --panel-2: #f0f2f5;
+  --border: #dfe3e8;
+  --text: #16191d;
+  --muted: #616a75;
+  --accent: #2563eb;
+  --accent-soft: #dbeafe;
+  --up: #067647;
+  --down: #b42318;
+  --warn: #b54708;
+  --warn-soft: #fef0c7;
+  --shadow: 0 1px 2px rgb(16 24 40 / 6%), 0 1px 3px rgb(16 24 40 / 10%);
+}
+
+:root[data-theme="dark"] {
+  --bg: #0d1117;
+  --panel: #161b22;
+  --panel-2: #1c2129;
+  --border: #2a313c;
+  --text: #e6edf3;
+  --muted: #9198a1;
+  --accent: #4d8bf5;
+  --accent-soft: #17233b;
+  --up: #3fb950;
+  --down: #f85149;
+  --warn: #d29922;
+  --warn-soft: #2b2412;
+  --shadow: none;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Persian names, titles and cities inside English chrome. `dir=auto` on the
+   element plus isolation stops a Persian string from dragging the punctuation
+   of the English sentence around it to the wrong side. */
+.fa {
+  font-family: var(--font-fa);
+  unicode-bidi: isolate;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* --- layout --------------------------------------------------------------- */
+
+.app { display: grid; grid-template-columns: var(--sidebar-w) 1fr; min-height: 100vh; }
+
+.sidebar {
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  padding: 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+
+.brand {
+  font-weight: 650;
+  font-size: 15px;
+  padding: 6px 10px 14px;
+  letter-spacing: -0.01em;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-weight: 500;
+}
+.nav-item:hover { background: var(--panel-2); color: var(--text); text-decoration: none; }
+.nav-item.active { background: var(--accent-soft); color: var(--accent); }
+
+.main { padding: 20px 24px 64px; max-width: 1400px; }
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+.page-title { font-size: 20px; font-weight: 640; margin: 0; letter-spacing: -0.02em; }
+.page-sub { color: var(--muted); margin: 2px 0 0; }
+
+/* --- surfaces ------------------------------------------------------------- */
+
+.grid { display: grid; gap: 14px; }
+.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  box-shadow: var(--shadow);
+}
+/* Deliberately no nested cards: a panel inside a panel reads as depth that is
+   not there and doubles every border in the layout. */
+.card .card { border: 0; box-shadow: none; padding: 0; background: none; }
+
+.card-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+
+.stat { font-size: 26px; font-weight: 640; letter-spacing: -0.02em; }
+.stat-sub { color: var(--muted); font-size: 12px; }
+
+.up { color: var(--up); }
+.down { color: var(--down); }
+.warn { color: var(--warn); }
+
+/* --- controls ------------------------------------------------------------- */
+
+button, select, input {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+button { cursor: pointer; }
+button:hover { background: var(--panel-2); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary:hover { filter: brightness(1.05); }
+
+.segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.segmented button { border: 0; border-radius: 0; padding: 6px 10px; background: var(--panel); }
+.segmented button.on { background: var(--accent-soft); color: var(--accent); }
+
+.filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
+
+/* --- table ---------------------------------------------------------------- */
+
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+th { color: var(--muted); font-weight: 600; font-size: 12px; white-space: nowrap; }
+tbody tr:hover { background: var(--panel-2); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* --- states --------------------------------------------------------------- */
+
+.state {
+  padding: 28px 16px;
+  text-align: center;
+  color: var(--muted);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+.state.error { color: var(--down); border-color: color-mix(in srgb, var(--down) 40%, var(--border)); }
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+.badge.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.badge.accent { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+
+.provenance {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.skeleton {
+  background: linear-gradient(90deg, var(--panel-2) 25%, var(--border) 37%, var(--panel-2) 63%);
+  background-size: 400% 100%;
+  animation: shimmer 1.2s ease infinite;
+  border-radius: 6px;
+}
+@keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+@media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }
+
+@media (max-width: 900px) {
+  .app { grid-template-columns: 1fr; }
+  .sidebar { position: static; height: auto; flex-direction: row; overflow-x: auto; }
+  .cols-2, .cols-3, .cols-4 { grid-template-columns: 1fr; }
+}
