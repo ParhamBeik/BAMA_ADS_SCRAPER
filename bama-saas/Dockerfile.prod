@@ -28,6 +28,12 @@ RUN apt-get update \
     && chown -R appuser:appuser /app
 
 COPY --from=builder /opt/venv /opt/venv
+RUN rm -rf /opt/venv/bin/pip* /opt/venv/lib/python*/site-packages/pip* \
+    /usr/local/lib/python*/site-packages/pip* \
+    /usr/local/lib/python*/site-packages/setuptools* \
+    /usr/local/lib/python*/site-packages/_distutils_hack \
+    /usr/local/lib/python*/site-packages/wheel* \
+    && rm -f /usr/local/bin/pip*
 COPY --chown=appuser:appuser . /app/
 
 USER appuser
