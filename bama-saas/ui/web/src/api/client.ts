@@ -1,10 +1,7 @@
 /**
- * The one place that talks to the backend.
- *
- * Paths are checked against `schema.d.ts`, which is generated from the Django
- * OpenAPI schema (`npm run api:types`). That turns a renamed or removed endpoint
- * into a compile error instead of a blank panel someone notices in production —
- * the class of bug that a hand-written fetch wrapper cannot catch at all.
+ * Cookie-session API client. Credentials are HTTP-only cookies; CSRF is
+ * sent for unsafe methods. Bearer localStorage remains as a legacy fallback
+ * for tests that still inject Authorization headers.
  */
 import type { paths } from "./schema";
 
@@ -12,61 +9,66 @@ export type ApiPath = keyof paths;
 
 const BASE = import.meta.env.VITE_API_BASE ?? "";
 
-const ACCESS_KEY = "bama.access";
-const REFRESH_KEY = "bama.refresh";
-
-export const tokens = {
-  get access() {
-    return localStorage.getItem(ACCESS_KEY);
-  },
-  get refresh() {
-    return localStorage.getItem(REFRESH_KEY);
-  },
-  set(access: string, refresh?: string) {
-    localStorage.setItem(ACCESS_KEY, access);
-    if (refresh) localStorage.setItem(REFRESH_KEY, refresh);
-  },
-  clear() {
-    localStorage.removeItem(ACCESS_KEY);
-    localStorage.removeItem(REFRESH_KEY);
-  },
-};
+function csrfToken(): string | null {
+  const match = document.cookie.match(/(?:^|; )csrftoken=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
 
 export class ApiError extends Error {
   readonly status: number;
   readonly detail: string;
+  readonly body: unknown;
 
-  constructor(status: number, detail: string) {
+  constructor(status: number, detail: string, body?: unknown) {
     super(detail);
     this.status = status;
     this.detail = detail;
+    this.body = body;
   }
 
-  /** 403 on a research endpoint means "needs a subscription", not "broken". */
   get isSubscriptionRequired() {
-    return this.status === 403 && /subscription/i.test(this.detail);
+    return this.status === 403 && /subscription|plan|feature/i.test(this.detail);
   }
 
   get isAuthRequired() {
     return this.status === 401;
+  }
+
+  get isVerificationRequired() {
+    return this.status === 403 && /verif/i.test(this.detail);
   }
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
-  if (init.body) headers.set("Content-Type", "application/json");
-  if (tokens.access) headers.set("Authorization", `Bearer ${tokens.access}`);
+  const method = (init.method ?? "GET").toUpperCase();
+  if (init.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  if (!["GET", "HEAD", "OPTIONS", "TRACE"].includes(method)) {
+    const csrf = csrfToken();
+    if (csrf) headers.set("X-CSRFToken", csrf);
+  }
 
-  const response = await fetch(`${BASE}${path}`, { ...init, headers });
+  const response = await fetch(`${BASE}${path}`, {
+    ...init,
+    headers,
+    credentials: "include",
+  });
 
   if (response.status === 204) return undefined as T;
-  const body = await response.json().catch(() => ({}));
+  const contentType = response.headers.get("content-type") ?? "";
+  const body = contentType.includes("application/json")
+    ? await response.json().catch(() => ({}))
+    : await response.text();
 
   if (!response.ok) {
     const detail =
-      (body as { detail?: string }).detail ?? `Request failed (${response.status})`;
-    throw new ApiError(response.status, detail);
+      typeof body === "object" && body && "detail" in body
+        ? String((body as { detail: unknown }).detail)
+        : `Request failed (${response.status})`;
+    throw new ApiError(response.status, detail, body);
   }
   return body as T;
 }
@@ -75,10 +77,11 @@ export const api = {
   get: <T>(path: string, signal?: AbortSignal) => request<T>(path, { signal }),
   post: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined }),
+  patch: <T>(path: string, body?: unknown) =>
+    request<T>(path, { method: "PATCH", body: body ? JSON.stringify(body) : undefined }),
   del: <T>(path: string) => request<T>(path, { method: "DELETE" }),
 };
 
-/** Provenance every research answer carries. Rendered, never silently dropped. */
 export interface Envelope {
   as_of: string;
   methodology_version: number;
@@ -100,4 +103,18 @@ export interface Paginated<T> {
   next: string | null;
   previous: string | null;
   results: T[];
+}
+
+export interface MeResponse {
+  user: {
+    id: string;
+    email: string;
+    full_name: string;
+    is_staff: boolean;
+    email_verified_at: string | null;
+  };
+  subscription: { plan_type: string; status: string; expires_at: string | null } | null;
+  plan: string;
+  limits: Record<string, number | boolean>;
+  verified: boolean;
 }

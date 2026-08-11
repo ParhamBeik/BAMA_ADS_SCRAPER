@@ -30,6 +30,22 @@ from .notifications import create_notification, deliver
 # Default channel set when an alert has none stored.
 _DEFAULT_CHANNELS = [Notification.Channel.INAPP, Notification.Channel.EMAIL]
 
+# Legacy UI / clients historically sent "in_app"; the model enum is "inapp".
+_CHANNEL_ALIASES = {
+    "in_app": Notification.Channel.INAPP,
+}
+
+
+def _normalize_channels(channels) -> list[str]:
+    """Map known aliases onto Notification.Channel values; drop unknowns."""
+    allowed = {c.value for c in Notification.Channel}
+    out: list[str] = []
+    for raw in channels or []:
+        ch = _CHANNEL_ALIASES.get(raw, raw)
+        if ch in allowed and ch not in out:
+            out.append(ch)
+    return out or list(_DEFAULT_CHANNELS)
+
 
 def _fan_out(alert, *, subject, body, related_ad, dedupe_key, channels, counters):
     """Create + deliver one Notification per channel for a single event.
@@ -151,7 +167,7 @@ def evaluate_alerts() -> dict:
     )
     for alert in alerts:
         counters["alerts"] += 1
-        channels = alert.channels or list(_DEFAULT_CHANNELS)
+        channels = _normalize_channels(alert.channels)
         handler = _EVALUATORS.get(alert.alert_type)
         if handler is None:
             continue

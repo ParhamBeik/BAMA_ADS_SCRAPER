@@ -46,6 +46,12 @@ class User(AbstractBaseUser, PermissionsMixin):
     date_joined = models.DateTimeField(default=timezone.now)
     # Telegram chat id for push delivery (Phase 5). Empty = Telegram disabled.
     telegram_chat_id = models.CharField(max_length=64, blank=True, default="")
+    email_verified_at = models.DateTimeField(null=True, blank=True)
+    session_version = models.PositiveIntegerField(default=0)
+    deletion_requested_at = models.DateTimeField(null=True, blank=True)
+    preferred_brands = models.JSONField(default=list, blank=True)
+    preferred_models = models.JSONField(default=list, blank=True)
+    onboarding_completed_at = models.DateTimeField(null=True, blank=True)
 
     objects = UserManager()
 
@@ -207,6 +213,16 @@ class Alert(models.Model):
     )
     channels = models.JSONField(default=list, blank=True)
     enabled = models.BooleanField(default=True)
+
+    class Delivery(models.TextChoices):
+        DISABLED = "disabled", "Disabled"
+        INAPP = "inapp", "In-app only"
+        IMMEDIATE = "immediate", "Immediate email + in-app"
+        DAILY = "daily", "Daily email + in-app"
+
+    delivery = models.CharField(
+        max_length=16, choices=Delivery.choices, default=Delivery.IMMEDIATE
+    )
     created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
@@ -260,4 +276,83 @@ class Notification(models.Model):
         ordering = ("-created_at",)
         indexes = [
             models.Index(fields=("user", "status"), name="notif_user_status_idx"),
+        ]
+
+
+class FeatureUsageCounter(models.Model):
+    """Daily atomic usage counters for capped features (e.g. valuations)."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="feature_usage")
+    feature = models.CharField(max_length=64)
+    day = models.DateField()
+    count = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = "accounts_feature_usage"
+        constraints = [
+            models.UniqueConstraint(
+                fields=("user", "feature", "day"), name="uq_feature_usage_day"
+            ),
+        ]
+
+
+class ProAccessRequest(models.Model):
+    """In-app Pro upgrade request; staff approves with optional expiry."""
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        APPROVED = "approved", "Approved"
+        REJECTED = "rejected", "Rejected"
+        CANCELLED = "cancelled", "Cancelled"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="pro_requests")
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
+    message = models.TextField(blank=True, default="")
+    staff_note = models.TextField(blank=True, default="")
+    reviewed_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name="reviewed_pro_requests"
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    granted_expires_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "accounts_pro_request"
+        ordering = ("-created_at",)
+
+
+class StaffAuditLog(models.Model):
+    """Append-only record of staff mutations in the control center."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    actor = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="staff_actions")
+    action = models.CharField(max_length=120)
+    target_type = models.CharField(max_length=64, blank=True, default="")
+    target_id = models.CharField(max_length=64, blank=True, default="")
+    detail = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "accounts_staff_audit"
+        ordering = ("-created_at",)
+
+
+class ProductEvent(models.Model):
+    """Privacy-minimal first-party analytics; purge after 90 days."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name="product_events"
+    )
+    event = models.CharField(max_length=64)
+    properties = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "accounts_product_event"
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=("event", "created_at"), name="product_event_idx"),
         ]

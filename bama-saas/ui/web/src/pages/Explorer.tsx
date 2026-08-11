@@ -13,6 +13,7 @@
  */
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { AlertTriangle } from "lucide-react";
 import { api } from "../api/client";
 import type { Envelope, Paginated } from "../api/client";
@@ -26,10 +27,12 @@ interface AdRow {
   model_name: string;
   model_id: number | null;
   year: number | null;
+  year_jalali?: number | null;
   mileage: number | null;
   current_price: number | null;
   city_name: string;
   cohort_flags: string[];
+  primary_image_url?: string;
 }
 
 interface Brand {
@@ -58,6 +61,9 @@ export function Explorer() {
   const brand = filters.get("brand");
   const page = filters.getInt("page") ?? 1;
   const [selected, setSelected] = useState<string | null>(null);
+  const [view, setView] = useState<"cards" | "table">(filters.get("view") === "table" ? "table" : "cards");
+  const q = filters.get("q") ?? "";
+  const ordering = filters.get("ordering") ?? "-publish_at";
 
   const brands = useQuery({
     queryKey: ["brands"],
@@ -65,9 +71,9 @@ export function Explorer() {
   });
 
   const ads = useQuery({
-    queryKey: ["ads", brand, page],
+    queryKey: ["ads", brand, page, q, ordering],
     queryFn: ({ signal }) =>
-      api.get<Paginated<AdRow>>(`/api/ads/${qs({ brand, page })}`, signal),
+      api.get<Paginated<AdRow>>(`/api/ads/${qs({ brand, page, q, ordering })}`, signal),
   });
 
   const brandList: Brand[] = Array.isArray(brands.data)
@@ -77,6 +83,26 @@ export function Explorer() {
   return (
     <>
       <div className="filters">
+        <input
+          placeholder="جستجو…"
+          defaultValue={q}
+          onBlur={(e) => filters.set({ q: e.target.value || null, page: 1 })}
+        />
+        <select
+          value={ordering}
+          onChange={(e) => filters.set({ ordering: e.target.value, page: 1 })}
+          aria-label="مرتب‌سازی"
+        >
+          <option value="-publish_at">جدیدترین</option>
+          <option value="current_price">ارزان‌ترین</option>
+          <option value="-current_price">گران‌ترین</option>
+          <option value="mileage">کم‌کارکرد</option>
+          <option value="-year_jalali">جدیدترین سال</option>
+        </select>
+        <div className="segmented">
+          <button className={view === "cards" ? "on" : ""} onClick={() => { setView("cards"); filters.set({ view: "cards" }); }}>کارت</button>
+          <button className={view === "table" ? "on" : ""} onClick={() => { setView("table"); filters.set({ view: "table" }); }}>جدول</button>
+        </div>
         <select
           value={brand ?? ""}
           onChange={(e) => filters.set({ brand: e.target.value || null, page: null })}
@@ -99,7 +125,26 @@ export function Explorer() {
           <Async query={ads} empty="No listings match these filters.">
             {(data) => (
               <>
-                <Table head={["Car", "Year", "Mileage", "Price"]}>
+                {view === "cards" ? (
+              <div className="card-grid">
+                {data.results.map((ad) => (
+                  <Link key={ad.code} to={`/listing/${ad.code}`} className="listing-card" onClick={() => setSelected(ad.code)}>
+                    <div className="thumb">
+                      {ad.primary_image_url ? (
+                        <img src={ad.primary_image_url} alt="" loading="lazy" />
+                      ) : (
+                        <div className="thumb-fallback">—</div>
+                      )}
+                    </div>
+                    <div className="listing-meta">
+                      <strong><Fa>{ad.title}</Fa></strong>
+                      <span>{toman(ad.current_price)}</span>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            ) : (
+            <Table head={["Car", "Year", "Mileage", "Price"]}>
                   {data.results.map((ad) => {
                     const flag = ad.cohort_flags?.[0];
                     return (
@@ -125,6 +170,7 @@ export function Explorer() {
                     );
                   })}
                 </Table>
+                )}
                 <div className="filters" style={{ marginTop: 10, marginBottom: 0 }}>
                   <button disabled={page <= 1} onClick={() => filters.set({ page: page - 1 })}>
                     Previous
@@ -201,15 +247,6 @@ function FairPricePanel({ code }: { code: string | null }) {
               ))}
             </Table>
 
-            <div className="filters" style={{ marginTop: 10, marginBottom: 0 }}>
-              <span className="badge">{data.peer_count} peers</span>
-              <span className={`badge ${data.confidence === "low" ? "warn" : "accent"}`}>
-                {data.confidence} confidence
-              </span>
-              {data.dispersion != null && (
-                <span className="badge">spread {(data.dispersion * 100).toFixed(1)}%</span>
-              )}
-            </div>
             <Provenance envelope={data} />
           </>
         )}

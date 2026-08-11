@@ -93,9 +93,18 @@ class AdSerializer(serializers.ModelSerializer):
             "last_seen_at",
             "title",
             "transmission",
+            "body_type",
+            "fuel",
             "city_id",
             "city_name",
             "url",
+            "description",
+            "primary_image_url",
+            "image_urls",
+            "image_count",
+            "seller_authenticated",
+            "year_jalali",
+            "status",
             "cohort_flags",
         )
         # raw_payload is deliberately absent. It is the entire scraped record —

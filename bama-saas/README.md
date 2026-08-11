@@ -65,9 +65,21 @@ Requires the Compose v2 plugin (`docker compose …`). From `bama-saas/`:
 docker compose up --build          # add --profile dev to also start pgadmin on :5050
 ```
 
-Compose starts `postgres:16-alpine` and a `django` service that runs
-`migrate --noinput` then `runserver`. It mounts the project's own `data/`
-read-only at `/data` (`./data:/data:ro`) and sets
+Compose starts PostgreSQL, Django, the background worker, and the React/Vite
+development server. Open <http://localhost:5174> for the application. Mailpit captures local email at <http://localhost:8025> (SMTP on port 1025). The
+frontend bind-mounts `ui/web/` for hot reload and proxies `/api` to Django over
+the Compose network.
+
+To inspect the application without starting the background crawler, start only
+the frontend; Compose automatically includes its Django and PostgreSQL
+dependencies:
+
+```bash
+docker compose up --build frontend
+```
+
+Django runs `migrate --noinput` then `runserver`. It mounts the project's own
+`data/` read-only at `/data` (`./data:/data:ro`) and sets
 `BAMA_SCRAPED_DATA_ROOT=/data`.
 
 Two things that will bite you without a `.env`:
@@ -435,3 +447,8 @@ empty-page truncation guard — **382 tests** total, all green against PostgreSQ
 The pagination tests mock `session.get`, not `fetch_page`, deliberately: mocking
 the higher level is what let a 0-based-`pageIndex` bug survive undetected, so the
 page-index arithmetic must stay inside the system under test.
+
+
+## Frontend rebuild notes
+
+`ui/legacy/` remains available until the React app passes parity acceptance; do not remove it yet.

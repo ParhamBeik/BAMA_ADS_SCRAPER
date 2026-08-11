@@ -63,10 +63,13 @@ class AdViewSet(viewsets.ReadOnlyModelViewSet):
     ordering_fields = (
         "current_price",
         "year",
+        "year_jalali",
         "mileage",
         "publish_at",
         "last_seen_at",
+        "image_count",
     )
+    search_fields = ("title", "brand__name_fa", "model__name_fa")
 
     def get_queryset(self):
         # verified() and not the bare table: a row that failed a hard rule is one

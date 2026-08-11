@@ -6,13 +6,14 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Trash2 } from "lucide-react";
-import { api, tokens } from "../api/client";
+import { api } from "../api/client";
+import { useAuth } from "../auth";
 import type { Paginated } from "../api/client";
 import { Async, Card, Fa, Table, toman } from "../ui";
 
 interface Favorite {
   id: number;
-  ad: string;
+  code: string;
   ad_title?: string;
   ad_price?: number | null;
 }
@@ -33,6 +34,7 @@ interface Notification {
 
 export function MyMarket() {
   const client = useQueryClient();
+  const { me } = useAuth();
 
   const favorites = useQuery({
     queryKey: ["favorites"],
@@ -49,14 +51,14 @@ export function MyMarket() {
   });
 
   const removeFavorite = useMutation({
-    mutationFn: (id: number) => api.del(`/api/favorites/${id}/`),
+    mutationFn: (code: string) => api.del(`/api/favorites/${code}/`),
     onSuccess: () => client.invalidateQueries({ queryKey: ["favorites"] }),
   });
 
-  if (!tokens.access) {
+  if (!me) {
     return (
-      <Card title="My market">
-        <div className="state">Sign in to see your saved cars and alerts.</div>
+      <Card title="بازار من">
+        <div className="state" dir="rtl">برای مشاهده علاقه‌مندی‌ها وارد شوید.</div>
       </Card>
     );
   }
@@ -71,12 +73,12 @@ export function MyMarket() {
                 {data.results.map((f) => (
                   <tr key={f.id}>
                     <td>
-                      <Fa>{f.ad_title ?? f.ad}</Fa>
+                      <Fa>{f.ad_title ?? f.code}</Fa>
                     </td>
                     <td className="num">{toman(f.ad_price ?? null)}</td>
                     <td className="num">
                       <button
-                        onClick={() => removeFavorite.mutate(f.id)}
+                        onClick={() => removeFavorite.mutate(f.code)}
                         aria-label="Remove"
                       >
                         <Trash2 size={13} />

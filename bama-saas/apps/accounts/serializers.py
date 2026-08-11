@@ -31,8 +31,28 @@ class RegisterSerializer(serializers.ModelSerializer):
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ("id", "email", "full_name", "is_staff", "date_joined")
+        fields = (
+            "id", "email", "full_name", "is_staff", "date_joined",
+            "email_verified_at", "preferred_brands", "preferred_models",
+            "onboarding_completed_at", "deletion_requested_at",
+        )
         read_only_fields = fields
+
+
+class ProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ("full_name", "preferred_brands", "preferred_models", "onboarding_completed_at", "telegram_chat_id")
+
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    uid = serializers.CharField()
+    token = serializers.CharField()
+    password = serializers.CharField(min_length=8)
 
 
 class SubscriptionSerializer(serializers.ModelSerializer):
@@ -113,7 +133,7 @@ class AlertSerializer(serializers.ModelSerializer):
         model = Alert
         fields = (
             "id", "alert_type", "saved_search", "ad", "watchlist", "model",
-            "threshold", "channels", "enabled", "created_at",
+            "threshold", "channels", "enabled", "delivery", "created_at",
         )
         read_only_fields = ("id", "created_at")
 
@@ -146,6 +166,20 @@ class AlertSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 "new_listing alerts require a saved_search."
             )
+
+        if "channels" in attrs:
+            allowed = {c.value for c in Notification.Channel}
+            aliases = {"in_app": Notification.Channel.INAPP}
+            normalized = []
+            for raw in attrs["channels"] or []:
+                ch = aliases.get(raw, raw)
+                if ch not in allowed:
+                    raise serializers.ValidationError(
+                        {"channels": f"Invalid channel {raw!r}; expected one of {sorted(allowed)}."}
+                    )
+                if ch not in normalized:
+                    normalized.append(ch)
+            attrs["channels"] = normalized or [Notification.Channel.INAPP]
         return attrs
 
 

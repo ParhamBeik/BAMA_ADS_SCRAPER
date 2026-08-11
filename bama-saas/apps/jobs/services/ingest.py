@@ -112,6 +112,40 @@ def parse_source_datetime(raw) -> datetime | None:
     return parsed.astimezone(dt_timezone.utc)
 
 
+_CDN_HOSTS = ("cdn.bama.ir", "bama.ir", "media.bama.ir")
+
+
+def _sanitize_image_urls(detail: dict) -> tuple[str, list[str]]:
+    """Extract HTTPS Bama CDN image URLs; cap gallery at 12."""
+    candidates: list[str] = []
+    for key in ("images", "image", "media"):
+        raw = detail.get(key)
+        if isinstance(raw, str):
+            candidates.append(raw)
+        elif isinstance(raw, list):
+            for item in raw:
+                if isinstance(item, str):
+                    candidates.append(item)
+                elif isinstance(item, dict):
+                    for k in ("url", "large", "original", "src"):
+                        if isinstance(item.get(k), str):
+                            candidates.append(item[k])
+                            break
+    urls: list[str] = []
+    for u in candidates:
+        u = u.strip()
+        if not u.startswith("https://"):
+            continue
+        host = u.split("/")[2].lower()
+        if not any(host == h or host.endswith("." + h) for h in _CDN_HOSTS):
+            continue
+        if u not in urls:
+            urls.append(u)
+        if len(urls) >= 12:
+            break
+    return (urls[0] if urls else ""), urls
+
+
 def _presentation_fields(detail: dict) -> dict:
     """Promote the listing-presentation fields already present in the payload.
 
@@ -123,9 +157,14 @@ def _presentation_fields(detail: dict) -> dict:
     authenticated = detail.get("authenticated")
     if isinstance(authenticated, str):
         authenticated = authenticated.strip().lower() in {"true", "1", "yes"}
+    primary, gallery = _sanitize_image_urls(detail)
+    desc = description.strip() if isinstance(description, str) else ""
     return {
-        "image_count": parse_int(detail.get("image_count"), positive=False),
-        "description_length": len(description) if isinstance(description, str) else None,
+        "image_count": parse_int(detail.get("image_count"), positive=False) or (len(gallery) or None),
+        "description": desc[:8000],
+        "primary_image_url": primary[:500],
+        "image_urls": gallery,
+        "description_length": len(desc) if desc else None,
         "seller_authenticated": authenticated if isinstance(authenticated, bool) else None,
         "source_modified_at": parse_source_datetime(detail.get("modified_date")),
     }

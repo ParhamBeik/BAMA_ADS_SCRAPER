@@ -2,15 +2,13 @@
 
 The accounts app is mounted at ``/api/`` (see config/urls.py), so the auth
 routes are self-prefixed with ``auth/`` and resolve at ``/api/auth/...``, while
-the Phase-5 engagement routes (favorites, watchlists, saved-searches, alerts,
-notifications) resolve at the cleaner ``/api/<resource>/``.
+engagement routes resolve at ``/api/<resource>/``.
 """
 
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
-from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from . import views
+from . import auth_views, views
 
 app_name = "accounts"
 
@@ -22,11 +20,19 @@ router.register("alerts", views.AlertViewSet, basename="alert")
 router.register("notifications", views.NotificationViewSet, basename="notification")
 
 urlpatterns = [
-    # Auth (under /api/auth/...).
-    path("auth/register/", views.RegisterView.as_view(), name="register"),
-    path("auth/login/", TokenObtainPairView.as_view(), name="login"),
-    path("auth/refresh/", TokenRefreshView.as_view(), name="refresh"),
-    path("auth/me/", views.MeView.as_view(), name="me"),
-    # Phase-5 engagement routes (under /api/<resource>/).
+    path("auth/register/", auth_views.CookieRegisterView.as_view(), name="register"),
+    path("auth/login/", auth_views.CookieLoginView.as_view(), name="login"),
+    path("auth/refresh/", auth_views.CookieRefreshView.as_view(), name="refresh"),
+    path("auth/logout/", auth_views.LogoutView.as_view(), name="logout"),
+    path("auth/logout-all/", auth_views.LogoutAllView.as_view(), name="logout-all"),
+    path("auth/me/", auth_views.MeView.as_view(), name="me"),
+    path("auth/verify/", auth_views.VerifyEmailView.as_view(), name="verify"),
+    path("auth/resend-verification/", auth_views.ResendVerificationView.as_view(), name="resend-verification"),
+    path("auth/password-reset/", auth_views.PasswordResetRequestView.as_view(), name="password-reset"),
+    path("auth/password-reset/confirm/", auth_views.PasswordResetConfirmView.as_view(), name="password-reset-confirm"),
+    path("auth/delete/", auth_views.DeleteAccountView.as_view(), name="delete-account"),
+    path("auth/restore/", auth_views.RestoreAccountView.as_view(), name="restore-account"),
+    path("auth/usage/", auth_views.AccountUsageView.as_view(), name="account-usage"),
+    path("auth/pro-request/", auth_views.ProRequestView.as_view(), name="pro-request"),
     path("", include(router.urls)),
 ]

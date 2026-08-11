@@ -87,7 +87,13 @@ def _city(location: str | None):
     key = ("city", first)
     if key in _CACHE:
         return _CACHE[key]
-    city, _ = City.objects.get_or_create(name_fa=first)
+    try:
+        city, _ = City.objects.get_or_create(name_fa=first)
+    except IntegrityError:
+        # Concurrent mint of the same city name — re-read the winner.
+        city = City.objects.filter(name_fa=first).first()
+        if city is None:
+            raise
     _CACHE[key] = city
     return city
 

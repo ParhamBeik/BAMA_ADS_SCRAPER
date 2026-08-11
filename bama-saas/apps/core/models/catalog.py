@@ -201,6 +201,9 @@ class Ad(models.Model):
     # families that are not being built — leaving them in the JSONB costs nothing
     # and they can be promoted when something actually reads them.
     image_count = models.IntegerField(null=True, blank=True)
+    description = models.TextField(blank=True, default="")
+    primary_image_url = models.URLField(max_length=500, blank=True, default="")
+    image_urls = models.JSONField(default=list, blank=True)
     description_length = models.IntegerField(null=True, blank=True)
     seller_authenticated = models.BooleanField(null=True, blank=True)
     # The source's own last-modified timestamp. Excluded from the semantic hash

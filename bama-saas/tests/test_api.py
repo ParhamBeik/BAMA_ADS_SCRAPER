@@ -135,7 +135,7 @@ def test_register_creates_user_and_free_subscription(api_client):
     )
     assert resp.status_code == 201, resp.content
     body = resp.json()
-    assert body["email"] == "newbie@example.com"
+    assert body["user"]["email"] == "newbie@example.com"
     # RegisterView creates a free-tier subscription as a side effect.
     assert User.objects.filter(email="newbie@example.com").exists()
     user = User.objects.get(email="newbie@example.com")

@@ -9,6 +9,7 @@ from rest_framework.routers import DefaultRouter
 
 from apps.core import views
 from apps.core.views import research
+from apps.core.views.product import AdsExportView, ModelCompareView
 
 app_name = "core"
 
@@ -69,6 +70,8 @@ urlpatterns = [
     path("ads/<str:code>/identity/", research.ad_identity_view, name="ad-identity"),
 
     # --- analytics: newest / oldest listings ---
+    path("research/compare/", ModelCompareView.as_view(), name="model-compare"),
+    path("ads/export/", AdsExportView.as_view(), name="ads-export"),
     path("analytics/newest/", views.newest, name="newest"),
     path("analytics/oldest/", views.oldest, name="oldest"),
 ] + router.urls

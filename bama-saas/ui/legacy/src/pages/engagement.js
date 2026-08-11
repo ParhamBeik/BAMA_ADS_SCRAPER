@@ -101,7 +101,7 @@ export async function alerts(view = Ctx()) {
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       const fd = new FormData(form);
-      const body = { alert_type: fd.get("alert_type"), threshold: fd.get("threshold") || null, channels: ["in_app"] };
+      const body = { alert_type: fd.get("alert_type"), threshold: fd.get("threshold") || null, channels: ["inapp"] };
       if (body.alert_type === "undervalued") body.model = Number(fd.get("model")) || null;
       try { await api.post("/api/alerts/", body); toast("هشدار ایجاد شد"); alerts(view); }
       catch (err) { toast(err.detail || err.message, "error"); }

@@ -51,6 +51,10 @@ def _authed_client(email: str) -> tuple[APIClient, User, str]:
     token = _register_and_login(client, email)
     client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
     user = User.objects.get(email=email)
+    if not user.email_verified_at:
+        from django.utils import timezone
+        user.email_verified_at = timezone.now()
+        user.save(update_fields=["email_verified_at"])
     return client, user, token
 
 
@@ -235,6 +239,47 @@ def test_alert_patch_toggle_enabled(catalog):
     )
     assert resp.status_code == 200, resp.content
     assert Alert.objects.get(id=aid).enabled is False
+
+
+@pytest.mark.django_db
+def test_alert_channels_normalize_in_app_alias(catalog):
+    """Legacy clients sent 'in_app'; the enum value is 'inapp'."""
+    client, user, _ = _authed_client("alias@example.com")
+    resp = client.post(
+        "/api/alerts/",
+        {
+            "alert_type": "price_drop",
+            "ad": catalog["ad1"].code,
+            "channels": ["in_app", "email"],
+        },
+        format="json",
+    )
+    assert resp.status_code == 201, resp.content
+    assert resp.json()["channels"] == ["inapp", "email"]
+    assert Alert.objects.get(id=resp.json()["id"]).channels == ["inapp", "email"]
+
+
+@pytest.mark.django_db
+@override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+def test_evaluate_alerts_normalizes_legacy_in_app_channel(catalog):
+    from apps.accounts.alerts import evaluate_alerts
+
+    client, user, _ = _authed_client("legacych@example.com")
+    PriceDropEvent.objects.create(
+        ad=catalog["ad1"], old_price=1_000_000_000, new_price=900_000_000,
+        drop_amount=100_000_000, drop_pct=10.0, observed_at="2026-07-15T00:00:00Z",
+    )
+    Alert.objects.create(
+        user=user, alert_type=Alert.Type.PRICE_DROP, ad=catalog["ad1"],
+        threshold=5.0, channels=["in_app"],
+    )
+    summary = evaluate_alerts()
+    assert summary["delivered"] >= 1
+    channels = set(
+        Notification.objects.filter(user=user).values_list("channel", flat=True)
+    )
+    assert channels == {"inapp"}
+    assert "in_app" not in channels
 
 
 # ---------------------------------------------------------------------------
