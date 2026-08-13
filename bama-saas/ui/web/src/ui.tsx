@@ -12,9 +12,8 @@
  * rather than an error or, worse, an empty chart that looks like zero.
  */
 import type { ReactNode } from "react";
-import { AlertTriangle, Database, Info } from "lucide-react";
+import { AlertTriangle, Database } from "lucide-react";
 import type { Envelope } from "./api/client";
-import { ApiError } from "./api/client";
 
 /** Persian source text inside English chrome. */
 export function Fa({ children }: { children: ReactNode }) {
@@ -127,21 +126,9 @@ export function Async<T>({
     return <div className="skeleton" style={{ height: 120 }} aria-busy="true" />;
   }
   if (query.error) {
-    const err = query.error;
-    if (err instanceof ApiError && err.isSubscriptionRequired) {
-      return (
-        <div className="state">
-          <Info size={16} /> <strong>Research plan required.</strong>
-          <div>Cohort analytics are part of the research tier.</div>
-        </div>
-      );
-    }
-    if (err instanceof ApiError && err.isAuthRequired) {
-      return <div className="state">Sign in to view this.</div>;
-    }
     return (
       <div className="state error">
-        {err instanceof Error ? err.message : "Something went wrong."}
+        {query.error instanceof Error ? query.error.message : "Something went wrong."}
       </div>
     );
   }

@@ -20,14 +20,7 @@ import pytest
 from rest_framework.test import APIClient
 
 from apps.accounts.models import User
-from apps.core.models import Ad, Brand, City, Model, Variant
-from apps.core.models import (
-    AdChangeEvent,
-    AdObservation,
-    AdVersion,
-    FetchRun,
-)
-from apps.core.models import PriceObservation
+from apps.core.models import Ad, Brand, City, DealScoreCache, FetchRun, Model, PriceObservation, Variant
 
 UTC = timezone.utc
 
@@ -58,10 +51,9 @@ def catalog(db):
     variant = Variant.objects.create(model=model, name_fa="دنده‌ای")
     city = City.objects.create(name_fa="تهران", province="تهران")
 
-    # Six priced, published ads in the same peer group (enough for every
-    # insights endpoint incl. depreciation which needs >=6 mileage points).
+    # Eight priced, published ads — enough for fair_price's MIN_PEERS=8.
     ads = []
-    for i in range(6):
+    for i in range(8):
         ads.append(
             Ad.objects.create(
                 code=f"ad{i}",
@@ -80,6 +72,7 @@ def catalog(db):
                 current_price=1_000_000_000 + i * 20_000_000,
                 publish_at=_NOW - timedelta(days=i),
                 last_seen_at=_NOW,
+                first_seen_at=_NOW - timedelta(days=i),
             )
         )
     # One ad missing publish/price: excluded from list/markets but retrievable
@@ -102,58 +95,9 @@ def catalog(db):
     }
 
 
-@pytest.fixture
-def authed_client(db) -> tuple[APIClient, User]:
-    """An APIClient force-authenticated as a non-staff user + that user."""
-    user = User.objects.create_user(email="user@example.com", password="Sup3rSecret!")
-    client = APIClient()
-    client.force_authenticate(user=user)
-    return client, user
-
-
-@pytest.fixture
-def staff_client(db) -> tuple[APIClient, User]:
-    """An APIClient force-authenticated as an is_staff user + that user."""
-    user = User.objects.create_user(
-        email="staff@example.com", password="Sup3rSecret!", is_staff=True
-    )
-    client = APIClient()
-    client.force_authenticate(user=user)
-    return client, user
-
-
 # ---------------------------------------------------------------------------
-# Auth endpoints (/api/auth/*)
+# Local staff login (Django admin only)
 # ---------------------------------------------------------------------------
-
-@pytest.mark.django_db
-def test_register_creates_user_and_free_subscription(api_client):
-    resp = api_client.post(
-        "/api/auth/register/",
-        {"email": "newbie@example.com", "password": "Sup3rSecret!", "full_name": "New"},
-        format="json",
-    )
-    assert resp.status_code == 201, resp.content
-    body = resp.json()
-    assert body["user"]["email"] == "newbie@example.com"
-    # RegisterView creates a free-tier subscription as a side effect.
-    assert User.objects.filter(email="newbie@example.com").exists()
-    user = User.objects.get(email="newbie@example.com")
-    assert user.subscriptions.filter(plan_type="free").exists()
-
-
-@pytest.mark.django_db
-def test_login_returns_access_and_refresh(api_client):
-    User.objects.create_user(email="login@example.com", password="Sup3rSecret!")
-    resp = api_client.post(
-        "/api/auth/login/",
-        {"email": "login@example.com", "password": "Sup3rSecret!"},
-        format="json",
-    )
-    assert resp.status_code == 200, resp.content
-    tokens = resp.json()
-    assert "access" in tokens and "refresh" in tokens
-
 
 @pytest.mark.django_db
 def test_ensure_dev_admin_creates_verified_staff(settings):
@@ -165,7 +109,6 @@ def test_ensure_dev_admin_creates_verified_staff(settings):
     call_command("ensure_dev_admin")
     user = User.objects.get(email="admin@bama.local")
     assert user.is_staff
-    assert user.email_verified_at is not None
     assert user.check_password("LocalOps-2026")
 
 
@@ -182,34 +125,9 @@ def test_ensure_dev_admin_refuses_when_not_debug(settings):
 
 
 @pytest.mark.django_db
-def test_refresh_issues_new_access_token(api_client):
-    User.objects.create_user(email="refresh@example.com", password="Sup3rSecret!")
-    login = api_client.post(
-        "/api/auth/login/",
-        {"email": "refresh@example.com", "password": "Sup3rSecret!"},
-        format="json",
-    )
-    refresh_token = login.json()["refresh"]
-    resp = api_client.post("/api/auth/refresh/", {"refresh": refresh_token}, format="json")
-    assert resp.status_code == 200, resp.content
-    assert "access" in resp.json()
-
-
-@pytest.mark.django_db
-def test_me_unauthenticated_is_401(api_client):
-    resp = api_client.get("/api/auth/me/")
-    assert resp.status_code == 401
-
-
-@pytest.mark.django_db
-def test_me_authenticated_returns_user_and_subscription(authed_client):
-    client, user = authed_client
-    resp = client.get("/api/auth/me/")
-    assert resp.status_code == 200, resp.content
-    body = resp.json()
-    assert body["user"]["email"] == user.email
-    # me returns a subscription key (None when the user has none).
-    assert "subscription" in body
+def test_auth_routes_are_gone(api_client):
+    for path in ("/api/auth/register/", "/api/auth/login/", "/api/auth/me/"):
+        assert api_client.get(path).status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -262,8 +180,8 @@ def test_ads_list_returns_publish_complete_only(api_client, catalog):
     assert resp.status_code == 200, resp.content
     body = resp.json()
     codes = {row["code"] for row in body["results"]}
-    # The six priced/published ads appear; the zero-price unpublished one does not.
-    assert {f"ad{i}" for i in range(6)} <= codes
+    # The eight priced/published ads appear; the zero-price unpublished one does not.
+    assert {f"ad{i}" for i in range(8)} <= codes
     assert "ad_unfiltered" not in codes
 
 
@@ -276,13 +194,13 @@ def test_ads_list_filters(api_client, catalog):
     resp = api_client.get(f"/api/ads/?model={model.id}")
     assert resp.status_code == 200
     codes = {r["code"] for r in resp.json()["results"]}
-    assert codes == {f"ad{i}" for i in range(6)}
+    assert codes == {f"ad{i}" for i in range(8)}
 
     # ?brand=<slug>
     resp = api_client.get(f"/api/ads/?brand={brand.slug}")
     assert resp.status_code == 200
     assert {r["code"] for r in resp.json()["results"]} == {
-        f"ad{i}" for i in range(6)
+        f"ad{i}" for i in range(8)
     }
 
     # ?price_min=<lo>&price_max=<hi>  (filter field names, NOT min_price/max_price)
@@ -296,7 +214,7 @@ def test_ads_list_filters(api_client, catalog):
     resp = api_client.get("/api/ads/?year_min=1399&year_max=1399")
     assert resp.status_code == 200
     assert {r["code"] for r in resp.json()["results"]} == {
-        f"ad{i}" for i in range(6)
+        f"ad{i}" for i in range(8)
     }
 
 
@@ -328,49 +246,19 @@ def test_markets_landing_200_with_ad_count(api_client, catalog):
     assert isinstance(body, list)
     assert len(body) >= 1
     row = next(r for r in body if r["model_id"] == catalog["model"].id)
-    assert row["ad_count"] == 6
+    assert row["ad_count"] == 8
     # Regression: F()-annotations on model/brand must not raise (TypeError before).
     assert row["model_name"] == catalog["model"].name_fa
     assert row["brand_slug"] == catalog["brand"].slug
     assert "brand_name" in row and row["brand_name"]
-    assert row["min_price"] <= row["avg_price"] <= row["max_price"]
+    assert row["min_price"] <= row["median_price"] <= row["max_price"]
 
 
 @pytest.mark.django_db
-def test_market_true_mean(api_client, catalog):
+def test_deleted_market_routes_are_gone(api_client, catalog):
     model = catalog["model"]
-    resp = api_client.get(f"/api/markets/{model.id}/true-mean/")
-    assert resp.status_code == 200, resp.content
-    body = resp.json()
-    assert body["model_id"] == model.id
-    assert body["count_before"] >= 1
-
-
-@pytest.mark.django_db
-def test_market_true_mean_bad_query_is_400(api_client, catalog):
-    model = catalog["model"]
-    resp = api_client.get(f"/api/markets/{model.id}/true-mean/?year=notanint")
-    assert resp.status_code == 400
-
-
-@pytest.mark.django_db
-def test_market_bollinger(api_client, catalog):
-    model = catalog["model"]
-    resp = api_client.get(f"/api/markets/{model.id}/bollinger/")
-    assert resp.status_code == 200, resp.content
-    body = resp.json()
-    assert "series" in body
-    assert body["model_name"] == model.name_fa
-
-
-@pytest.mark.django_db
-def test_market_price_trends(api_client, catalog):
-    model = catalog["model"]
-    resp = api_client.get(f"/api/markets/{model.id}/price-trends/")
-    assert resp.status_code == 200, resp.content
-    body = resp.json()
-    assert body["bucket"] == "month"  # default
-    assert isinstance(body["series"], list)
+    for suffix in ("true-mean", "bollinger", "price-trends"):
+        assert api_client.get(f"/api/markets/{model.id}/{suffix}/").status_code == 404
 
 
 @pytest.mark.django_db
@@ -412,107 +300,20 @@ def test_legacy_insights_path_is_gone(api_client, catalog):
 
 
 # ---------------------------------------------------------------------------
-# History endpoints (/api/changes, /observations, /fetch-runs, per-ad versions/
-# changes/timeline)
+# Dead history / inspect routes
 # ---------------------------------------------------------------------------
 
-@pytest.fixture
-def history_for_ad(catalog):
-    """Wire up a version, observation, and change event for ads[0]."""
-    ad = catalog["ads"][0]
-    run = FetchRun.objects.create(source=FetchRun.Source.BULK_IMPORT)
-    version = AdVersion.objects.create(
-        ad=ad,
-        semantic_hash="sem-1",
-        raw_hash="raw-1",
-        payload={"detail": {"code": ad.code}},
-        origin=AdVersion.Origin.BULK_IMPORT,
-        first_observed_at=_NOW - timedelta(days=2),
-    )
-    observation = AdObservation.objects.create(
-        ad=ad,
-        fetch_run=run,
-        version=version,
-        observed_at=_NOW - timedelta(days=2),
-        raw_hash="raw-1",
-        publish_phrase="2 روز پیش",
-        rank=1,
-    )
-    change = AdChangeEvent.objects.create(
-        ad=ad,
-        observation=observation,
-        new_version=version,
-        event_type=AdChangeEvent.EventType.CONTENT_CHANGED,
-        categories=["price/payment"],
-        changed_paths=["/price/price"],
-        changes={"price": {"old": 1, "new": 2}},
-        origin="bulk_import",
-    )
-    return {"run": run, "version": version, "observation": observation, "change": change}
-
-
 @pytest.mark.django_db
-def test_changes_list(api_client, catalog, history_for_ad):
-    resp = api_client.get("/api/changes/")
-    assert resp.status_code == 200, resp.content
-    body = resp.json()
-    ids = {row["id"] for row in body["results"]}
-    assert str(history_for_ad["change"].id) in {str(i) for i in ids}
-
-
-@pytest.mark.django_db
-def test_observations_list(api_client, catalog, history_for_ad):
-    resp = api_client.get("/api/observations/")
-    assert resp.status_code == 200, resp.content
-    body = resp.json()
-    assert len(body["results"]) >= 1
-
-
-@pytest.mark.django_db
-def test_fetch_runs_list(api_client, catalog, history_for_ad):
-    resp = api_client.get("/api/fetch-runs/")
-    assert resp.status_code == 200, resp.content
-    body = resp.json()
-    assert len(body["results"]) >= 1
-
-
-@pytest.mark.django_db
-def test_ad_versions(api_client, catalog, history_for_ad):
-    ad = catalog["ads"][0]
-    resp = api_client.get(f"/api/ads/{ad.code}/versions/")
-    assert resp.status_code == 200, resp.content
-    body = resp.json()
-    assert isinstance(body, list)
-    assert len(body) == 1
-    assert body[0]["semantic_hash"] == "sem-1"
-
-
-@pytest.mark.django_db
-def test_ad_changes(api_client, catalog, history_for_ad):
-    ad = catalog["ads"][0]
-    resp = api_client.get(f"/api/ads/{ad.code}/changes/")
-    assert resp.status_code == 200, resp.content
-    body = resp.json()
-    assert isinstance(body, list)
-    assert len(body) == 1
-    assert body[0]["event_type"] == AdChangeEvent.EventType.CONTENT_CHANGED.value
-
-
-@pytest.mark.django_db
-def test_ad_timeline_merges_observations_and_changes(api_client, catalog, history_for_ad):
-    ad = catalog["ads"][0]
-    resp = api_client.get(f"/api/ads/{ad.code}/timeline/")
-    assert resp.status_code == 200, resp.content
-    body = resp.json()
-    kinds = {entry["kind"] for entry in body}
-    assert kinds == {"observation", "change"}
-
-
-@pytest.mark.django_db
-def test_per_ad_history_404_for_missing_ad(api_client):
-    for suffix in ("versions", "changes", "timeline"):
-        resp = api_client.get(f"/api/ads/missing/{suffix}/")
-        assert resp.status_code == 404, suffix
+def test_deleted_history_routes_are_gone(api_client):
+    for path in (
+        "/api/changes/",
+        "/api/observations/",
+        "/api/fetch-runs/",
+        "/api/ads/ad0/versions/",
+        "/api/ads/ad0/changes/",
+        "/api/ads/ad0/timeline/",
+    ):
+        assert api_client.get(path).status_code == 404, path
 
 
 # ---------------------------------------------------------------------------
@@ -535,6 +336,35 @@ def test_ad_serializer_id_fields_are_integers(api_client, catalog):
     assert body["city_id"] == catalog["city"].id
 
 
+@pytest.mark.django_db
+def test_deal_scores_return_envelope_with_evidence(api_client, catalog):
+    ad = catalog["ads"][0]
+    DealScoreCache.objects.create(
+        ad=ad,
+        score=12.5,
+        discount_pct=12.5,
+        peer_median=1_200_000_000,
+        components={
+            "peer_count": 11,
+            "confidence": "low",
+            "age_days": 3,
+        },
+    )
+    resp = api_client.get("/api/analytics/deal-scores/?limit=10")
+    assert resp.status_code == 200, resp.content
+    body = resp.json()
+    assert "results" in body
+    assert "as_of" in body
+    assert "coverage" in body
+    assert "methodology_version" in body
+    row = body["results"][0]
+    assert row["code"] == ad.code
+    assert row["peer_count"] == 11
+    assert row["confidence"] == "low"
+    assert row["age_days"] == 3
+    assert row["price"] < row["peer_median"]
+
+
 # ---------------------------------------------------------------------------
 # Admin job-trigger API (/api/admin/jobs/*)
 # ---------------------------------------------------------------------------
@@ -542,30 +372,13 @@ def test_ad_serializer_id_fields_are_integers(api_client, catalog):
 # apps.jobs.views._spawn with a no-op so only HTTP behavior is exercised.
 
 @pytest.mark.django_db
-def test_admin_fetch_anonymous_is_401(api_client):
-    with patch("apps.jobs.views._spawn"):
-        resp = api_client.post("/api/admin/jobs/fetch/", {}, format="json")
-    assert resp.status_code == 401
-
-
-@pytest.mark.django_db
-def test_admin_fetch_authenticated_non_staff_is_403(authed_client):
-    client, _ = authed_client
-    with patch("apps.jobs.views._spawn"):
-        resp = client.post("/api/admin/jobs/fetch/", {}, format="json")
-    assert resp.status_code == 403
-
-
-@pytest.mark.django_db
-def test_admin_fetch_staff_is_202(staff_client):
-    client, _ = staff_client
+def test_admin_fetch_is_202(api_client):
     with patch("apps.jobs.views._spawn") as mock_spawn:
-        resp = client.post("/api/admin/jobs/fetch/", {"max_ads": 10}, format="json")
+        resp = api_client.post("/api/admin/jobs/fetch/", {"max_ads": 10}, format="json")
     assert resp.status_code == 202, resp.content
     body = resp.json()
     assert body["status"] == "started"
     assert body["command"] == "fetch_live"
-    # The command was actually dispatched to the (patched) runner.
     mock_spawn.assert_called_once()
     args, kwargs = mock_spawn.call_args
     assert args[0] == "fetch_live"
@@ -573,70 +386,43 @@ def test_admin_fetch_staff_is_202(staff_client):
 
 
 @pytest.mark.django_db
-def test_admin_import_staff_is_202(staff_client):
-    client, _ = staff_client
-    with patch("apps.jobs.views._spawn") as mock_spawn:
-        resp = client.post(
+def test_admin_import_route_is_gone(api_client):
+    with patch("apps.jobs.views._spawn"):
+        resp = api_client.post(
             "/api/admin/jobs/import/", {"limit": 5, "batch_size": 100}, format="json"
         )
-    assert resp.status_code == 202, resp.content
-    body = resp.json()
-    assert body["command"] == "import_scraped"
-    mock_spawn.assert_called_once_with("import_scraped", limit=5, batch_size=100)
+    assert resp.status_code == 404
 
 
 @pytest.mark.django_db
-def test_admin_refresh_staff_is_202(staff_client):
-    client, _ = staff_client
+def test_admin_refresh_is_202(api_client):
     with patch("apps.jobs.views._spawn") as mock_spawn:
-        resp = client.post("/api/admin/jobs/refresh-analytics/", {}, format="json")
+        resp = api_client.post("/api/admin/jobs/refresh-analytics/", {}, format="json")
     assert resp.status_code == 202, resp.content
     body = resp.json()
-    # The URL is unchanged but the work behind it is not: it used to run
-    # refresh_analytics, which rebuilt a table nothing read, so pressing the
-    # button had no observable effect. It now rebuilds the real derived
-    # analytics. The old ``min_count`` argument was a PriceStatistics concept and
-    # no longer exists, so there is no input left to validate.
     assert body["command"] == "run_pipeline"
     mock_spawn.assert_called_once_with("run_pipeline", skip_fetch=True, cadence="full")
 
 
 @pytest.mark.django_db
-def test_admin_fetch_bad_input_is_400(staff_client):
-    client, _ = staff_client
+def test_admin_fetch_bad_input_is_400(api_client):
     with patch("apps.jobs.views._spawn"):
-        resp = client.post(
+        resp = api_client.post(
             "/api/admin/jobs/fetch/", {"max_ads": "not-a-number"}, format="json"
         )
     assert resp.status_code == 400
 
 
 @pytest.mark.django_db
-def test_admin_fetch_concurrency_guard_is_409(staff_client):
+def test_admin_fetch_concurrency_guard_is_409(api_client):
     """A RUNNING live-fetch FetchRun blocks a new fetch with 409."""
-    client, _ = staff_client
     running = FetchRun.objects.create(
         source=FetchRun.Source.LIVE_FETCH, status=FetchRun.Status.RUNNING
     )
     try:
         with patch("apps.jobs.views._spawn"):
-            resp = client.post("/api/admin/jobs/fetch/", {}, format="json")
+            resp = api_client.post("/api/admin/jobs/fetch/", {}, format="json")
         assert resp.status_code == 409, resp.content
         assert "detail" in resp.json()
-    finally:
-        # Clean up so the guard doesn't leak into other tests.
-        running.delete()
-
-
-@pytest.mark.django_db
-def test_admin_import_concurrency_guard_is_409(staff_client):
-    client, _ = staff_client
-    running = FetchRun.objects.create(
-        source=FetchRun.Source.BULK_IMPORT, status=FetchRun.Status.RUNNING
-    )
-    try:
-        with patch("apps.jobs.views._spawn"):
-            resp = client.post("/api/admin/jobs/import/", {}, format="json")
-        assert resp.status_code == 409
     finally:
         running.delete()

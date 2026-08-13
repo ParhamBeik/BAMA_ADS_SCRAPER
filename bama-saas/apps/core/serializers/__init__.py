@@ -1,4 +1,4 @@
-"""Core serializers, split by theme (catalog / history / market / analytics).
+"""Core serializers, split by theme (catalog / market / analytics).
 
 Flat import site preserved: ``from apps.core.serializers import AdSerializer``.
 """
@@ -12,20 +12,11 @@ from apps.core.serializers.catalog import (
     ModelSerializer,
     VariantSerializer,
 )
-from apps.core.serializers.history import (
-    AdChangeEventSerializer,
-    AdObservationSerializer,
-    AdVersionSerializer,
-    FetchRunSerializer,
-    TimelineEntrySerializer,
-)
 from apps.core.serializers.market import PriceObservationSerializer
 
 __all__ = [
     "BrandSerializer", "ModelSerializer", "VariantSerializer",
     "CitySerializer", "DealerSerializer", "AdSerializer",
-    "FetchRunSerializer", "AdVersionSerializer", "AdObservationSerializer",
-    "AdChangeEventSerializer", "TimelineEntrySerializer",
     "PriceObservationSerializer",
     "DealScoreSerializer",
 ]

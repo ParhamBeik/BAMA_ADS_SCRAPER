@@ -21,6 +21,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/health/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Database size, catalog counts, recent ingest rejects, crawl checks. */
+        get: operations["admin_health_retrieve"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/jobs/crawl-health/": {
         parameters: {
             query?: never;
@@ -55,23 +72,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/admin/jobs/evaluate-alerts/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @description Evaluate every enabled user Alert and dispatch notifications. Operator-only. */
-        post: operations["admin_jobs_evaluate_alerts_create"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/admin/jobs/fetch/": {
         parameters: {
             query?: never;
@@ -83,23 +83,6 @@ export interface paths {
         put?: never;
         /** @description Trigger an async live Bama fetch (operator-only). */
         post: operations["admin_jobs_fetch_create"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/admin/jobs/import/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @description Trigger an async bulk import of scraped JSON (operator-only). */
-        post: operations["admin_jobs_import_create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -184,23 +167,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/ads/{code}/changes/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description GET /api/ads/<code>/changes/ — newest first. */
-        get: operations["ads_changes_list"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/ads/{code}/fair-price/": {
         parameters: {
             query?: never;
@@ -210,23 +176,6 @@ export interface paths {
         };
         /** @description Explainable fair-price estimate for one listing, with components. */
         get: operations["ads_fair_price_retrieve"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/ads/{code}/identity/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Listing history for the physical car behind an ad: every code it has appeared under, and whether those overlap (duplicate listings) or follow one another (a relist). */
-        get: operations["ads_identity_retrieve"];
         put?: never;
         post?: never;
         delete?: never;
@@ -250,82 +199,6 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
-        trace?: never;
-    };
-    "/api/ads/{code}/timeline/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * @description GET /api/ads/<code>/timeline/
-         *
-         *     Merges an ad's observations and change events into a single time-ordered
-         *     list of `{kind, at, detail}` dicts (`kind` is "observation" or "change").
-         */
-        get: operations["ads_timeline_list"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/ads/{code}/versions/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description GET /api/ads/<code>/versions/ — newest first. */
-        get: operations["ads_versions_list"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/alerts/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Alerts. Shape (ad/watchlist/model/saved_search) validated in the serializer. */
-        get: operations["alerts_list"];
-        put?: never;
-        /** @description Alerts. Shape (ad/watchlist/model/saved_search) validated in the serializer. */
-        post: operations["alerts_create"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/alerts/{id}/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Alerts. Shape (ad/watchlist/model/saved_search) validated in the serializer. */
-        get: operations["alerts_retrieve"];
-        put?: never;
-        post?: never;
-        /** @description Alerts. Shape (ad/watchlist/model/saved_search) validated in the serializer. */
-        delete: operations["alerts_destroy"];
-        options?: never;
-        head?: never;
-        /** @description Alerts. Shape (ad/watchlist/model/saved_search) validated in the serializer. */
-        patch: operations["alerts_partial_update"];
         trace?: never;
     };
     "/api/analytics/deal-scores/": {
@@ -362,55 +235,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/analytics/dealers/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["analytics_dealers_retrieve"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/analytics/fast-movers/{model_id}/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Listings that left the feed fastest. Leaving ≠ sold — see metrics docstring. */
-        get: operations["analytics_fast_movers_retrieve"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/analytics/inventory-trends/{model_id}/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["analytics_inventory_trends_retrieve"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/analytics/market-index/": {
         parameters: {
             query?: never;
@@ -434,54 +258,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/analytics/market-overview/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["analytics_market_overview_retrieve"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/analytics/newest/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["analytics_newest_retrieve"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/analytics/oldest/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["analytics_oldest_retrieve"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/analytics/overview/": {
         parameters: {
             query?: never;
@@ -489,153 +265,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description Public market summary: size, freshness and how much is verifiable. */
+        /** @description Market summary: size, freshness and how much is verifiable. */
         get: operations["analytics_overview_retrieve"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/analytics/price-drops/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["analytics_price_drops_retrieve"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/analytics/rankings/{dim}/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["analytics_rankings_retrieve"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/analytics/regional/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["analytics_regional_retrieve"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/analytics/time-on-market/{model_id}/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["analytics_time_on_market_retrieve"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/auth/login/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * @description Takes a set of user credentials and returns an access and refresh JSON web
-         *     token pair to prove the authentication of those credentials.
-         */
-        post: operations["auth_login_create"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/auth/me/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * @description GET /api/auth/me/ — current user + active subscription.
-         *
-         *     Returns a composite ``{user, subscription}`` shape rather than a single
-         *     model, so it overrides ``get`` directly and declares its response schema.
-         */
-        get: operations["auth_me_retrieve"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/auth/refresh/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * @description Takes a refresh type JSON web token and returns an access type JSON web
-         *     token if the refresh token is valid.
-         */
-        post: operations["auth_refresh_create"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/auth/register/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @description POST /api/auth/register/ — create a user + free-tier subscription. */
-        post: operations["auth_register_create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -693,40 +326,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/changes/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description GET /api/changes/ and GET /api/changes/<id>/ (cross-ad). */
-        get: operations["changes_list"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/changes/{id}/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description GET /api/changes/ and GET /api/changes/<id>/ (cross-ad). */
-        get: operations["changes_retrieve"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/favorites/": {
         parameters: {
             query?: never;
@@ -734,24 +333,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * @description Favorites. POST {code}; idempotent if already favorited.
-         *
-         *     Routes (mounted under /api/auth/favorites/):
-         *     - GET    /favorites/             list user's favorites
-         *     - POST   /favorites/             {code} — add
-         *     - DELETE /favorites/<str:code>/  — remove
-         */
+        /** @description Saved ads. POST {code}; idempotent if already saved. */
         get: operations["favorites_list"];
         put?: never;
-        /**
-         * @description Favorites. POST {code}; idempotent if already favorited.
-         *
-         *     Routes (mounted under /api/auth/favorites/):
-         *     - GET    /favorites/             list user's favorites
-         *     - POST   /favorites/             {code} — add
-         *     - DELETE /favorites/<str:code>/  — remove
-         */
+        /** @description Saved ads. POST {code}; idempotent if already saved. */
         post: operations["favorites_create"];
         delete?: never;
         options?: never;
@@ -766,76 +351,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * @description Favorites. POST {code}; idempotent if already favorited.
-         *
-         *     Routes (mounted under /api/auth/favorites/):
-         *     - GET    /favorites/             list user's favorites
-         *     - POST   /favorites/             {code} — add
-         *     - DELETE /favorites/<str:code>/  — remove
-         */
+        /** @description Saved ads. POST {code}; idempotent if already saved. */
         get: operations["favorites_retrieve"];
         put?: never;
         post?: never;
-        /**
-         * @description Favorites. POST {code}; idempotent if already favorited.
-         *
-         *     Routes (mounted under /api/auth/favorites/):
-         *     - GET    /favorites/             list user's favorites
-         *     - POST   /favorites/             {code} — add
-         *     - DELETE /favorites/<str:code>/  — remove
-         */
+        /** @description Saved ads. POST {code}; idempotent if already saved. */
         delete: operations["favorites_destroy"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/fetch-runs/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description GET /api/fetch-runs/ and GET /api/fetch-runs/<id>/. */
-        get: operations["fetch_runs_list"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/fetch-runs/{id}/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description GET /api/fetch-runs/ and GET /api/fetch-runs/<id>/. */
-        get: operations["fetch_runs_retrieve"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/insights/{model_id}/{kind}/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["insights_retrieve"];
-        put?: never;
-        post?: never;
-        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -851,62 +372,14 @@ export interface paths {
         /**
          * @description Landing: per-model market summary (publish-complete, priced), top-N.
          *
-         *     Cached: this aggregates every priced ad in the database on each call and the
-         *     underlying data only changes when the worker ticks. Safe to share across
-         *     users — the response contains no per-user data.
+         *     Reports the **median**, not the mean. Asking prices on this feed are heavily
+         *     right-skewed and a handful of typo listings (a Peugeot 206 at 5.8 trillion
+         *     toman) dragged the mean to roughly twice the median, so the headline number
+         *     described no car actually on the market. Medians are computed in Python:
+         *     there is no portable ORM median aggregate, the input is one narrow
+         *     two-column scan, and the response is cached for two minutes.
          */
         get: operations["markets_retrieve"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/markets/{model_id}/bollinger/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Bollinger-style price spectrum over time for a model. */
-        get: operations["markets_bollinger_retrieve"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/markets/{model_id}/price-trends/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Median + count of observed prices per day/week/month for a model. */
-        get: operations["markets_price_trends_retrieve"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/markets/{model_id}/true-mean/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description True-mean (outlier-trimmed) price for a model/variant/year peer group. */
-        get: operations["markets_true_mean_retrieve"];
         put?: never;
         post?: never;
         delete?: never;
@@ -932,74 +405,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/notifications/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Read-only in-app inbox (paged, newest first). */
-        get: operations["notifications_list"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/notifications/{id}/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Read-only in-app inbox (paged, newest first). */
-        get: operations["notifications_retrieve"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/observations/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description GET /api/observations/ and GET /api/observations/<id>/. */
-        get: operations["observations_list"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/observations/{id}/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description GET /api/observations/ and GET /api/observations/<id>/. */
-        get: operations["observations_retrieve"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/research/depreciation/{model_id}/": {
         parameters: {
             query?: never;
@@ -1009,23 +414,6 @@ export interface paths {
         };
         /** @description Median asking price by model year, and retention against the newest. */
         get: operations["research_depreciation_retrieve"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/research/dispersion/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Cohorts ranked by price spread — where bargaining pays. */
-        get: operations["research_dispersion_retrieve"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1051,23 +439,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/research/negotiation/{model_id}/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description How far sellers in this cohort actually moved on price. */
-        get: operations["research_negotiation_retrieve"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/research/price-position/{model_id}/": {
         parameters: {
             query?: never;
@@ -1080,222 +451,6 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/research/regional/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description City price differences with the model mix held constant. */
-        get: operations["research_regional_retrieve"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/research/retention/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Models ranked by value retention across the observed age span. */
-        get: operations["research_retention_retrieve"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/saved-searches/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Saved searches. POST {name, params, notify}. */
-        get: operations["saved_searches_list"];
-        put?: never;
-        /** @description Saved searches. POST {name, params, notify}. */
-        post: operations["saved_searches_create"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/saved-searches/{id}/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Saved searches. POST {name, params, notify}. */
-        get: operations["saved_searches_retrieve"];
-        put?: never;
-        post?: never;
-        /** @description Saved searches. POST {name, params, notify}. */
-        delete: operations["saved_searches_destroy"];
-        options?: never;
-        head?: never;
-        /** @description Saved searches. POST {name, params, notify}. */
-        patch: operations["saved_searches_partial_update"];
-        trace?: never;
-    };
-    "/api/watchlists/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * @description Watchlists + nested ad membership.
-         *
-         *     Routes (mounted under /api/auth/watchlists/):
-         *     - GET/POST        /watchlists/
-         *     - GET/PATCH/DELETE /watchlists/<uuid:pk>/
-         *     - GET/POST        /watchlists/<uuid:pk>/ads/   (POST body {code})
-         *     - DELETE          /watchlists/<uuid:pk>/ads/<str:code>/
-         */
-        get: operations["watchlists_list"];
-        put?: never;
-        /**
-         * @description Watchlists + nested ad membership.
-         *
-         *     Routes (mounted under /api/auth/watchlists/):
-         *     - GET/POST        /watchlists/
-         *     - GET/PATCH/DELETE /watchlists/<uuid:pk>/
-         *     - GET/POST        /watchlists/<uuid:pk>/ads/   (POST body {code})
-         *     - DELETE          /watchlists/<uuid:pk>/ads/<str:code>/
-         */
-        post: operations["watchlists_create"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/watchlists/{id}/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * @description Watchlists + nested ad membership.
-         *
-         *     Routes (mounted under /api/auth/watchlists/):
-         *     - GET/POST        /watchlists/
-         *     - GET/PATCH/DELETE /watchlists/<uuid:pk>/
-         *     - GET/POST        /watchlists/<uuid:pk>/ads/   (POST body {code})
-         *     - DELETE          /watchlists/<uuid:pk>/ads/<str:code>/
-         */
-        get: operations["watchlists_retrieve"];
-        /**
-         * @description Watchlists + nested ad membership.
-         *
-         *     Routes (mounted under /api/auth/watchlists/):
-         *     - GET/POST        /watchlists/
-         *     - GET/PATCH/DELETE /watchlists/<uuid:pk>/
-         *     - GET/POST        /watchlists/<uuid:pk>/ads/   (POST body {code})
-         *     - DELETE          /watchlists/<uuid:pk>/ads/<str:code>/
-         */
-        put: operations["watchlists_update"];
-        post?: never;
-        /**
-         * @description Watchlists + nested ad membership.
-         *
-         *     Routes (mounted under /api/auth/watchlists/):
-         *     - GET/POST        /watchlists/
-         *     - GET/PATCH/DELETE /watchlists/<uuid:pk>/
-         *     - GET/POST        /watchlists/<uuid:pk>/ads/   (POST body {code})
-         *     - DELETE          /watchlists/<uuid:pk>/ads/<str:code>/
-         */
-        delete: operations["watchlists_destroy"];
-        options?: never;
-        head?: never;
-        /**
-         * @description Watchlists + nested ad membership.
-         *
-         *     Routes (mounted under /api/auth/watchlists/):
-         *     - GET/POST        /watchlists/
-         *     - GET/PATCH/DELETE /watchlists/<uuid:pk>/
-         *     - GET/POST        /watchlists/<uuid:pk>/ads/   (POST body {code})
-         *     - DELETE          /watchlists/<uuid:pk>/ads/<str:code>/
-         */
-        patch: operations["watchlists_partial_update"];
-        trace?: never;
-    };
-    "/api/watchlists/{id}/ads/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * @description Watchlists + nested ad membership.
-         *
-         *     Routes (mounted under /api/auth/watchlists/):
-         *     - GET/POST        /watchlists/
-         *     - GET/PATCH/DELETE /watchlists/<uuid:pk>/
-         *     - GET/POST        /watchlists/<uuid:pk>/ads/   (POST body {code})
-         *     - DELETE          /watchlists/<uuid:pk>/ads/<str:code>/
-         */
-        get: operations["watchlists_ads_retrieve"];
-        put?: never;
-        /**
-         * @description Watchlists + nested ad membership.
-         *
-         *     Routes (mounted under /api/auth/watchlists/):
-         *     - GET/POST        /watchlists/
-         *     - GET/PATCH/DELETE /watchlists/<uuid:pk>/
-         *     - GET/POST        /watchlists/<uuid:pk>/ads/   (POST body {code})
-         *     - DELETE          /watchlists/<uuid:pk>/ads/<str:code>/
-         */
-        post: operations["watchlists_ads_create"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/watchlists/{id}/ads/{code}/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /**
-         * @description Watchlists + nested ad membership.
-         *
-         *     Routes (mounted under /api/auth/watchlists/):
-         *     - GET/POST        /watchlists/
-         *     - GET/PATCH/DELETE /watchlists/<uuid:pk>/
-         *     - GET/POST        /watchlists/<uuid:pk>/ads/   (POST body {code})
-         *     - DELETE          /watchlists/<uuid:pk>/ads/<str:code>/
-         */
-        delete: operations["watchlists_ads_destroy"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1333,159 +488,39 @@ export interface components {
             last_seen_at?: string | null;
             title?: string;
             transmission?: string;
+            body_type?: string;
+            fuel?: string;
             readonly city_id: number;
             /** @default  */
             readonly city_name: string;
             url?: string;
+            description?: string;
+            primary_image_url?: string;
+            image_urls?: unknown;
+            image_count?: number | null;
+            seller_authenticated?: boolean | null;
+            year_jalali?: number | null;
+            status?: components["schemas"]["StatusEnum"];
             readonly cohort_flags: unknown;
         };
-        /**
-         * @description Expose the rich change payload plus minimal ad/version references.
-         *
-         *     `categories`, `changed_paths`, and `changes` are JSONField lists/dicts and
-         *     serialize natively; we also nest the ad code and the previous/new version
-         *     hashes so a client can follow the version chain without extra round-trips.
-         */
-        AdChangeEvent: {
-            readonly id: number;
-            readonly ad_code: string;
-            readonly observation_id: number;
-            readonly previous_version_hash: string;
-            readonly new_version_hash: string;
-            event_type: components["schemas"]["EventTypeEnum"];
-            readonly categories: unknown;
-            readonly changed_paths: unknown;
-            readonly changes: unknown;
-            origin?: string;
-            /** Format: date-time */
-            readonly created_at: string;
-        };
-        AdObservation: {
-            readonly id: number;
-            readonly ad_code: string;
-            /** Format: uuid */
-            readonly fetch_run_id: string;
-            readonly version_id: number;
-            /** Format: date-time */
-            observed_at: string;
-            raw_hash: string;
-            publish_phrase?: string;
-            rank?: number | null;
-        };
-        AdVersion: {
-            readonly id: number;
-            readonly ad_code: string;
-            semantic_hash: string;
-            raw_hash: string;
-            origin?: components["schemas"]["OriginEnum"];
-            /** Format: date-time */
-            first_observed_at: string;
-        };
-        /** @description Create/update an alert. Shape is validated per alert_type. */
-        Alert: {
-            /** Format: uuid */
-            readonly id: string;
-            alert_type: components["schemas"]["AlertTypeEnum"];
-            /** Format: uuid */
-            saved_search?: string | null;
-            ad?: string | null;
-            /** Format: uuid */
-            watchlist?: string | null;
-            model?: number | null;
-            /**
-             * Format: double
-             * @description Min drop % (price_drop) or min discount % (undervalued).
-             */
-            threshold?: number | null;
-            channels?: unknown;
-            enabled?: boolean;
-            /** Format: date-time */
-            readonly created_at: string;
-        };
-        /** @description Create/update an alert. Shape is validated per alert_type. */
-        AlertRequest: {
-            alert_type: components["schemas"]["AlertTypeEnum"];
-            /** Format: uuid */
-            saved_search?: string | null;
-            ad?: string | null;
-            /** Format: uuid */
-            watchlist?: string | null;
-            model?: number | null;
-            /**
-             * Format: double
-             * @description Min drop % (price_drop) or min discount % (undervalued).
-             */
-            threshold?: number | null;
-            channels?: unknown;
-            enabled?: boolean;
-        };
-        /**
-         * @description * `price_drop` - Price drop
-         *     * `undervalued` - Undervalued listing
-         *     * `new_listing` - New listing
-         * @enum {string}
-         */
-        AlertTypeEnum: "price_drop" | "undervalued" | "new_listing";
         Brand: {
             slug: string;
             name_fa: string;
             name_en?: string | null;
             aliases?: unknown;
         };
-        /**
-         * @description * `inapp` - In-app
-         *     * `email` - Email
-         *     * `telegram` - Telegram
-         * @enum {string}
-         */
-        ChannelEnum: "inapp" | "email" | "telegram";
-        /**
-         * @description * `content_changed` - Content changed
-         *     * `route_changed` - Route changed
-         *     * `reappeared` - Reappeared
-         * @enum {string}
-         */
-        EventTypeEnum: "content_changed" | "route_changed" | "reappeared";
-        /** @description A favorited ad. ``code`` is the ad's PK (catalog.Ad.code). */
         Favorite: {
-            readonly id: number;
             code: string;
+            readonly ad_title: string;
+            readonly ad_price: number;
+            readonly previous_price: string;
+            readonly price_changed_at: string;
             /** Format: date-time */
             readonly created_at: string;
         };
-        /** @description A favorited ad. ``code`` is the ad's PK (catalog.Ad.code). */
         FavoriteRequest: {
             code: string;
         };
-        FetchRun: {
-            /** Format: uuid */
-            readonly id: string;
-            source?: components["schemas"]["SourceEnum"];
-            status?: components["schemas"]["FetchRunStatusEnum"];
-            max_ads?: number | null;
-            /** Format: double */
-            page_pause?: number | null;
-            fetched_count?: number;
-            created_count?: number;
-            updated_count?: number;
-            skipped_count?: number;
-            price_change_count?: number;
-            error?: string;
-            /** Format: date-time */
-            readonly created_at: string;
-            /** Format: date-time */
-            started_at?: string | null;
-            /** Format: date-time */
-            finished_at?: string | null;
-        };
-        /**
-         * @description * `queued` - Queued
-         *     * `running` - Running
-         *     * `succeeded` - Succeeded
-         *     * `failed` - Failed
-         * @enum {string}
-         */
-        FetchRunStatusEnum: "queued" | "running" | "succeeded" | "failed";
         /** @description 202 response body for an async admin job trigger. */
         JobAccepted: {
             status: string;
@@ -1496,53 +531,6 @@ export interface components {
             readonly id: number;
             readonly brand_slug: string;
             name_fa: string;
-        };
-        Notification: {
-            /** Format: uuid */
-            readonly id: string;
-            /** Format: uuid */
-            readonly alert: string | null;
-            readonly channel: components["schemas"]["ChannelEnum"];
-            readonly status: components["schemas"]["NotificationStatusEnum"];
-            readonly subject: string;
-            readonly body: string;
-            readonly related_ad: string | null;
-            readonly dedupe_key: string;
-            /** Format: date-time */
-            readonly created_at: string;
-            /** Format: date-time */
-            readonly sent_at: string | null;
-            readonly error: string;
-        };
-        /**
-         * @description * `pending` - Pending
-         *     * `sent` - Sent
-         *     * `failed` - Failed
-         * @enum {string}
-         */
-        NotificationStatusEnum: "pending" | "sent" | "failed";
-        /**
-         * @description * `live_fetch` - Live fetch
-         *     * `bulk_import` - Bulk import
-         *     * `history_replay` - History replay
-         *     * `legacy_baseline` - Legacy baseline
-         * @enum {string}
-         */
-        OriginEnum: "live_fetch" | "bulk_import" | "history_replay" | "legacy_baseline";
-        PaginatedAdChangeEventList: {
-            /** @example 123 */
-            count: number;
-            /**
-             * Format: uri
-             * @example http://api.example.org/accounts/?page=4
-             */
-            next?: string | null;
-            /**
-             * Format: uri
-             * @example http://api.example.org/accounts/?page=2
-             */
-            previous?: string | null;
-            results: components["schemas"]["AdChangeEvent"][];
         };
         PaginatedAdList: {
             /** @example 123 */
@@ -1559,36 +547,6 @@ export interface components {
             previous?: string | null;
             results: components["schemas"]["Ad"][];
         };
-        PaginatedAdObservationList: {
-            /** @example 123 */
-            count: number;
-            /**
-             * Format: uri
-             * @example http://api.example.org/accounts/?page=4
-             */
-            next?: string | null;
-            /**
-             * Format: uri
-             * @example http://api.example.org/accounts/?page=2
-             */
-            previous?: string | null;
-            results: components["schemas"]["AdObservation"][];
-        };
-        PaginatedAlertList: {
-            /** @example 123 */
-            count: number;
-            /**
-             * Format: uri
-             * @example http://api.example.org/accounts/?page=4
-             */
-            next?: string | null;
-            /**
-             * Format: uri
-             * @example http://api.example.org/accounts/?page=2
-             */
-            previous?: string | null;
-            results: components["schemas"]["Alert"][];
-        };
         PaginatedFavoriteList: {
             /** @example 123 */
             count: number;
@@ -1604,164 +562,16 @@ export interface components {
             previous?: string | null;
             results: components["schemas"]["Favorite"][];
         };
-        PaginatedFetchRunList: {
-            /** @example 123 */
-            count: number;
-            /**
-             * Format: uri
-             * @example http://api.example.org/accounts/?page=4
-             */
-            next?: string | null;
-            /**
-             * Format: uri
-             * @example http://api.example.org/accounts/?page=2
-             */
-            previous?: string | null;
-            results: components["schemas"]["FetchRun"][];
-        };
-        PaginatedNotificationList: {
-            /** @example 123 */
-            count: number;
-            /**
-             * Format: uri
-             * @example http://api.example.org/accounts/?page=4
-             */
-            next?: string | null;
-            /**
-             * Format: uri
-             * @example http://api.example.org/accounts/?page=2
-             */
-            previous?: string | null;
-            results: components["schemas"]["Notification"][];
-        };
-        PaginatedSavedSearchList: {
-            /** @example 123 */
-            count: number;
-            /**
-             * Format: uri
-             * @example http://api.example.org/accounts/?page=4
-             */
-            next?: string | null;
-            /**
-             * Format: uri
-             * @example http://api.example.org/accounts/?page=2
-             */
-            previous?: string | null;
-            results: components["schemas"]["SavedSearch"][];
-        };
-        PaginatedWatchlistList: {
-            /** @example 123 */
-            count: number;
-            /**
-             * Format: uri
-             * @example http://api.example.org/accounts/?page=4
-             */
-            next?: string | null;
-            /**
-             * Format: uri
-             * @example http://api.example.org/accounts/?page=2
-             */
-            previous?: string | null;
-            results: components["schemas"]["Watchlist"][];
-        };
-        /** @description Create/update an alert. Shape is validated per alert_type. */
-        PatchedAlertRequest: {
-            alert_type?: components["schemas"]["AlertTypeEnum"];
-            /** Format: uuid */
-            saved_search?: string | null;
-            ad?: string | null;
-            /** Format: uuid */
-            watchlist?: string | null;
-            model?: number | null;
-            /**
-             * Format: double
-             * @description Min drop % (price_drop) or min discount % (undervalued).
-             */
-            threshold?: number | null;
-            channels?: unknown;
-            enabled?: boolean;
-        };
-        PatchedSavedSearchRequest: {
-            name?: string;
-            params?: unknown;
-            notify?: boolean;
-        };
-        PatchedWatchlistRequest: {
-            name?: string;
-        };
-        Register: {
-            /** Format: email */
-            email: string;
-            full_name?: string;
-        };
-        RegisterRequest: {
-            /** Format: email */
-            email: string;
-            password: string;
-            full_name?: string;
-        };
-        SavedSearch: {
-            /** Format: uuid */
-            readonly id: string;
-            name?: string;
-            params?: unknown;
-            notify?: boolean;
-            /** Format: date-time */
-            readonly last_checked_at: string | null;
-            /** Format: date-time */
-            readonly created_at: string;
-        };
-        SavedSearchRequest: {
-            name?: string;
-            params?: unknown;
-            notify?: boolean;
-        };
         /**
-         * @description * `live_fetch` - Live fetch
-         *     * `bulk_import` - Bulk import
-         *     * `history_replay` - History replay
-         *     * `legacy_baseline` - Legacy baseline
-         *     * `manual` - Manual
+         * @description * `active` - Active
+         *     * `removed` - Removed (absent from the last completed sweeps)
          * @enum {string}
          */
-        SourceEnum: "live_fetch" | "bulk_import" | "history_replay" | "legacy_baseline" | "manual";
-        /** @description One item in a merged ad timeline (observation or change). */
-        TimelineEntry: {
-            readonly kind: string;
-            /** Format: date-time */
-            readonly at: string;
-            readonly detail: unknown;
-        };
-        TokenObtainPair: {
-            readonly access: string;
-            readonly refresh: string;
-        };
-        TokenObtainPairRequest: {
-            email: string;
-            password: string;
-        };
-        TokenRefresh: {
-            readonly access: string;
-            refresh: string;
-        };
-        TokenRefreshRequest: {
-            refresh: string;
-        };
+        StatusEnum: "active" | "removed";
         Variant: {
             readonly id: number;
             readonly model_id: number;
             name_fa?: string;
-        };
-        Watchlist: {
-            /** Format: uuid */
-            readonly id: string;
-            name: string;
-            /** Format: date-time */
-            readonly created_at: string;
-            readonly ads: string[];
-        };
-        WatchlistRequest: {
-            name: string;
         };
     };
     responses: never;
@@ -1779,6 +589,27 @@ export interface operations {
             path: {
                 code: string;
             };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    admin_health_retrieve: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -1839,52 +670,7 @@ export interface operations {
             };
         };
     };
-    admin_jobs_evaluate_alerts_create: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["JobAccepted"];
-                };
-            };
-        };
-    };
     admin_jobs_fetch_create: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["JobAccepted"];
-                };
-            };
-            /** @description No response body */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    admin_jobs_import_create: {
         parameters: {
             query?: never;
             header?: never;
@@ -1953,10 +739,14 @@ export interface operations {
     ads_list: {
         parameters: {
             query?: {
+                body_type?: string;
                 brand?: string;
                 city?: number;
+                fuel?: string;
+                has_image?: boolean;
                 last_seen_from?: string;
                 mileage_max?: number;
+                mileage_min?: number;
                 model?: number;
                 /** @description Which field to use when ordering the results. */
                 ordering?: string;
@@ -1965,6 +755,9 @@ export interface operations {
                 price_max?: number;
                 price_min?: number;
                 publish_from?: string;
+                q?: string;
+                seller_authenticated?: boolean;
+                status?: string;
                 transmission?: string;
                 variant?: number;
                 year_max?: number;
@@ -2008,51 +801,7 @@ export interface operations {
             };
         };
     };
-    ads_changes_list: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                code: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AdChangeEvent"][];
-                };
-            };
-        };
-    };
     ads_fair_price_retrieve: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                code: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    ads_identity_retrieve: {
         parameters: {
             query?: never;
             header?: never;
@@ -2094,168 +843,6 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
-                };
-            };
-        };
-    };
-    ads_timeline_list: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                code: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TimelineEntry"][];
-                };
-            };
-        };
-    };
-    ads_versions_list: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                code: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AdVersion"][];
-                };
-            };
-        };
-    };
-    alerts_list: {
-        parameters: {
-            query?: {
-                /** @description Which field to use when ordering the results. */
-                ordering?: string;
-                /** @description A page number within the paginated result set. */
-                page?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PaginatedAlertList"];
-                };
-            };
-        };
-    };
-    alerts_create: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AlertRequest"];
-                "application/x-www-form-urlencoded": components["schemas"]["AlertRequest"];
-                "multipart/form-data": components["schemas"]["AlertRequest"];
-            };
-        };
-        responses: {
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Alert"];
-                };
-            };
-        };
-    };
-    alerts_retrieve: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description A UUID string identifying this alert. */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Alert"];
-                };
-            };
-        };
-    };
-    alerts_destroy: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description A UUID string identifying this alert. */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description No response body */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    alerts_partial_update: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description A UUID string identifying this alert. */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/json": components["schemas"]["PatchedAlertRequest"];
-                "application/x-www-form-urlencoded": components["schemas"]["PatchedAlertRequest"];
-                "multipart/form-data": components["schemas"]["PatchedAlertRequest"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Alert"];
                 };
             };
         };
@@ -2310,79 +897,6 @@ export interface operations {
             };
         };
     };
-    analytics_dealers_retrieve: {
-        parameters: {
-            query?: {
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    analytics_fast_movers_retrieve: {
-        parameters: {
-            query?: {
-                limit?: number;
-            };
-            header?: never;
-            path: {
-                model_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    analytics_inventory_trends_retrieve: {
-        parameters: {
-            query?: {
-                days?: number;
-            };
-            header?: never;
-            path: {
-                model_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
     analytics_market_index_retrieve: {
         parameters: {
             query?: {
@@ -2390,77 +904,6 @@ export interface operations {
                 /** @description Brand slug or model id; omit for scope=market. */
                 id?: string;
                 scope?: "brand" | "market" | "model";
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    analytics_market_overview_retrieve: {
-        parameters: {
-            query?: {
-                days?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    analytics_newest_retrieve: {
-        parameters: {
-            query?: {
-                limit?: number;
-                model?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    analytics_oldest_retrieve: {
-        parameters: {
-            query?: {
-                limit?: number;
-                model?: number;
             };
             header?: never;
             path?: never;
@@ -2497,200 +940,6 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
-                };
-            };
-        };
-    };
-    analytics_price_drops_retrieve: {
-        parameters: {
-            query?: {
-                days?: number;
-                limit?: number;
-                min_pct?: number;
-                model?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    analytics_rankings_retrieve: {
-        parameters: {
-            query?: {
-                limit?: number;
-            };
-            header?: never;
-            path: {
-                dim: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    analytics_regional_retrieve: {
-        parameters: {
-            query?: {
-                limit?: number;
-                model?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    analytics_time_on_market_retrieve: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                model_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    auth_login_create: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["TokenObtainPairRequest"];
-                "application/x-www-form-urlencoded": components["schemas"]["TokenObtainPairRequest"];
-                "multipart/form-data": components["schemas"]["TokenObtainPairRequest"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TokenObtainPair"];
-                };
-            };
-        };
-    };
-    auth_me_retrieve: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    auth_refresh_create: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["TokenRefreshRequest"];
-                "application/x-www-form-urlencoded": components["schemas"]["TokenRefreshRequest"];
-                "multipart/form-data": components["schemas"]["TokenRefreshRequest"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TokenRefresh"];
-                };
-            };
-        };
-    };
-    auth_register_create: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RegisterRequest"];
-                "application/x-www-form-urlencoded": components["schemas"]["RegisterRequest"];
-                "multipart/form-data": components["schemas"]["RegisterRequest"];
-            };
-        };
-        responses: {
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Register"];
                 };
             };
         };
@@ -2759,55 +1008,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Brand"];
-                };
-            };
-        };
-    };
-    changes_list: {
-        parameters: {
-            query?: {
-                ad?: string;
-                event_type?: string;
-                fetch_run?: string;
-                /** @description Which field to use when ordering the results. */
-                ordering?: string;
-                /** @description A page number within the paginated result set. */
-                page?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PaginatedAdChangeEventList"];
-                };
-            };
-        };
-    };
-    changes_retrieve: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description A unique integer value identifying this ad change event. */
-                id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AdChangeEvent"];
                 };
             };
         };
@@ -2904,79 +1104,6 @@ export interface operations {
             };
         };
     };
-    fetch_runs_list: {
-        parameters: {
-            query?: {
-                /** @description Which field to use when ordering the results. */
-                ordering?: string;
-                /** @description A page number within the paginated result set. */
-                page?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PaginatedFetchRunList"];
-                };
-            };
-        };
-    };
-    fetch_runs_retrieve: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description A UUID string identifying this fetch run. */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FetchRun"];
-                };
-            };
-        };
-    };
-    insights_retrieve: {
-        parameters: {
-            query?: {
-                variant?: number;
-                year?: number;
-            };
-            header?: never;
-            path: {
-                kind: string;
-                model_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
     markets_retrieve: {
         parameters: {
             query?: {
@@ -2984,87 +1111,6 @@ export interface operations {
             };
             header?: never;
             path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    markets_bollinger_retrieve: {
-        parameters: {
-            query?: {
-                sigma?: number;
-                variant?: number;
-                window?: number;
-            };
-            header?: never;
-            path: {
-                model_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    markets_price_trends_retrieve: {
-        parameters: {
-            query?: {
-                bucket?: string;
-                variant?: number;
-            };
-            header?: never;
-            path: {
-                model_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    markets_true_mean_retrieve: {
-        parameters: {
-            query?: {
-                method?: string;
-                variant?: number;
-                year?: number;
-                z?: number;
-            };
-            header?: never;
-            path: {
-                model_id: number;
-            };
             cookie?: never;
         };
         requestBody?: never;
@@ -3105,100 +1151,6 @@ export interface operations {
             };
         };
     };
-    notifications_list: {
-        parameters: {
-            query?: {
-                /** @description Which field to use when ordering the results. */
-                ordering?: string;
-                /** @description A page number within the paginated result set. */
-                page?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PaginatedNotificationList"];
-                };
-            };
-        };
-    };
-    notifications_retrieve: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description A UUID string identifying this notification. */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Notification"];
-                };
-            };
-        };
-    };
-    observations_list: {
-        parameters: {
-            query?: {
-                ad?: string;
-                fetch_run?: string;
-                /** @description Which field to use when ordering the results. */
-                ordering?: string;
-                /** @description A page number within the paginated result set. */
-                page?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PaginatedAdObservationList"];
-                };
-            };
-        };
-    };
-    observations_retrieve: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description A unique integer value identifying this ad observation. */
-                id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AdObservation"];
-                };
-            };
-        };
-    };
     research_depreciation_retrieve: {
         parameters: {
             query?: never;
@@ -3222,51 +1174,7 @@ export interface operations {
             };
         };
     };
-    research_dispersion_retrieve: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
     research_liquidity_retrieve: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                model_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    research_negotiation_retrieve: {
         parameters: {
             query?: never;
             header?: never;
@@ -3309,388 +1217,6 @@ export interface operations {
                         [key: string]: unknown;
                     };
                 };
-            };
-        };
-    };
-    research_regional_retrieve: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    research_retention_retrieve: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    saved_searches_list: {
-        parameters: {
-            query?: {
-                /** @description Which field to use when ordering the results. */
-                ordering?: string;
-                /** @description A page number within the paginated result set. */
-                page?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PaginatedSavedSearchList"];
-                };
-            };
-        };
-    };
-    saved_searches_create: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/json": components["schemas"]["SavedSearchRequest"];
-                "application/x-www-form-urlencoded": components["schemas"]["SavedSearchRequest"];
-                "multipart/form-data": components["schemas"]["SavedSearchRequest"];
-            };
-        };
-        responses: {
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SavedSearch"];
-                };
-            };
-        };
-    };
-    saved_searches_retrieve: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description A UUID string identifying this saved search. */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SavedSearch"];
-                };
-            };
-        };
-    };
-    saved_searches_destroy: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description A UUID string identifying this saved search. */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description No response body */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    saved_searches_partial_update: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description A UUID string identifying this saved search. */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/json": components["schemas"]["PatchedSavedSearchRequest"];
-                "application/x-www-form-urlencoded": components["schemas"]["PatchedSavedSearchRequest"];
-                "multipart/form-data": components["schemas"]["PatchedSavedSearchRequest"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SavedSearch"];
-                };
-            };
-        };
-    };
-    watchlists_list: {
-        parameters: {
-            query?: {
-                /** @description Which field to use when ordering the results. */
-                ordering?: string;
-                /** @description A page number within the paginated result set. */
-                page?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PaginatedWatchlistList"];
-                };
-            };
-        };
-    };
-    watchlists_create: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["WatchlistRequest"];
-                "application/x-www-form-urlencoded": components["schemas"]["WatchlistRequest"];
-                "multipart/form-data": components["schemas"]["WatchlistRequest"];
-            };
-        };
-        responses: {
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Watchlist"];
-                };
-            };
-        };
-    };
-    watchlists_retrieve: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description A UUID string identifying this watchlist. */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Watchlist"];
-                };
-            };
-        };
-    };
-    watchlists_update: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description A UUID string identifying this watchlist. */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["WatchlistRequest"];
-                "application/x-www-form-urlencoded": components["schemas"]["WatchlistRequest"];
-                "multipart/form-data": components["schemas"]["WatchlistRequest"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Watchlist"];
-                };
-            };
-        };
-    };
-    watchlists_destroy: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description A UUID string identifying this watchlist. */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description No response body */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    watchlists_partial_update: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description A UUID string identifying this watchlist. */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/json": components["schemas"]["PatchedWatchlistRequest"];
-                "application/x-www-form-urlencoded": components["schemas"]["PatchedWatchlistRequest"];
-                "multipart/form-data": components["schemas"]["PatchedWatchlistRequest"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Watchlist"];
-                };
-            };
-        };
-    };
-    watchlists_ads_retrieve: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description A UUID string identifying this watchlist. */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Watchlist"];
-                };
-            };
-        };
-    };
-    watchlists_ads_create: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description A UUID string identifying this watchlist. */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["WatchlistRequest"];
-                "application/x-www-form-urlencoded": components["schemas"]["WatchlistRequest"];
-                "multipart/form-data": components["schemas"]["WatchlistRequest"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Watchlist"];
-                };
-            };
-        };
-    };
-    watchlists_ads_destroy: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                code: string;
-                /** @description A UUID string identifying this watchlist. */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description No response body */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
         };
     };

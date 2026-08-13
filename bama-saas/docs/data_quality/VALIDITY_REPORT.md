@@ -40,12 +40,9 @@ Invalid status: **0**
 - `price_outlier_low`: 442
 - `price_outlier_high`: 184
 
-## Vehicle identity / duplicate listings
+## Listing episodes
 
-- Identities: **58,578**
 - Listing episodes: **65,908**
-- Identities spanning >1 ad code: **66**
-- Ad codes in those identities: **142**
 
 ## Ingest rejects (hard quarantine)
 

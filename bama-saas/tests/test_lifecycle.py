@@ -292,46 +292,51 @@ def test_fresh_observation_still_reactivates(catalog):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.django_db
-def test_high_mileage_car_is_not_a_bargain(catalog):
-    """The headline defect: a worn-out car must stop topping the deals board.
+def test_thin_cohort_is_not_scored(catalog):
+    """MIN_PEERS=8: a median of seven cars is not a deal board."""
+    for i in range(7):
+        _ad(catalog, f"thin{i:03d}", NOW, price=1_000_000_000, mileage=100_000)
 
-    Peers sit on a clean depreciation line (price falls with distance). The
-    cheapest car is cheapest *only* because it has by far the most kilometres,
-    so once prices are normalised to the cohort's median mileage it is worth
-    about what its odometer says and must not out-score a genuine bargain.
-    """
-    # A tight, strongly-fitting line: 1.2B at 0 km, losing 2,000 toman per km.
-    for i, km in enumerate(range(0, 200_001, 20_000)):
-        _ad(catalog, f"line{i:03d}", NOW,
-            price=1_200_000_000 - 2_000 * km, mileage=km)
-    # Worn out: 400,000 km. On the line it is worth 400M; it asks 400M.
-    worn = _ad(catalog, "wornout1", NOW, price=400_000_000, mileage=400_000)
-    # A real bargain: median-ish mileage, priced well under the line.
-    bargain = _ad(catalog, "bargain1", NOW, price=600_000_000, mileage=100_000)
+    compute_deal_scores()
 
-    compute_deal_scores(min_peers=3)
-
-    worn_score = DealScoreCache.objects.filter(ad_id=worn.code).first()
-    bargain_score = DealScoreCache.objects.get(ad_id=bargain.code)
-    assert bargain_score.components["mileage_adjusted"] is True
-    # The genuine bargain must rank above the merely-worn-out car.
-    assert worn_score is None or bargain_score.score > worn_score.score
+    assert DealScoreCache.objects.count() == 0
 
 
 @pytest.mark.django_db
-def test_unusable_fit_falls_back_to_raw_prices(catalog):
-    """No usable price/km relationship → compare raw prices, flag it as such.
+def test_asking_above_peer_median_is_not_a_deal(catalog):
+    for i in range(8):
+        _ad(catalog, f"peer{i:03d}", NOW, price=1_000_000_000, mileage=100_000)
+    expensive = _ad(catalog, "pricey01", NOW, price=1_200_000_000, mileage=100_000)
 
-    Every peer here has the same mileage, so the regression has nothing to fit
-    and must not be applied.
-    """
-    for i in range(6):
-        _ad(catalog, f"flat{i:03d}", NOW, price=1_000_000_000, mileage=100_000)
-    cheap = _ad(catalog, "cheapest", NOW, price=800_000_000, mileage=100_000)
+    compute_deal_scores()
 
-    compute_deal_scores(min_peers=3)
+    assert DealScoreCache.objects.filter(ad_id=expensive.code).first() is None
+
+
+@pytest.mark.django_db
+def test_honest_discount_is_scored_with_evidence(catalog):
+    for i in range(8):
+        _ad(catalog, f"peer{i:03d}", NOW, price=1_000_000_000, mileage=100_000)
+    cheap = _ad(catalog, "bargain1", NOW, price=800_000_000, mileage=100_000)
+
+    compute_deal_scores()
 
     row = DealScoreCache.objects.get(ad_id=cheap.code)
-    assert row.components["mileage_adjusted"] is False
-    assert row.components["slope_per_km"] is None
     assert row.discount_pct == pytest.approx(20.0, abs=0.5)
+    assert row.peer_median == 1_000_000_000
+    assert row.components["peer_count"] == 9
+    assert row.components["confidence"] == "low"
+    assert row.components["fair_value"] > 0
+    assert cheap.current_price < row.peer_median
+
+
+@pytest.mark.django_db
+def test_ask_below_half_peer_median_is_not_a_deal(catalog):
+    """80M against a 1.7B cohort is a deposit/typo, not a 95% discount."""
+    for i in range(8):
+        _ad(catalog, f"peer{i:03d}", NOW, price=1_700_000_000, mileage=100_000)
+    deposit = _ad(catalog, "deposit1", NOW, price=80_000_000, mileage=100_000)
+
+    compute_deal_scores()
+
+    assert DealScoreCache.objects.filter(ad_id=deposit.code).first() is None

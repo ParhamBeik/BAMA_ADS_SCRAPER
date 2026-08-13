@@ -1,6 +1,5 @@
 """Shared settings for the Bama SaaS Django project."""
 
-from datetime import timedelta
 from pathlib import Path
 import os
 
@@ -25,8 +24,6 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "django.contrib.postgres",
     "rest_framework",
-    "rest_framework_simplejwt",
-    "rest_framework_simplejwt.token_blacklist",
     "drf_spectacular",
     "django_filters",
     "corsheaders",
@@ -107,16 +104,19 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # ---------------------------------------------------------------------------
-# Django REST Framework + JWT
+# Django REST Framework
 # ---------------------------------------------------------------------------
+#
+# No authentication classes and no permission gate: this is a single-operator
+# tool that runs on one machine behind Docker Compose, never exposed publicly.
+# Session auth stays only so the Django admin's browsable API keeps working.
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
-        "apps.accounts.authentication.CookieJWTAuthentication",
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "rest_framework.authentication.SessionAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": (
-        "rest_framework.permissions.IsAuthenticated",
+        "rest_framework.permissions.AllowAny",
     ),
     "DEFAULT_FILTER_BACKENDS": (
         "django_filters.rest_framework.DjangoFilterBackend",
@@ -129,24 +129,11 @@ REST_FRAMEWORK = {
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "Bama SaaS API",
-    "DESCRIPTION": "Market-intelligence REST API for the Iranian used-car market "
-                   "(catalog, market analytics, price history, alerts, favorites).",
-    "VERSION": "1.0.0",
+    "DESCRIPTION": "Local market-intelligence REST API for the Iranian used-car "
+                   "market (catalog, market analytics, price history, saved ads).",
+    "VERSION": "2.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
     "COMPONENT_SPLIT_REQUEST": True,
-    # JWT bearer auth in the docs UI.
-    "SECURITY": [{"jwtAuth": []}],
-    "COMPONENT_SECURITY_SCHEMES": {
-        "jwtAuth": {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"},
-    },
-}
-
-SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
-    "ROTATE_REFRESH_TOKENS": True,
-    "BLACKLIST_AFTER_ROTATION": True,
-    "AUTH_HEADER_TYPES": ("Bearer",),
 }
 
 CORS_ALLOWED_ORIGINS = [
@@ -159,13 +146,6 @@ CORS_ALLOWED_ORIGINS = [
 ]
 CORS_ALLOW_CREDENTIALS = True
 
-# Cookie auth (Phase 1 frontend rebuild).
-AUTH_ACCESS_COOKIE = os.environ.get("AUTH_ACCESS_COOKIE", "bama_access")
-AUTH_REFRESH_COOKIE = os.environ.get("AUTH_REFRESH_COOKIE", "bama_refresh")
-AUTH_COOKIE_SECURE = os.environ.get("AUTH_COOKIE_SECURE", "false").lower() == "true"
-AUTH_COOKIE_SAMESITE = os.environ.get("AUTH_COOKIE_SAMESITE", "Lax")
-AUTH_COOKIE_DOMAIN = os.environ.get("AUTH_COOKIE_DOMAIN", "") or None
-FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5174")
 CSRF_TRUSTED_ORIGINS = [
     origin.strip()
     for origin in os.environ.get(
@@ -183,36 +163,10 @@ BAMA_MAX_ADS = int(os.environ.get("BAMA_MAX_ADS", "50000"))
 BAMA_PAGE_PAUSE = float(os.environ.get("BAMA_PAGE_PAUSE", "0.8"))
 BAMA_REQUEST_TIMEOUT = int(os.environ.get("BAMA_REQUEST_TIMEOUT", "20"))
 BAMA_COOKIE = os.environ.get("BAMA_COOKIE", "")
-ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "")
-
 # Per-tick fetch size for the background worker. Intentionally small: the worker
 # runs every ~5 minutes and only needs the newest pages (where new/changed ads
 # land). A full sweep uses `python manage.py fetch_live` (BAMA_MAX_ADS) instead.
 BAMA_WORKER_FETCH_ADS = int(os.environ.get("BAMA_WORKER_FETCH_ADS", "500"))
-
-# Default to the project's own data dir; in Docker this is mounted read-only at /data.
-BAMA_SCRAPED_DATA_ROOT = os.environ.get(
-    "BAMA_SCRAPED_DATA_ROOT", str(BASE_DIR / "data")
-)
-BAMA_HISTORY_DB_PATH = os.environ.get(
-    "BAMA_HISTORY_DB_PATH", str(BASE_DIR / "data" / "bama.db")
-)
-
-# ---------------------------------------------------------------------------
-# Notification delivery (Phase 5). Email defaults to the console backend so dev
-# never opens a real SMTP socket; set EMAIL_BACKEND/EMAIL_HOST in prod. Telegram
-# is purely opt-in via TELEGRAM_BOT_TOKEN (empty = Telegram silently skipped).
-# ---------------------------------------------------------------------------
-EMAIL_BACKEND = os.environ.get(
-    "EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend"
-)
-EMAIL_HOST = os.environ.get("EMAIL_HOST", "")
-EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
-EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
-EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
-EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "true").lower() == "true"
-DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "noreply@bama.local")
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 
 # ---------------------------------------------------------------------------
 # Logging — console handler for the bama.* loggers used by the worker pipeline.

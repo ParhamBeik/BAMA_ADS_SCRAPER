@@ -17,10 +17,11 @@ from django.db.models import Q
 
 from apps.jobs.services.verify import HARD_RULE_IDS
 
-# Cohort-pass verdicts. Declared here rather than next to the detector because
-# both the detector and the baselines that honour it need them, and the detector
-# imports the deal score while the deal score reads these — putting them in the
-# detector would close that loop.
+# Cohort-pass verdicts. The detector that wrote them (verify_cohort.py) is gone,
+# so these are now frozen historical data: no new row will ever carry one. The
+# filter stays because the flags already on 66k rows are still correct about
+# those rows, and fair_price's baselines — which the deal score is now built on —
+# must not be defined by a listing priced nothing like its peers.
 FLAG_OUTLIER_HIGH = "price_outlier_high"
 FLAG_OUTLIER_LOW = "price_outlier_low"
 COHORT_FLAGS = frozenset({FLAG_OUTLIER_HIGH, FLAG_OUTLIER_LOW})

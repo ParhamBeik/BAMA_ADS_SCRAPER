@@ -1,4 +1,4 @@
-"""Open, close and identify listing episodes.
+"""Open and close listing episodes.
 
 Runs after removal marking, because an episode ends when an ad stops being seen —
 a conclusion no single observation can reach. Idempotent, and back-fills the
@@ -9,11 +9,11 @@ from __future__ import annotations
 
 from django.core.management.base import BaseCommand
 
-from apps.jobs.services.identity import sync_episodes
+from apps.jobs.services.episodes import sync_episodes
 
 
 class Command(BaseCommand):
-    help = "Sync listing episodes and attach vehicle identities."
+    help = "Sync listing episodes."
 
     def add_arguments(self, parser):
         parser.add_argument("--limit", type=int, default=None)
@@ -22,5 +22,5 @@ class Command(BaseCommand):
         report = sync_episodes(limit=options["limit"])
         self.stdout.write(self.style.SUCCESS(
             f"episodes opened={report.opened} reopened={report.reopened} "
-            f"closed={report.closed} identified={report.identified}"
+            f"closed={report.closed}"
         ))

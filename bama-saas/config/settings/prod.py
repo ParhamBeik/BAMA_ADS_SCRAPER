@@ -30,9 +30,5 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "anon": os.environ.get("THROTTLE_ANON", "60/min"),
         "user": os.environ.get("THROTTLE_USER", "600/min"),
-        # Scopes consumed by apps/accounts/throttles.py; the subscription
-        # throttle overrides its own rate per plan at request time.
-        "subscription": "30/min",
-        "monthly_quota": None,
     },
 }

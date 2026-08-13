@@ -3,7 +3,6 @@
 # second install; the canonical extra is pyproject.toml [project.optional-dependencies] test.
 Django>=5.0,<6.0
 djangorestframework>=3.15
-djangorestframework-simplejwt>=5.3
 drf-spectacular>=0.27
 django-filter>=24.2
 django-cors-headers>=4.4
@@ -13,6 +12,5 @@ jdatetime>=4.1
 requests>=2.31
 gunicorn>=22.0
 numpy>=1.26
-python-dotenv>=1.0
 pytest>=8.2
 pytest-django>=4.8

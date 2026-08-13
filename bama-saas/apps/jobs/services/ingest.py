@@ -31,7 +31,6 @@ from apps.parsing import (
 
 from .dimensions import resolve_dimensions
 from .verify import verify_extracted
-from .verify_temporal import verify_against_previous
 
 # In-memory cache of the most-recent (price fingerprint, price) per ad code, so
 # the change-only check is O(1) for history replay (each ad is observed many
@@ -45,9 +44,12 @@ from .verify_temporal import verify_against_previous
 _PRICE_FP_CACHE: dict[str, tuple[str, int | None]] = {}
 _VERSION_CACHE: dict[tuple[str, str], AdVersion] = {}
 
-# Temporal flags that describe the price transition itself, so they belong on the
-# PriceObservation rather than only on the Ad.
-_PRICE_TRANSITION_FLAGS = frozenset({"price_jump"})
+# A price cut this large between two sightings is a unit switch (rials are 10x
+# tomans), not a bargain. The full temporal rule set that used to catch it is
+# gone, but this one guard stays inline: a PriceDropEvent is user-visible, and a
+# rial->toman switch reads as a 90% cut that would be published as the best deal
+# on the site.
+PRICE_DROP_SANITY_FACTOR = 3.0
 
 
 @dataclass(frozen=True)
@@ -299,17 +301,10 @@ def ingest_ad(
 
     code = extracted["code"]
 
-    # The stored row *before* this observation is applied. Loaded here rather than
-    # inside the upsert because the temporal rules below compare against it, and
-    # once the UPDATE runs the previous values are gone.
+    # The stored row *before* this observation is applied. Loaded here rather
+    # than inside the upsert because the price-drop check below compares against
+    # it, and once the UPDATE runs the previous values are gone.
     ad = Ad.objects.filter(code=code).first()
-
-    # Rules that only a pair of sightings can express: unit switches, odometer
-    # rollbacks, a recycled listing code. All soft — an impossible transition
-    # proves one of the two observations is wrong without saying which.
-    temporal = verify_against_previous(extracted, payload, ad, dims)
-    quality_flags = [*quality_flags, *(r.rule for r in temporal)]
-    temporal_flags = {r.rule for r in temporal}
 
     defaults = _ad_defaults(extracted, dims, observed_at, publish_at, quality_flags)
 
@@ -414,21 +409,17 @@ def ingest_ad(
             installments=extracted.get("current_installments"),
             price_type=extracted.get("price_type") or "",
             fingerprint=price_fp,
-            quality_flags=sorted(temporal_flags & _PRICE_TRANSITION_FLAGS),
         )
         _PRICE_FP_CACHE[code] = (price_fp, new_price)
         # A genuine price cut vs the prior observation → record a drop event.
         # Idempotent: only fires when a new PriceObservation is written, and
         # re-importing unchanged data writes no new observation.
-        #
-        # A flagged transition is excluded: a rial/toman unit switch reads as a
-        # 90% cut, and a PriceDropEvent is user-visible — it would be published as
-        # the best deal on the site.
+        # An implausibly large cut is excluded — see PRICE_DROP_SANITY_FACTOR.
         genuine_cut = (
-            not temporal_flags & _PRICE_TRANSITION_FLAGS
-            and old_price
+            old_price
             and new_price is not None
             and new_price < old_price
+            and new_price >= old_price / PRICE_DROP_SANITY_FACTOR
         )
         if genuine_cut:
             PriceDropEvent.objects.create(

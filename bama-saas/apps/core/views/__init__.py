@@ -1,4 +1,4 @@
-"""Core views, split by theme (catalog / history / market / analytics).
+"""Core views, split by theme (catalog / market / analytics).
 
 Flat import site preserved: ``from apps.core.views import AdViewSet, markets``.
 """
@@ -9,48 +9,21 @@ from apps.core.views.catalog import (
     BrandViewSet,
     ModelVariantsView,
 )
-from apps.core.views.history import (
-    AdChangesView,
-    AdTimelineView,
-    AdVersionsView,
-    ChangeViewSet,
-    FetchRunViewSet,
-    ObservationViewSet,
-)
 from apps.core.views.market import (
     ad_price_history,
-    market_bollinger,
-    market_price_trends,
-    market_true_mean,
     markets,
 )
 from apps.core.views.analytics import (
-    dealers,
     deal_score_detail,
     deal_scores,
-    fast_movers,
     market_index,
-    inventory_trend,
-    market_overview,
-    newest,
-    oldest,
-    price_drops,
-    rankings,
-    regional,
-    time_on_market,
 )
 
 __all__ = [
     # catalog
     "BrandViewSet", "BrandModelsView", "ModelVariantsView", "AdViewSet",
-    # history
-    "AdVersionsView", "AdChangesView", "AdTimelineView",
-    "ChangeViewSet", "ObservationViewSet", "FetchRunViewSet",
     # market
-    "markets", "market_true_mean", "market_bollinger",
-    "market_price_trends", "ad_price_history",
+    "markets", "ad_price_history",
     # analytics
-    "deal_scores", "deal_score_detail", "rankings", "regional",
-    "dealers", "inventory_trend", "market_overview", "time_on_market",
-    "fast_movers", "price_drops", "newest", "oldest", "market_index",
+    "deal_scores", "deal_score_detail", "market_index",
 ]

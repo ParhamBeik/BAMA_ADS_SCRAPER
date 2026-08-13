@@ -45,11 +45,9 @@ outliers (outliers stay in the catalog; baselines use
 - Catalog dimensions: **~100%** (orphans brand/model/variant/city = 0)
 - Conditional pricing: **100% within applicable populations** — every lump-sum
   ad has a price; every installment ad has payment fields
-- No distribution drift alarm on 2026-08-11 (`manage.py data_quality`:
-  “no drift detected”)
-- Analytics services already funnel aggregates through `verified()` /
-  `verified_by_ad()` / `without_cohort_outliers()` (deal scores, insights,
-  metrics, bollinger, fair price, liquidity, true-mean, retention, index inputs)
+- Analytics reads go through `verified()` / `verified_by_ad()` /
+  `without_cohort_outliers()` (fair price, deal board, market index,
+  Kaplan–Meier)
 
 ## Exclude or treat carefully
 
@@ -63,7 +61,6 @@ outliers (outliers stay in the catalog; baselines use
 | Hard ingest rejects (quarantined) | ~498 | Never in `catalog_ad` (mostly `price_too_low`) |
 | Missing descriptions | ~4.7k | Source-optional; do not invent text |
 | Placeholder body color `-` | 198 | Cosmetic; ignore for price/year stats |
-| Multi-code vehicle identities | 66 ids / 142 codes | Deduplicate carefully for “unique cars” |
 
 ## Field-family completeness (refreshed)
 
@@ -97,9 +94,7 @@ See [`VALIDITY_REPORT.md`](VALIDITY_REPORT.md). Highlights:
 
 | Action | Result |
 |---|---|
-| `backfill_normalization` | Partial batches run (presentation backfill). Year=0 rows cannot gain `year_jalali`. Full sweep paused when Postgres entered recovery under load; worker stopped during batches then restarted. |
-| `flag_cohort_outliers` | 3,222 cohorts / 28,590 ads scanned; 1 flagged, 1 cleared |
-| Analytics gate fixes | `deal_score_detail`, `ad_price_history`, and `market_snapshot` new/removed counts now use `verified` / `verified_by_ad` |
+| Analytics gate | `deal_score_detail`, `ad_price_history`, and `market_snapshot` new/removed counts use `verified` / `verified_by_ad` |
 
 ## Residual risks
 
@@ -120,7 +115,6 @@ docker compose up -d postgres django
 python docs/data_quality/build_completeness.py
 python docs/data_quality/build_validity.py
 python docs/data_quality/build_analysis_ready.py
-docker compose exec -T django python manage.py data_quality
 ```
 
 ## Bottom line

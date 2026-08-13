@@ -31,10 +31,6 @@ plausible number computed from yesterday. Every step records a JobRun either way
 The network fetch is retried with exponential backoff; the local steps are not
 (they only touch the DB and either succeed or fail loudly).
 
-User-facing alert evaluation and digests are NOT in this 5-minute pipeline —
-they run on their own slower crons (see deploy/worker/) so a flaky email/Telegram
-send can never stall the data tick.
-
 Invoked every ~5 minutes by the cron-guarded runner (see deploy/worker/). The
 fetch is incremental (small ``--max-ads``), so a tick finishes well under the
 cadence; a full 50k sweep is a separate, less-frequent concern. The runner holds

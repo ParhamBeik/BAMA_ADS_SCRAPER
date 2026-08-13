@@ -1,22 +1,22 @@
 /**
- * Research — the premium workspace.
+ * Research — the two cohort analytics that survive their own audit.
  *
- * The headline panel is time-on-market by price position, because it is the one
- * chart that answers the question both sides of a transaction actually have:
- * what does asking above the going rate cost you in time. It is stated as an
- * association throughout; an overpriced car and a slow car may share a cause
- * rather than one producing the other.
+ * Time-to-sell is a Kaplan-Meier survival curve, so cars still listed count as
+ * censored rather than being dropped. The naive average sits next to the censored
+ * median deliberately: the gap between them is the size of the error every
+ * simpler version of this number carries.
  *
- * The liquidity panel deliberately shows the naive average next to the censored
- * estimate. The gap between them is not a curiosity — it is the size of the
- * error every simpler version of this product ships with.
+ * Value retention is an order statistic across model years, measured against the
+ * newest year that has enough listings — never against an original sale price,
+ * which this data set never observes. It is not the price-vs-mileage regression
+ * that used to sit here; that fit explained 18% of variance and is gone.
  */
 import { useQuery } from "@tanstack/react-query";
+import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import type { Envelope, Paginated } from "../api/client";
 import { Chart } from "../Chart";
-import { useFilters } from "../filters";
-import { Async, Card, Provenance as Prov, Table } from "../ui";
+import { Async, Card, Provenance, Table } from "../ui";
 
 /** Shape of /api/markets/ — one row per model that actually has listings. */
 interface ModelRow {
@@ -36,25 +36,7 @@ interface Survival extends Envelope {
   still_listed_at_30d?: number;
 }
 
-interface PricePosition extends Envelope {
-  cohort_median_price: number;
-  bands: {
-    price_band: string;
-    n: number;
-    median_days: number | null;
-    still_listed_at_30d: number;
-  }[];
-}
-
-interface Negotiation extends Envelope {
-  listings: number;
-  share_that_cut: number;
-  median_cut_pct: number | null;
-  p90_cut_pct?: number;
-  median_days_to_first_cut: number | null;
-}
-
-interface Depreciation extends Envelope {
+interface Retention extends Envelope {
   reference_year: number;
   span_years: number;
   retained_over_span_pct: number;
@@ -63,8 +45,8 @@ interface Depreciation extends Envelope {
 }
 
 export function Research() {
-  const filters = useFilters();
-  const modelId = filters.getInt("model");
+  const navigate = useNavigate();
+  const { modelId } = useParams();
 
   const models = useQuery({
     queryKey: ["markets"],
@@ -78,30 +60,37 @@ export function Research() {
   const survival = useQuery({
     queryKey: ["survival", modelId],
     enabled: Boolean(modelId),
-    queryFn: ({ signal }) => api.get<Survival>(`/api/research/liquidity/${modelId}/`, signal),
+    queryFn: ({ signal }) =>
+      api.get<Survival>(`/api/research/liquidity/${modelId}/`, signal),
   });
-  const position = useQuery({
-    queryKey: ["position", modelId],
+  const retention = useQuery({
+    queryKey: ["retention", modelId],
     enabled: Boolean(modelId),
     queryFn: ({ signal }) =>
-      api.get<PricePosition>(`/api/research/price-position/${modelId}/`, signal),
-  });
-  const negotiation = useQuery({
-    queryKey: ["negotiation", modelId],
-    enabled: Boolean(modelId),
-    queryFn: ({ signal }) =>
-      api.get<Negotiation>(`/api/research/negotiation/${modelId}/`, signal),
-  });
-  const depreciation = useQuery({
-    queryKey: ["depreciation", modelId],
-    enabled: Boolean(modelId),
-    queryFn: ({ signal }) =>
-      api.get<Depreciation>(`/api/research/depreciation/${modelId}/`, signal),
+      api.get<Retention>(`/api/research/depreciation/${modelId}/`, signal),
   });
 
   if (!modelId) {
     return (
-      <ModelPicker models={modelList} onPick={(id) => filters.set({ model: id })} />
+      <Card title="Pick a model to research">
+        {modelList.length === 0 ? (
+          <div className="state">No models available.</div>
+        ) : (
+          <div className="filters">
+            <select
+              defaultValue=""
+              onChange={(e) => e.target.value && navigate(`/research/${e.target.value}`)}
+            >
+              <option value="">Choose…</option>
+              {modelList.map((m) => (
+                <option key={m.model_id} value={m.model_id}>
+                  {m.brand_name} {m.model_name} ({m.ad_count} listings)
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+      </Card>
     );
   }
 
@@ -110,7 +99,7 @@ export function Research() {
       <div className="filters">
         <select
           value={modelId}
-          onChange={(e) => filters.set({ model: e.target.value })}
+          onChange={(e) => navigate(`/research/${e.target.value}`)}
           aria-label="Model"
         >
           {modelList.map((m) => (
@@ -119,40 +108,47 @@ export function Research() {
             </option>
           ))}
         </select>
-        <button onClick={() => filters.set({ model: null })}>Change model</button>
+        <button onClick={() => navigate("/research")}>Change model</button>
       </div>
 
-      <Card title="Time on market by price position">
-        <p className="stat-sub" style={{ marginTop: 0 }}>
-          Each band is priced relative to this cohort&rsquo;s own median, so the
-          comparison means the same thing for a hatchback and an SUV. Association,
-          not causation.
-        </p>
-        <Async query={position}>
+      <Card title="How long listings last">
+        <Async query={survival}>
           {(data) => (
             <>
               <Chart
-                x={data.bands.map((b) => b.price_band)}
+                x={data.curve.map((p) => p.day)}
                 series={[
                   {
-                    name: "Still listed after 30 days",
-                    type: "bar",
-                    data: data.bands.map((b) => Math.round(b.still_listed_at_30d * 1000) / 10),
+                    name: "Still listed",
+                    data: data.curve.map((p) => Math.round(p.still_listed * 1000) / 10),
+                    area: true,
                   },
                 ]}
                 yFormatter={(v) => `${v}%`}
                 height={240}
               />
-              <Table head={["Price band", "Listings", "Still listed at 30d"]}>
-                {data.bands.map((b) => (
-                  <tr key={b.price_band}>
-                    <td>{b.price_band}</td>
-                    <td className="num">{b.n}</td>
-                    <td className="num">{(b.still_listed_at_30d * 100).toFixed(1)}%</td>
-                  </tr>
-                ))}
-              </Table>
-              <Prov envelope={data} />
+              <div className="grid cols-2" style={{ marginTop: 10 }}>
+                <div>
+                  <div className="card-title">Median (censored)</div>
+                  <div className="stat">
+                    {data.median_days != null ? `${data.median_days.toFixed(0)}d` : "—"}
+                  </div>
+                  <div className="stat-sub">across {data.n} listings</div>
+                </div>
+                <div>
+                  <div className="card-title">Naive average</div>
+                  <div className="stat warn">
+                    {data.naive_mean_days_finished_only != null
+                      ? `${data.naive_mean_days_finished_only.toFixed(0)}d`
+                      : "—"}
+                  </div>
+                  <div className="stat-sub">
+                    counts only the {data.delisted} that finished, ignoring{" "}
+                    {data.censored} still listed
+                  </div>
+                </div>
+              </div>
+              <Provenance envelope={data} />
             </>
           )}
         </Async>
@@ -160,82 +156,8 @@ export function Research() {
 
       <div style={{ height: 14 }} />
 
-      <div className="grid cols-2">
-        <Card title="How long listings last">
-          <Async query={survival}>
-            {(data) => (
-              <>
-                <Chart
-                  x={data.curve.map((p) => p.day)}
-                  series={[
-                    {
-                      name: "Still listed",
-                      data: data.curve.map((p) => Math.round(p.still_listed * 1000) / 10),
-                      area: true,
-                    },
-                  ]}
-                  yFormatter={(v) => `${v}%`}
-                  height={220}
-                />
-                <div className="grid cols-2" style={{ marginTop: 10 }}>
-                  <div>
-                    <div className="card-title">Median (censored)</div>
-                    <div className="stat">
-                      {data.median_days != null ? `${data.median_days.toFixed(0)}d` : "—"}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="card-title">Naive average</div>
-                    <div className="stat warn">
-                      {data.naive_mean_days_finished_only != null
-                        ? `${data.naive_mean_days_finished_only.toFixed(0)}d`
-                        : "—"}
-                    </div>
-                    <div className="stat-sub">
-                      counts only the {data.delisted} that finished, ignoring{" "}
-                      {data.censored} still listed
-                    </div>
-                  </div>
-                </div>
-                <Prov envelope={data} />
-              </>
-            )}
-          </Async>
-        </Card>
-
-        <Card title="Negotiation room">
-          <Async query={negotiation}>
-            {(data) => (
-              <>
-                <div className="grid cols-2">
-                  <div>
-                    <div className="card-title">Sellers who cut</div>
-                    <div className="stat">{(data.share_that_cut * 100).toFixed(1)}%</div>
-                    <div className="stat-sub">of {data.listings} listings</div>
-                  </div>
-                  <div>
-                    <div className="card-title">Typical cut</div>
-                    <div className="stat">
-                      {data.median_cut_pct != null ? `${data.median_cut_pct}%` : "—"}
-                    </div>
-                    <div className="stat-sub">
-                      {data.median_days_to_first_cut != null
-                        ? `after ~${data.median_days_to_first_cut} days`
-                        : "no timing data"}
-                    </div>
-                  </div>
-                </div>
-                <Prov envelope={data} />
-              </>
-            )}
-          </Async>
-        </Card>
-      </div>
-
-      <div style={{ height: 14 }} />
-
       <Card title="Value by model year">
-        <Async query={depreciation}>
+        <Async query={retention}>
           {(data) => (
             <>
               <Chart
@@ -250,6 +172,16 @@ export function Research() {
                 yFormatter={(v) => `${v}%`}
                 height={220}
               />
+              <Table head={["Model year", "Listings", "Median price", "% of newest"]}>
+                {data.points.map((p) => (
+                  <tr key={p.year_jalali}>
+                    <td>{p.year_jalali}</td>
+                    <td className="num">{p.n}</td>
+                    <td className="num">{p.median_price.toLocaleString("en-US")}</td>
+                    <td className="num">{p.pct_of_newest}%</td>
+                  </tr>
+                ))}
+              </Table>
               <p className="stat-sub">
                 Retained {data.retained_over_span_pct}% across {data.span_years} years
                 {data.avg_annual_decline_pct != null &&
@@ -257,38 +189,11 @@ export function Research() {
                 . Measured against {data.reference_year}, the newest year with enough
                 listings — not against an original sale price, which is never observed.
               </p>
-              <Prov envelope={data} />
+              <Provenance envelope={data} />
             </>
           )}
         </Async>
       </Card>
     </>
-  );
-}
-
-function ModelPicker({
-  models,
-  onPick,
-}: {
-  models: ModelRow[];
-  onPick: (id: number) => void;
-}) {
-  return (
-    <Card title="Pick a model to research">
-      {models.length === 0 ? (
-        <div className="state">No models available.</div>
-      ) : (
-        <div className="filters">
-          <select defaultValue="" onChange={(e) => e.target.value && onPick(Number(e.target.value))}>
-            <option value="">Choose…</option>
-            {models.map((m) => (
-              <option key={m.model_id} value={m.model_id}>
-                {m.brand_name} {m.model_name} ({m.ad_count} listings)
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
-    </Card>
   );
 }

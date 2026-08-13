@@ -14,8 +14,7 @@ from datetime import datetime, timezone
 import pytest
 from rest_framework.test import APIClient
 
-from apps.accounts.models import User
-from apps.core.models import Ad, AdVersion, Brand, City, FetchRun, Model, Variant
+from apps.core.models import Ad, Brand, City, Model, Variant
 
 NOW = datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc)
 
@@ -64,41 +63,9 @@ def test_ad_detail_does_not_leak_the_raw_payload(catalog):
 
 
 @pytest.mark.django_db
-def test_version_timeline_does_not_leak_payloads(catalog):
-    ad = make_ad(catalog, "leak0003")
-    run = FetchRun.objects.create(source=FetchRun.Source.LIVE_FETCH)
-    AdVersion.objects.create(
-        ad=ad, semantic_hash="a" * 8, raw_hash="b" * 8,
-        payload={"detail": {"secret": 1}}, origin=run.source, first_observed_at=NOW,
-    )
-
-    body = APIClient().get("/api/ads/leak0003/versions/").json()
-    rows = body["results"] if isinstance(body, dict) else body
-
-    assert rows
-    assert "payload" not in rows[0]
-
-
-@pytest.mark.django_db
-def test_provenance_is_staff_only(catalog):
-    make_ad(catalog, "prov0001")
-    plain = User.objects.create_user(email="u1@example.com", password="pw")
-    client = APIClient()
-    client.force_authenticate(plain)
-
-    assert client.get("/api/admin/ads/prov0001/provenance/").status_code == 403
-
-
-@pytest.mark.django_db
-def test_staff_can_still_read_the_full_record(catalog):
+def test_provenance_returns_the_full_record(catalog):
     make_ad(catalog, "prov0002")
-    staff = User.objects.create_user(
-        email="s1@example.com", password="pw", is_staff=True
-    )
-    client = APIClient()
-    client.force_authenticate(staff)
-
-    body = client.get("/api/admin/ads/prov0002/provenance/").json()
+    body = APIClient().get("/api/admin/ads/prov0002/provenance/").json()
 
     assert body["raw_payload"]["detail"]["dealer_phone"], (
         "removing it from the public serializer must not lose operator access"
@@ -120,51 +87,10 @@ def test_a_hard_failed_ad_is_not_listed(catalog):
 
 
 @pytest.mark.django_db
-def test_inspect_ads_include_hard_failed_rows_for_staff(catalog):
-    make_ad(catalog, "good0002")
-    make_ad(catalog, "bad00002", quality_flags=["price_too_low"])
-    staff = User.objects.create_user(email="ops@example.com", password="pw", is_staff=True)
-    client = APIClient()
-    client.force_authenticate(staff)
-
-    body = client.get("/api/admin/inspect/ads/").json()
-    codes = {r["code"] for r in body["results"]}
-    assert "good0002" in codes
-    assert "bad00002" in codes
-    flagged = next(r for r in body["results"] if r["code"] == "bad00002")
-    assert flagged["quality_flags"] == ["price_too_low"]
-    assert "raw_payload" not in flagged
-
-    detail = client.get("/api/admin/inspect/ads/bad00002/").json()
-    assert detail["raw_payload"]["detail"]["dealer_phone"]
-    assert detail["year_jalali"] == 1399
-
-
-@pytest.mark.django_db
-def test_inspect_ads_are_staff_only(catalog):
+def test_inspect_routes_are_gone(catalog):
     make_ad(catalog, "hid00001")
-    assert APIClient().get("/api/admin/inspect/ads/").status_code == 401
-    user = User.objects.create_user(email="plain@example.com", password="pw")
-    client = APIClient()
-    client.force_authenticate(user)
-    assert client.get("/api/admin/inspect/ads/").status_code == 403
-
-
-@pytest.mark.django_db
-def test_inspect_fetch_runs_include_coverage_fields(catalog):
-    FetchRun.objects.create(
-        source=FetchRun.Source.LIVE_FETCH, status=FetchRun.Status.SUCCEEDED,
-        mode=FetchRun.Mode.FULL, pages_fetched=10, deepest_rank=300,
-        reached_end=True, stop_reason=FetchRun.StopReason.END_OF_FEED,
-        fetched_count=300,
-    )
-    staff = User.objects.create_user(email="ops2@example.com", password="pw", is_staff=True)
-    client = APIClient()
-    client.force_authenticate(staff)
-    row = client.get("/api/admin/inspect/fetch-runs/").json()["results"][0]
-    assert row["reached_end"] is True
-    assert row["mode"] == "full"
-    assert row["deepest_rank"] == 300
+    assert APIClient().get("/api/admin/inspect/ads/").status_code == 404
+    assert APIClient().get("/api/admin/inspect/fetch-runs/").status_code == 404
 
 
 @pytest.mark.django_db
@@ -180,11 +106,6 @@ def test_a_cohort_outlier_is_still_listed_and_carries_its_flag(catalog):
 
 
 @pytest.mark.django_db
-def test_newest_listings_exclude_hard_failed_ads(catalog):
+def test_newest_route_is_gone(catalog):
     make_ad(catalog, "new00001")
-    make_ad(catalog, "new00002", quality_flags=["brand_missing"])
-
-    body = APIClient().get("/api/analytics/newest/").json()
-    codes = {r["code"] for r in (body if isinstance(body, list) else body.get("results", body))}
-
-    assert codes == {"new00001"}
+    assert APIClient().get("/api/analytics/newest/").status_code == 404

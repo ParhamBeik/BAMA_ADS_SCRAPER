@@ -140,15 +140,15 @@ def test_price_too_low_is_hard():
     assert "price_too_low" in V.HARD_RULE_IDS
 
 
-def test_price_too_high_is_soft():
-    """Above the band is usually a genuine supercar, so flag but keep it."""
+def test_price_too_high_is_hard():
+    """Above 20bn toman is a typo or unit switch, not a supercar, so HARD."""
     payload = clean_payload()
-    payload["price"]["price"] = "150,000,000,000,000"
+    payload["price"]["price"] = "21,000,000,000"
     extracted = extract_ad(payload, OBSERVED_AT)
     rejections = V.verify_extracted(extracted, payload)
     assert "price_too_high" in [r.rule for r in rejections]
-    assert next(r for r in rejections if r.rule == "price_too_high").hard is False
-    assert "price_too_high" not in V.HARD_RULE_IDS
+    assert next(r for r in rejections if r.rule == "price_too_high").hard is True
+    assert "price_too_high" in V.HARD_RULE_IDS
 
 
 def test_year_unknown():

@@ -226,6 +226,9 @@ def test_market_index_endpoint(cohorts):
     assert len(body["series"]) == 2
     assert body["latest_index"] == pytest.approx(110.0, abs=1e-6)
     assert body["change_pct"] == pytest.approx(10.0, abs=1e-6)
+    assert body["window"]["requested_days"] == 90
+    assert body["window"]["days"] == 2
+    assert body["window"]["clamped"] is True
 
     # A non-market scope without ?id is a client error, not an empty series.
     assert client.get(url, {"scope": "brand"}).status_code == 400

@@ -24,14 +24,11 @@ from apps.core.models.history import (
     AdChangeEvent,
     AdObservation,
     AdVersion,
-    DataQualitySnapshot,
     FetchRun,
     JobRun,
     ListingEpisode,
     IngestReject,
     PageCoverage,
-    UnknownTimePhrase,
-    VehicleIdentity,
 )
 from apps.core.models.price import PriceDropEvent, PriceObservation
 
@@ -40,9 +37,7 @@ __all__ = [
     "Brand", "Model", "Variant", "City", "Dealer", "Ad",
     # history / provenance
     "FetchRun", "AdVersion", "AdObservation", "AdChangeEvent",
-    "UnknownTimePhrase", "PageCoverage", "IngestReject",
-    "DataQualitySnapshot", "JobRun",
-    "VehicleIdentity", "ListingEpisode",
+    "PageCoverage", "IngestReject", "JobRun", "ListingEpisode",
     # market / price
     "PriceObservation", "PriceDropEvent",
     # analytics

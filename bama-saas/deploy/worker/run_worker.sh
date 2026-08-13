@@ -3,17 +3,12 @@
 #
 # Replaces host cron for the containerised stack: `docker compose up` starts this
 # loop and the pipeline keeps fetching on its own, with no host-side setup and no
-# .env required (compose sets DATABASE_URL on the service). install_cron.sh
-# remains the path for a bare-metal host deploy; run exactly one of the two, or
-# both fetchers race — their flock files live in different mount namespaces
-# (host /tmp vs container /tmp) and therefore do not see each other.
+# .env required (compose sets DATABASE_URL on the service).
 #
-# Jobs and cadence match install_cron.sh:
+# Jobs and cadence:
 #   pipeline  5 min    HOT: delta fetch + mark_inactive + incremental deals
 #   analytics 30 min   WARM: episodes + snapshots + market index
-#   alerts    30 min   evaluate user alerts -> notifications
 #   sweep     6 h      full-inventory sweep + gap repair + full deals + prune
-#   digest    daily    per-user digest, first tick at/after DIGEST_HOUR local
 #
 # Logs go to stdout, so `docker compose logs -f worker` is the whole story.
 #
@@ -28,9 +23,7 @@ cd "$PROJECT_DIR"
 
 PIPELINE_EVERY="${BAMA_PIPELINE_EVERY:-300}"
 ANALYTICS_EVERY="${BAMA_ANALYTICS_EVERY:-1800}"
-ALERTS_EVERY="${BAMA_ALERTS_EVERY:-1800}"
 SWEEP_EVERY="${BAMA_SWEEP_EVERY:-21600}"
-DIGEST_HOUR="${BAMA_DIGEST_HOUR:-8}"
 HEARTBEAT="${BAMA_HEARTBEAT:-30}"
 HEARTBEAT_FILE="${BAMA_WORKER_HEARTBEAT:-/tmp/bama-worker.ok}"
 
@@ -88,8 +81,6 @@ else:
 now=$(date +%s)
 next_pipeline=$now                       # first tick immediately: start fetching at once
 next_analytics=$((now + ANALYTICS_EVERY))
-next_alerts=$((now + ALERTS_EVERY))
-last_digest_day=""
 
 # An unreachable DB or a query error yields no number; defer a full sweep to the
 # normal cadence instead of stampeding the feed on every restart loop.
@@ -105,7 +96,7 @@ else
     log "last sweep still current — next sweep in ${delay}s"
 fi
 
-log "started (pipeline=${PIPELINE_EVERY}s analytics=${ANALYTICS_EVERY}s alerts=${ALERTS_EVERY}s sweep=${SWEEP_EVERY}s digest=${DIGEST_HOUR}:00)"
+log "started (pipeline=${PIPELINE_EVERY}s analytics=${ANALYTICS_EVERY}s sweep=${SWEEP_EVERY}s)"
 
 while true; do
     now=$(date +%s)
@@ -126,20 +117,6 @@ while true; do
     if [ "$now" -ge "$next_analytics" ]; then
         run analytics "$SCRIPT_DIR/run_analytics.sh"
         next_analytics=$(($(date +%s) + ANALYTICS_EVERY))
-    fi
-
-    if [ "$now" -ge "$next_alerts" ]; then
-        run alerts "$SCRIPT_DIR/run_alerts.sh"
-        next_alerts=$(($(date +%s) + ALERTS_EVERY))
-    fi
-
-    # Digest is wall-clock daily, not an interval: a 24h timer started from
-    # whenever the container last restarted would drift the mail to 3am.
-    today=$(date +%Y-%m-%d)
-    hour=$(date +%H)
-    if [ "$today" != "$last_digest_day" ] && [ "${hour#0}" -ge "$DIGEST_HOUR" ]; then
-        run digest "$SCRIPT_DIR/run_digest.sh"
-        last_digest_day="$today"
     fi
 
     date +%s > "$HEARTBEAT_FILE" || true

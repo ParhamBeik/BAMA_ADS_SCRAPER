@@ -277,40 +277,6 @@ class AdChangeEvent(models.Model):
         return f"{self.ad_id} {self.event_type}"
 
 
-class VehicleIdentity(models.Model):
-    """One physical car, which may appear under several listing codes.
-
-    Bama stores an ad's photos under a per-vehicle path
-    ``/VehicleCarImages/<uuid>/CarImage_....jpg``, and that uuid is reused when
-    the same car is listed again. It is therefore near-conclusive evidence of
-    identity — far stronger than matching on model, year, mileage and price,
-    which a thousand identical Prides also share.
-
-    Measured on the live database: 65 uuids covered 139 listing codes, and in
-    every inspected case the model, year, mileage and price agreed exactly.
-    """
-
-    class Method(models.TextChoices):
-        IMAGE_ASSET = "image_asset", "Shared image asset path"
-
-    key = models.CharField(max_length=64, unique=True)
-    method = models.CharField(
-        max_length=24, choices=Method.choices, default=Method.IMAGE_ASSET
-    )
-    # Bumped when the matching rule changes, so a link can always be traced to
-    # the logic that made it and re-derived if that logic turns out to be wrong.
-    algorithm_version = models.IntegerField(default=1)
-    evidence = models.JSONField(default=dict, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        db_table = "history_vehicleidentity"
-        ordering = ("-created_at",)
-
-    def __str__(self) -> str:
-        return f"vehicle {self.key[:12]} ({self.method})"
-
-
 class ListingEpisode(models.Model):
     """One continuous period during which one listing code was on the feed.
 
@@ -326,10 +292,6 @@ class ListingEpisode(models.Model):
     """
 
     ad = models.ForeignKey("core.Ad", on_delete=models.CASCADE, related_name="episodes")
-    identity = models.ForeignKey(
-        VehicleIdentity, on_delete=models.SET_NULL, null=True, blank=True,
-        related_name="episodes",
-    )
     started_at = models.DateTimeField(db_index=True)
     ended_at = models.DateTimeField(null=True, blank=True, db_index=True)
     first_price = models.BigIntegerField(null=True, blank=True)
@@ -345,9 +307,6 @@ class ListingEpisode(models.Model):
                 fields=("ad",), condition=models.Q(ended_at__isnull=True),
                 name="uq_episode_one_open_per_ad",
             ),
-        ]
-        indexes = [
-            models.Index(fields=("identity", "started_at"), name="episode_ident_idx"),
         ]
 
     @property
@@ -409,80 +368,3 @@ class JobRun(models.Model):
 
     def __str__(self) -> str:
         return f"{self.name} {self.status} @ {self.started_at:%Y-%m-%d %H:%M}"
-
-
-class DataQualitySnapshot(models.Model):
-    """One row per day describing the *shape* of the ingested data.
-
-    The verification rules judge individual ads against fixed expectations, which
-    means they can only catch what was anticipated when the rule was written. When
-    Bama renames a field or changes a title format, no rule necessarily fires —
-    the data simply becomes quietly emptier or stranger, and every statistic built
-    on it drifts. What gives that away is not any single row but the distribution:
-    a null rate that jumps, a field that loses half its distinct values, a spike
-    in newly-minted catalog rows.
-
-    Stored rather than computed on demand because drift is only visible against
-    history, and the comparison is to this table's own trailing window.
-    """
-
-    date = models.DateField(primary_key=True)
-    computed_at = models.DateTimeField(auto_now=True)
-
-    total_ads = models.IntegerField(default=0)
-    active_ads = models.IntegerField(default=0)
-    priced_ads = models.IntegerField(default=0)
-
-    # {rule_id: count} over the active population, for quality_flags and
-    # cohort_flags respectively.
-    flag_counts = models.JSONField(default=dict, blank=True)
-    cohort_flag_counts = models.JSONField(default=dict, blank=True)
-    # {field: fraction 0..1} — the most direct signal that a payload key moved.
-    null_rates = models.JSONField(default=dict, blank=True)
-    # {field: n} — a collapse here means a field stopped being populated
-    # meaningfully even though it is not null.
-    distinct_counts = models.JSONField(default=dict, blank=True)
-
-    rejects_today = models.IntegerField(default=0)
-    unconfirmed_brands = models.IntegerField(default=0)
-    unconfirmed_models = models.IntegerField(default=0)
-
-    # Robust price statistics: percentiles rather than mean/stddev so one absurd
-    # listing cannot move the number that is supposed to reveal absurd listings.
-    price_p10 = models.BigIntegerField(null=True, blank=True)
-    price_median = models.BigIntegerField(null=True, blank=True)
-    price_p90 = models.BigIntegerField(null=True, blank=True)
-
-    # [{metric, value, baseline, deviation}] as judged against the trailing
-    # window at the time this row was written.
-    alarms = models.JSONField(default=list, blank=True)
-
-    class Meta:
-        db_table = "history_dataqualitysnapshot"
-        ordering = ("-date",)
-
-    def __str__(self) -> str:
-        return f"{self.date} ({len(self.alarms)} alarm(s))"
-
-
-class UnknownTimePhrase(models.Model):
-    """Persian publish phrases we could not parse (for later pattern mining)."""
-
-    phrase = models.CharField(max_length=120, primary_key=True)
-    seen_count = models.IntegerField(default=1)
-    first_seen_at = models.DateTimeField(auto_now_add=True)
-    last_seen_at = models.DateTimeField(auto_now=True)
-    first_fetch_run = models.ForeignKey(
-        FetchRun, on_delete=models.SET_NULL, related_name="first_unknown_phrases",
-        null=True, blank=True,
-    )
-    last_fetch_run = models.ForeignKey(
-        FetchRun, on_delete=models.SET_NULL, related_name="last_unknown_phrases",
-        null=True, blank=True,
-    )
-
-    class Meta:
-        db_table = "history_unknownphrase"
-
-    def __str__(self) -> str:
-        return self.phrase

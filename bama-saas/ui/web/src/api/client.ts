@@ -1,12 +1,8 @@
 /**
- * Cookie-session API client. Credentials are HTTP-only cookies; CSRF is
- * sent for unsafe methods. Bearer localStorage remains as a legacy fallback
- * for tests that still inject Authorization headers.
+ * API client for the local single-user app. There is no authentication; the
+ * CSRF header is still sent on unsafe methods because Django's middleware
+ * requires it regardless of who is (not) logged in.
  */
-import type { paths } from "./schema";
-
-export type ApiPath = keyof paths;
-
 const BASE = import.meta.env.VITE_API_BASE ?? "";
 
 function csrfToken(): string | null {
@@ -24,18 +20,6 @@ export class ApiError extends Error {
     this.status = status;
     this.detail = detail;
     this.body = body;
-  }
-
-  get isSubscriptionRequired() {
-    return this.status === 403 && /subscription|plan|feature/i.test(this.detail);
-  }
-
-  get isAuthRequired() {
-    return this.status === 401;
-  }
-
-  get isVerificationRequired() {
-    return this.status === 403 && /verif/i.test(this.detail);
   }
 }
 
@@ -103,18 +87,4 @@ export interface Paginated<T> {
   next: string | null;
   previous: string | null;
   results: T[];
-}
-
-export interface MeResponse {
-  user: {
-    id: string;
-    email: string;
-    full_name: string;
-    is_staff: boolean;
-    email_verified_at: string | null;
-  };
-  subscription: { plan_type: string; status: string; expires_at: string | null } | null;
-  plan: string;
-  limits: Record<string, number | boolean>;
-  verified: boolean;
 }

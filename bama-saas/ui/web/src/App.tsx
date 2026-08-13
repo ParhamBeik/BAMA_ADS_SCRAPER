@@ -1,55 +1,40 @@
 /**
- * Consumer shell (Persian RTL) + lazy staff control center.
+ * Seven screens, one shell (Persian RTL).
+ *
+ * The app is local and single-user, so there is no session to check and no route
+ * to gate — `/control` is an ordinary page, and record inspection lives in Django
+ * admin rather than in a bespoke staff UI.
  */
-import { lazy, Suspense } from "react";
-import { Link, NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { lazy, Suspense, type ReactNode } from "react";
+import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import {
-  BarChart3, Bookmark, GitCompare, LayoutDashboard, Percent, Search, UserRound,
+  Activity, BarChart3, Bookmark, LayoutDashboard, Percent, Search,
 } from "lucide-react";
-import { useAuth } from "./auth";
 import { useTheme, type ThemeChoice } from "./theme";
-import { Landing } from "./pages/Landing";
-import { Explorer } from "./pages/Explorer";
-import { MyMarket } from "./pages/MyMarket";
-import { Overview } from "./pages/Overview";
 import { Deals } from "./pages/Deals";
+import { Explorer } from "./pages/Explorer";
+import { Overview } from "./pages/Overview";
+import { Saved } from "./pages/Saved";
 import { ListingDetail } from "./pages/ListingDetail";
-import { BrandPage } from "./pages/BrandPage";
-import { ModelPage } from "./pages/ModelPage";
-import { Login } from "./pages/auth/Login";
-import { Account } from "./pages/auth/Account";
 
-const ControlApp = lazy(() =>
-  import("./pages/control/ControlApp").then((m) => ({ default: m.ControlApp })),
+const Control = lazy(() =>
+  import("./pages/Control").then((m) => ({ default: m.Control })),
 );
 const Research = lazy(() =>
   import("./pages/Research").then((m) => ({ default: m.Research })),
 );
-const CompareLazy = lazy(() =>
-  import("./pages/Compare").then((m) => ({ default: m.Compare })),
-);
 
 const NAV = [
-  { to: "/", label: "خانه", icon: LayoutDashboard, end: true },
+  { to: "/", label: "پیشنهادها", icon: Percent, end: true },
   { to: "/explore", label: "کاوش", icon: Search, end: false },
-  { to: "/deals", label: "پیشنهادها", icon: Percent, end: false },
-  { to: "/research", label: "تحقیق", icon: BarChart3, end: false },
-  { to: "/compare", label: "مقایسه", icon: GitCompare, end: false },
-  { to: "/my-market", label: "بازار من", icon: Bookmark, end: false },
   { to: "/market", label: "نمای بازار", icon: LayoutDashboard, end: false },
+  { to: "/research", label: "تحقیق", icon: BarChart3, end: false },
+  { to: "/saved", label: "ذخیره‌شده", icon: Bookmark, end: false },
+  { to: "/control", label: "کنترل", icon: Activity, end: false },
 ];
 
 export function App() {
   const location = useLocation();
-  if (location.pathname.startsWith("/control")) {
-    return (
-      <Suspense fallback={<p dir="rtl">در حال بارگذاری…</p>}>
-        <ControlApp />
-      </Suspense>
-    );
-  }
-
-  const { me, logout } = useAuth();
   const current = NAV.find((n) =>
     n.end ? location.pathname === n.to : location.pathname.startsWith(n.to),
   ) ?? NAV[0];
@@ -69,17 +54,6 @@ export function App() {
             {label}
           </NavLink>
         ))}
-        <div className="sidebar-foot">
-          {me ? (
-            <>
-              {me.user.is_staff && <Link className="nav-item" to="/control">کنترل</Link>}
-              <Link className="nav-item" to="/account"><UserRound size={16} /> حساب</Link>
-              <button className="nav-item linkish" onClick={() => void logout()}>خروج</button>
-            </>
-          ) : (
-            <Link className="nav-item" to="/login">ورود</Link>
-          )}
-        </div>
       </nav>
 
       <main className="main">
@@ -91,24 +65,23 @@ export function App() {
         </header>
 
         <Routes>
-          <Route path="/" element={<Landing />} />
+          <Route path="/" element={<Deals />} />
           <Route path="/explore" element={<Explorer />} />
-          <Route path="/deals" element={<Deals />} />
-          <Route path="/research" element={<Suspense fallback={<p>…</p>}><Research /></Suspense>} />
-          <Route path="/compare" element={<Suspense fallback={<p>…</p>}><CompareLazy /></Suspense>} />
-          <Route path="/my-market" element={<MyMarket />} />
           <Route path="/market" element={<Overview />} />
+          <Route path="/research" element={<Lazy><Research /></Lazy>} />
+          <Route path="/research/:modelId" element={<Lazy><Research /></Lazy>} />
+          <Route path="/saved" element={<Saved />} />
           <Route path="/listing/:code" element={<ListingDetail />} />
-          <Route path="/brand/:slug" element={<BrandPage />} />
-          <Route path="/model/:id" element={<ModelPage />} />
-          <Route path="/login" element={<Login />} />
-          <Route path="/account" element={<Account />} />
-          <Route path="/ops" element={<Navigate to="/control" replace />} />
+          <Route path="/control" element={<Lazy><Control /></Lazy>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
     </div>
   );
+}
+
+function Lazy({ children }: { children: ReactNode }) {
+  return <Suspense fallback={<p dir="rtl">در حال بارگذاری…</p>}>{children}</Suspense>;
 }
 
 function ThemeToggle() {

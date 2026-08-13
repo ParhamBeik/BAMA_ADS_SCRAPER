@@ -42,7 +42,7 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone as djtz
 
-from apps.core.models import FetchRun, PageCoverage, UnknownTimePhrase
+from apps.core.models import FetchRun, PageCoverage
 from apps.jobs.services.dimensions import reset_cache
 from apps.jobs.services.ingest import ingest_ad
 from apps.parsing import extract_ad, parse_publish_time
@@ -465,17 +465,6 @@ def _fetch_live(
 
     reset_cache()
     affected_model_ids: set[int] = set()
-    # Finer-grained than the model ids: the cohort outlier pass rescores
-    # (model, variant, year) groups, and a full-market rescore per fetch is waste.
-    affected_cohorts: set[tuple] = set()
-
-    def record_unknown(phrase: str) -> None:
-        obj, created = UnknownTimePhrase.objects.get_or_create(phrase=phrase)
-        if not created:
-            obj.seen_count = (obj.seen_count or 0) + 1
-            obj.save(update_fields=["seen_count", "last_seen_at"])
-        obj.last_fetch_run = run
-        obj.save(update_fields=["last_fetch_run"])
 
     interrupted = False
     stop_reason: str | None = None
@@ -537,9 +526,7 @@ def _fetch_live(
                             run.skipped_count += 1
                             continue
                         publish_at = parse_publish_time(
-                            extracted.get("publish_phrase"),
-                            observed_at,
-                            on_unknown=record_unknown,
+                            extracted.get("publish_phrase"), observed_at,
                         )
                         result = ingest_ad(
                             extracted,
@@ -570,7 +557,6 @@ def _fetch_live(
                         cohort = result.cohort
                         if cohort:
                             affected_model_ids.add(cohort[0])
-                            affected_cohorts.add(cohort)
 
                         if run.fetched_count % SAVE_EVERY == 0:
                             run.save()
@@ -647,5 +633,4 @@ def _fetch_live(
         reset_cache()
 
     run.affected_model_ids = affected_model_ids  # type: ignore[attr-defined]
-    run.affected_cohorts = affected_cohorts  # type: ignore[attr-defined]
     return run

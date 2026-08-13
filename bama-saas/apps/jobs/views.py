@@ -1,11 +1,13 @@
-"""IsStaff-gated admin endpoints that trigger ingestion/analytics jobs.
+"""Operator endpoints that trigger ingestion/analytics jobs.
 
-Jobs run in a daemon thread (no Celery — flock + the compose worker loop
-is the scheduler) and return HTTP 202 immediately; the client polls
-``GET /api/fetch-runs/`` for the resulting ``FetchRun`` (fetch/import) or simply
-retries. A cheap DB-level guard rejects a new run while a same-source run is
-already ``RUNNING`` so two live fetches can't race. Per-endpoint consumer tier
-gating is intentionally not applied here — these are operator-only endpoints.
+Jobs run in a daemon thread (no Celery — flock + the compose worker loop is the
+scheduler) and return HTTP 202 immediately; the caller polls
+``GET /api/admin/jobs/overview/``. A cheap DB-level guard rejects a new run while
+a same-source run is already ``RUNNING`` so two live fetches can't race.
+
+These used to be ``IsStaff``-gated. There is no auth layer left to gate on: this
+app runs on one machine, bound to localhost, for one operator. The gate protected
+nothing that the network boundary does not already protect.
 """
 
 from __future__ import annotations
@@ -15,18 +17,21 @@ import threading
 from io import StringIO
 from typing import Callable
 
+from datetime import timedelta
+
 from django.core.management import call_command
 from django.db import connection
+from django.db.models import Count
+from django.utils import timezone
 from rest_framework import status, serializers
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from drf_spectacular.utils import OpenApiResponse, extend_schema
 
 from django.shortcuts import get_object_or_404
 from drf_spectacular.types import OpenApiTypes
 
-from apps.accounts.permissions import IsStaff
-from apps.core.models import Ad, AdVersion, FetchRun, JobRun
+from apps.core.models import Ad, AdVersion, Brand, FetchRun, IngestReject, JobRun, Model
 from apps.jobs.services.health import run_checks
 from apps.jobs.services.pipeline import record_job
 
@@ -97,7 +102,6 @@ def _accepted(command: str, **extra) -> Response:
     description="Trigger an async live Bama fetch (operator-only).",
 )
 @api_view(["POST"])
-@permission_classes([IsStaff])
 def trigger_fetch(request):
     """POST /api/admin/jobs/fetch/ — trigger an async live Bama fetch."""
     if _running(FetchRun.Source.LIVE_FETCH):
@@ -110,31 +114,7 @@ def trigger_fetch(request):
     except ValueError as exc:
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
     _spawn("fetch_live", **opts)
-    return _accepted("fetch_live", poll="GET /api/fetch-runs/?source=live_fetch")
-
-
-@extend_schema(
-    tags=["Admin · Jobs"],
-    request=None,
-    responses={202: JobAcceptedSerializer, 409: None},
-    description="Trigger an async bulk import of scraped JSON (operator-only).",
-)
-@api_view(["POST"])
-@permission_classes([IsStaff])
-def trigger_import(request):
-    """POST /api/admin/jobs/import/ — trigger an async bulk import of scraped JSON."""
-    if _running(FetchRun.Source.BULK_IMPORT):
-        return Response({"detail": "A bulk import is already running."},
-                        status=status.HTTP_409_CONFLICT)
-    try:
-        opts = {**_opt(request.data, "limit", int),
-                **_opt(request.data, "batch_size", int)}
-        if request.data.get("root"):
-            opts["root"] = str(request.data["root"])
-    except ValueError as exc:
-        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-    _spawn("import_scraped", **opts)
-    return _accepted("import_scraped", poll="GET /api/fetch-runs/?source=bulk_import")
+    return _accepted("fetch_live", poll="GET /api/admin/jobs/overview/")
 
 
 @extend_schema(
@@ -147,7 +127,6 @@ def trigger_import(request):
     ),
 )
 @api_view(["POST"])
-@permission_classes([IsStaff])
 def trigger_refresh(request):
     """POST /api/admin/jobs/refresh-analytics/ — rebuild the derived analytics.
 
@@ -167,30 +146,14 @@ def trigger_refresh(request):
     description="Rebuild per-ad DealScoreCache (the best-deal board). Operator-only.",
 )
 @api_view(["POST"])
-@permission_classes([IsStaff])
 def trigger_deal_scores(request):
     """POST /api/admin/jobs/deal-scores/ — rebuild DealScoreCache (async)."""
     try:
-        opts = {**_opt(request.data, "min_peers", int),
-                **_opt(request.data, "model", int)}
+        opts = {**_opt(request.data, "model", int)}
     except ValueError as exc:
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
     _spawn("compute_deal_scores", **opts)
     return _accepted("compute_deal_scores")
-
-
-@extend_schema(
-    tags=["Admin · Jobs"],
-    request=None,
-    responses={202: JobAcceptedSerializer},
-    description="Evaluate every enabled user Alert and dispatch notifications. Operator-only.",
-)
-@api_view(["POST"])
-@permission_classes([IsStaff])
-def trigger_evaluate_alerts(request):
-    """POST /api/admin/jobs/evaluate-alerts/ — run alert evaluation now (async)."""
-    _spawn("evaluate_alerts")
-    return _accepted("evaluate_alerts")
 
 
 @extend_schema(
@@ -203,7 +166,6 @@ def trigger_evaluate_alerts(request):
     ),
 )
 @api_view(["GET"])
-@permission_classes([IsStaff])
 def ad_provenance(request, code: str):
     """GET /api/admin/ads/<code>/provenance/ — the unabridged record."""
     ad = get_object_or_404(Ad, code=code)
@@ -227,7 +189,6 @@ def ad_provenance(request, code: str):
     description="Recent scheduled-job outcomes, newest first, including skips.",
 )
 @api_view(["GET"])
-@permission_classes([IsStaff])
 def jobs_overview(request):
     """GET /api/admin/jobs/overview/ — did the scheduled work actually run?
 
@@ -256,7 +217,6 @@ def jobs_overview(request):
     ),
 )
 @api_view(["GET"])
-@permission_classes([IsStaff])
 def crawl_health(request):
     """GET /api/admin/jobs/crawl-health/ — is the crawler actually working?
 
@@ -276,3 +236,56 @@ def crawl_health(request):
         },
         status=status.HTTP_200_OK if ok else status.HTTP_503_SERVICE_UNAVAILABLE,
     )
+
+
+@extend_schema(
+    tags=["Admin · Jobs"],
+    responses={200: OpenApiTypes.OBJECT},
+    description="Database size, catalog counts, recent ingest rejects, crawl checks.",
+)
+@api_view(["GET"])
+def system_health(request):
+    """GET /api/admin/health/ — the one-screen state of the installation.
+
+    Moved here from the deleted accounts admin API, minus the plan-limits block:
+    there are no plans any more.
+    """
+    with connection.cursor() as cur:
+        cur.execute("SELECT pg_database_size(current_database())")
+        db_size = cur.fetchone()[0]
+        cur.execute(
+            "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()"
+        )
+        connections = cur.fetchone()[0]
+
+    from django.db.migrations.recorder import MigrationRecorder
+
+    since = timezone.now() - timedelta(hours=24)
+    status_counts = {
+        row["status"]: row["n"]
+        for row in Ad.objects.values("status").annotate(n=Count("code"))
+    }
+    return Response({
+        "database": {
+            "size_bytes": db_size,
+            "connections": connections,
+            "migrations_applied": MigrationRecorder.Migration.objects.count(),
+        },
+        "catalog": {
+            "ads": Ad.objects.count(),
+            "active_ads": status_counts.get(Ad.Status.ACTIVE, 0),
+            "removed_ads": status_counts.get(Ad.Status.REMOVED, 0),
+            "brands": Brand.objects.count(),
+            "models": Model.objects.count(),
+            "unconfirmed_brands": Brand.objects.filter(is_confirmed=False).count(),
+            "unconfirmed_models": Model.objects.filter(is_confirmed=False).count(),
+            "rejects_24h": IngestReject.objects.filter(observed_at__gte=since).count(),
+            "reject_rules_24h": list(
+                IngestReject.objects.filter(observed_at__gte=since)
+                .values("rule").annotate(n=Count("id")).order_by("-n")
+            ),
+        },
+        "crawl": [
+            {"name": c.name, "ok": c.ok, "detail": c.detail} for c in run_checks()
+        ],
+    })

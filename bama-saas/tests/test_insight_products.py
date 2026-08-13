@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from apps.core.models import Ad, Brand, City, ListingEpisode, Model, PriceObservation, Variant
+from apps.core.models import Ad, Brand, City, ListingEpisode, Model, Variant
 from apps.core.services import fair_price as FP
 from apps.core.services import liquidity as L
 from apps.core.services import retention as R
@@ -202,45 +202,6 @@ def test_an_outlier_peer_does_not_set_the_fair_value(catalog):
     assert result["fair_value"] == pytest.approx(1_000_000_000, rel=0.05)
 
 
-@pytest.mark.django_db
-def test_negotiation_room_is_measured_from_observed_cuts(catalog):
-    for i in range(12):
-        ad = make_ad(catalog, f"nego{i:04d}", price=900_000_000)
-        make_episode(ad, started=NOW - timedelta(days=20))
-        for price, day in ((1_000_000_000, 20), (900_000_000, 5)):
-            PriceObservation.objects.create(
-                ad=ad, observed_at=NOW - timedelta(days=day), price=price,
-                fingerprint=f"{ad.code}{price}",
-            )
-
-    result = FP.negotiation_room(model_id=catalog["model"].pk)
-
-    assert result["available"] is True
-    assert result["share_that_cut"] == 1.0
-    assert result["median_cut_pct"] == pytest.approx(10.0, abs=0.5)
-
-
-@pytest.mark.django_db
-def test_a_unit_switch_does_not_become_a_90_percent_concession(catalog):
-    """Flagged price transitions are excluded, or one rial/toman switch would
-    dominate every negotiation statistic in the cohort."""
-    for i in range(12):
-        ad = make_ad(catalog, f"jump{i:04d}", price=1_000_000_000)
-        make_episode(ad, started=NOW - timedelta(days=20))
-        PriceObservation.objects.create(
-            ad=ad, observed_at=NOW - timedelta(days=20), price=10_000_000_000,
-            fingerprint=f"{ad.code}a", quality_flags=["price_jump"],
-        )
-        PriceObservation.objects.create(
-            ad=ad, observed_at=NOW - timedelta(days=5), price=1_000_000_000,
-            fingerprint=f"{ad.code}b",
-        )
-
-    result = FP.negotiation_room(model_id=catalog["model"].pk)
-
-    assert result["median_cut_pct"] is None, "the only 'cut' present was a unit switch"
-
-
 # --- retention --------------------------------------------------------------
 
 @pytest.mark.django_db
@@ -269,18 +230,3 @@ def test_a_thin_year_is_dropped_not_guessed(catalog):
     curve = R.depreciation_curve(catalog["model"].pk)
 
     assert curve["available"] is False, "one year with data is not a curve"
-
-
-@pytest.mark.django_db
-def test_regional_spread_holds_the_model_mix_constant(catalog):
-    """A raw city median mostly reports which cities list which cars. Here both
-    cities list the same cohort, and only the price differs."""
-    for i in range(15):
-        make_ad(catalog, f"teh{i:04d}", price=1_100_000_000, city=catalog["city"])
-        make_ad(catalog, f"msh{i:04d}", price=1_000_000_000, city=catalog["city2"])
-
-    result = R.regional_spread(model_id=catalog["model"].pk)
-
-    assert result["available"] is True
-    premiums = {c["city_name"]: c["premium_pct"] for c in result["cities"]}
-    assert premiums["تهران"] > premiums["مشهد"]

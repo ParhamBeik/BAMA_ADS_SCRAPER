@@ -33,7 +33,12 @@ KNOWN_PRICE_TYPES = frozenset({"lumpsum", "negotiable", "installment", ""})
 # Prices are tomans. The band is deliberately wide: it catches a unit switch
 # (rials are 10x tomans) or a parser regression, not merely an unusual car.
 MIN_PLAUSIBLE_PRICE = 10_000_000
-MAX_PLAUSIBLE_PRICE = 100_000_000_000
+# 20bn tomans is roughly ten times the most expensive car genuinely on this feed.
+# The old 100bn ceiling was soft and flagged 32 ads while 516 sat above 20bn —
+# including a Peugeot 206 at 5.8 trillion — and every one of them was averaged
+# into the market statistics. Above this line the number is a typo or a unit
+# switch, not a supercar.
+MAX_PLAUSIBLE_PRICE = 20_000_000_000
 
 # Jalali years (~1300..1420) and Gregorian years both appear in detail.year.
 MIN_JALALI_YEAR, MAX_JALALI_YEAR = 1300, 1420
@@ -60,7 +65,7 @@ MAX_YEARS_AHEAD = 2
 
 # Rule-set version. Bump on any change to the rules below so that a backfill can
 # tell which rows were judged by which generation of the rule set.
-RULE_VERSION = 2
+RULE_VERSION = 3
 
 
 @dataclass(frozen=True)
@@ -123,14 +128,15 @@ def _rule_price_too_low(extracted: dict, payload: dict) -> Rejection | None:
 
 
 def _rule_price_too_high(extracted: dict, payload: dict) -> Rejection | None:
-    # Soft: above the band is far more often a genuine supercar than a bug, so
-    # flag it for monitoring but keep it in the data.
+    # Hard, and it used to be soft. The band now sits far enough above the real
+    # top of this market that anything past it is a data error, and a data error
+    # left in the sample moves every aggregate built on it.
     price = extracted.get("current_price")
     if price is None:
         return None
     if price > MAX_PLAUSIBLE_PRICE:
         return Rejection(
-            "price_too_high", f"price={price} above {MAX_PLAUSIBLE_PRICE} tomans", False
+            "price_too_high", f"price={price} above {MAX_PLAUSIBLE_PRICE} tomans", True
         )
     return None
 
@@ -299,6 +305,7 @@ HARD_RULE_IDS = frozenset({
     "code_missing",
     "price_missing_for_lumpsum",
     "price_too_low",
+    "price_too_high",
     "brand_missing",
 })
 

@@ -33,18 +33,7 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-bama_saas}
       DJANGO_SETTINGS_MODULE: config.settings.dev
-      BAMA_SCRAPED_DATA_ROOT: /data
-      BAMA_HISTORY_DB_PATH: /data/bama.db
-      ADMIN_API_KEY: ${ADMIN_API_KEY:-}
-      # Must not be empty: an empty value still *sets* the env var, which
-      # overrides the dev fallback in settings/base.py and makes SimpleJWT fail
-      # at import with "SECRET_KEY must not be empty". This stack runs
-      # config.settings.dev; set a real SECRET_KEY in .env for anything else.
       SECRET_KEY: ${SECRET_KEY:-django-insecure-dev-compose-key-not-for-production}
-      EMAIL_BACKEND: django.core.mail.backends.smtp.EmailBackend
-      EMAIL_HOST: mailpit
-      EMAIL_PORT: 1025
-      EMAIL_USE_TLS: "false"
       DEV_ADMIN_EMAIL: ${DEV_ADMIN_EMAIL:-admin@bama.local}
       DEV_ADMIN_PASSWORD: ${DEV_ADMIN_PASSWORD:-LocalOps-2026}
     volumes:
@@ -85,10 +74,7 @@ services:
     networks:
       - bama-network
 
-  # The stack's own scheduler: with this running, `docker compose up` is all it
-  # takes for the data to keep refreshing — no host cron, no .env needed.
-  # Do NOT also install the host crontab (deploy/worker/install_cron.sh): the two
-  # lock against different /tmp namespaces and would fetch concurrently.
+  # The stack's own scheduler. Do not run a second worker on the host.
   worker:
     build: .
     container_name: bama-worker
@@ -98,13 +84,7 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-bama_saas}
       DJANGO_SETTINGS_MODULE: config.settings.dev
-      BAMA_SCRAPED_DATA_ROOT: /data
-      BAMA_HISTORY_DB_PATH: /data/bama.db
       SECRET_KEY: ${SECRET_KEY:-django-insecure-dev-compose-key-not-for-production}
-      EMAIL_BACKEND: django.core.mail.backends.smtp.EmailBackend
-      EMAIL_HOST: mailpit
-      EMAIL_PORT: 1025
-      EMAIL_USE_TLS: "false"
     volumes:
       - .:/app
       - ./data:/data:ro
@@ -115,15 +95,6 @@ services:
         condition: service_healthy
     restart: unless-stopped
     command: sh deploy/worker/run_worker.sh
-    networks:
-      - bama-network
-
-  mailpit:
-    image: axllent/mailpit:latest
-    container_name: bama-mailpit
-    ports:
-      - "1025:1025"
-      - "8025:8025"
     networks:
       - bama-network
 
