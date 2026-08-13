@@ -5,7 +5,7 @@ project_dir="${PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}
 env_file="${ENV_FILE:-${project_dir}/.env.production}"
 backup_dir="${BACKUP_DIR:-/var/backups/bama}"
 passphrase_file="${BACKUP_PASSPHRASE_FILE:?set BACKUP_PASSPHRASE_FILE to a mode-400 or mode-600 file outside the repository}"
-compose=(docker compose -f "${project_dir}/docker-compose.prod.yml" --env-file "${env_file}")
+compose=(docker compose -f "${project_dir}/deploy/docker-compose.prod.yml" --project-directory "${project_dir}" --env-file "${env_file}")
 
 [[ -r "${env_file}" ]] || { echo "Cannot read ${env_file}" >&2; exit 1; }
 [[ -r "${passphrase_file}" ]] || { echo "Cannot read ${passphrase_file}" >&2; exit 1; }

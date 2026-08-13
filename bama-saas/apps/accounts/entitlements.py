@@ -16,8 +16,6 @@ from .permissions import active_subscription
 @dataclass(frozen=True)
 class PlanLimits:
     favorites: int
-    watchlists: int
-    saved_searches: int
     alerts: int
     valuations_per_day: int
     model_comparison: bool
@@ -28,8 +26,6 @@ class PlanLimits:
 PLAN_LIMITS: dict[str, PlanLimits] = {
     Subscription.PlanType.FREE: PlanLimits(
         favorites=25,
-        watchlists=3,
-        saved_searches=3,
         alerts=2,
         valuations_per_day=5,
         model_comparison=False,
@@ -38,8 +34,6 @@ PLAN_LIMITS: dict[str, PlanLimits] = {
     ),
     Subscription.PlanType.PRO: PlanLimits(
         favorites=500,
-        watchlists=50,
-        saved_searches=50,
         alerts=25,
         valuations_per_day=500,
         model_comparison=True,
@@ -48,8 +42,6 @@ PLAN_LIMITS: dict[str, PlanLimits] = {
     ),
     Subscription.PlanType.ENTERPRISE: PlanLimits(
         favorites=500,
-        watchlists=50,
-        saved_searches=50,
         alerts=25,
         valuations_per_day=500,
         model_comparison=True,

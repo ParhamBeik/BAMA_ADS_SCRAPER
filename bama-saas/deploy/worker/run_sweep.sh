@@ -66,6 +66,9 @@ RUN='set -eu
      "$PY" manage.py crawl_gaps --since-hours 24
      "$PY" manage.py flag_cohort_outliers
      "$PY" manage.py data_quality || echo "bama.sweep: DATA QUALITY DRIFT (see above)" >&2
+     "$PY" manage.py run_pipeline --cadence warm --skip-fetch
+     "$PY" manage.py compute_deal_scores
+     "$PY" manage.py prune_history --days 90 || echo "bama.sweep: prune_history failed (see above)" >&2
      echo "--- crawl health ---"
      "$PY" manage.py crawl_health || echo "bama.sweep: CRAWL HEALTH DEGRADED (see above)" >&2'
 

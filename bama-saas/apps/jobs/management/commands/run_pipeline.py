@@ -1,16 +1,11 @@
-"""Run the full worker data pipeline (the scheduled 5-minute tick).
+"""Run the worker data pipeline.
 
-Orchestrates, in order: live fetch → mark stale ads REMOVED → refresh today's
-inventory snapshot → rebuild analytics. Each step is a call to an existing
-command; failures are isolated and logged. The fetch is retried with exponential
-backoff.
+Default cadence is ``hot`` (delta fetch + mark_inactive + incremental deals).
+``warm`` refreshes snapshots/index; ``full`` is the historical all-steps tick.
 
 This is the entry point the cron-guarded runner (deploy/worker/run_pipeline.sh)
 invokes. Exits non-zero if any step failed, so cron / monitoring can flag a bad
 tick.
-
-Flags exist for testability: ``--skip-fetch`` runs only the cheap local steps
-(no network), and ``--steps`` runs an explicit subset.
 """
 
 from __future__ import annotations
@@ -20,13 +15,19 @@ import sys
 from django.conf import settings
 from django.core.management.base import BaseCommand
 
-from apps.jobs.services.pipeline import STEP_ORDER, run_pipeline
+from apps.jobs.services.pipeline import CADENCES, STEP_ORDER, run_pipeline
 
 
 class Command(BaseCommand):
-    help = "Run the scheduled data pipeline (fetch + maintain + snapshot + analytics)."
+    help = "Run the scheduled data pipeline (hot / warm / full cadence)."
 
     def add_arguments(self, parser):
+        parser.add_argument(
+            "--cadence",
+            choices=list(CADENCES),
+            default="hot",
+            help="hot (~5 min fetch+deals), warm (~30 min snapshots), full (everything).",
+        )
         parser.add_argument(
             "--mode",
             choices=["delta", "full"],
@@ -78,6 +79,7 @@ class Command(BaseCommand):
             fetch_max_ads=options["max_ads"],
             mode=options["mode"],
             steps=steps,
+            cadence=None if steps is not None else options["cadence"],
             fetch_attempts=options["fetch_attempts"],
             fetch_retry_delay=options["fetch_retry_delay"],
         )

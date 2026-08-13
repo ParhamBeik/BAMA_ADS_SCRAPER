@@ -130,7 +130,7 @@ REST_FRAMEWORK = {
 SPECTACULAR_SETTINGS = {
     "TITLE": "Bama SaaS API",
     "DESCRIPTION": "Market-intelligence REST API for the Iranian used-car market "
-                   "(catalog, market analytics, price history, alerts, watchlists).",
+                   "(catalog, market analytics, price history, alerts, favorites).",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
     "COMPONENT_SPLIT_REQUEST": True,

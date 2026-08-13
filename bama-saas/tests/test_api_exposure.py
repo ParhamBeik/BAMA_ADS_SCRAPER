@@ -120,6 +120,54 @@ def test_a_hard_failed_ad_is_not_listed(catalog):
 
 
 @pytest.mark.django_db
+def test_inspect_ads_include_hard_failed_rows_for_staff(catalog):
+    make_ad(catalog, "good0002")
+    make_ad(catalog, "bad00002", quality_flags=["price_too_low"])
+    staff = User.objects.create_user(email="ops@example.com", password="pw", is_staff=True)
+    client = APIClient()
+    client.force_authenticate(staff)
+
+    body = client.get("/api/admin/inspect/ads/").json()
+    codes = {r["code"] for r in body["results"]}
+    assert "good0002" in codes
+    assert "bad00002" in codes
+    flagged = next(r for r in body["results"] if r["code"] == "bad00002")
+    assert flagged["quality_flags"] == ["price_too_low"]
+    assert "raw_payload" not in flagged
+
+    detail = client.get("/api/admin/inspect/ads/bad00002/").json()
+    assert detail["raw_payload"]["detail"]["dealer_phone"]
+    assert detail["year_jalali"] == 1399
+
+
+@pytest.mark.django_db
+def test_inspect_ads_are_staff_only(catalog):
+    make_ad(catalog, "hid00001")
+    assert APIClient().get("/api/admin/inspect/ads/").status_code == 401
+    user = User.objects.create_user(email="plain@example.com", password="pw")
+    client = APIClient()
+    client.force_authenticate(user)
+    assert client.get("/api/admin/inspect/ads/").status_code == 403
+
+
+@pytest.mark.django_db
+def test_inspect_fetch_runs_include_coverage_fields(catalog):
+    FetchRun.objects.create(
+        source=FetchRun.Source.LIVE_FETCH, status=FetchRun.Status.SUCCEEDED,
+        mode=FetchRun.Mode.FULL, pages_fetched=10, deepest_rank=300,
+        reached_end=True, stop_reason=FetchRun.StopReason.END_OF_FEED,
+        fetched_count=300,
+    )
+    staff = User.objects.create_user(email="ops2@example.com", password="pw", is_staff=True)
+    client = APIClient()
+    client.force_authenticate(staff)
+    row = client.get("/api/admin/inspect/fetch-runs/").json()["results"][0]
+    assert row["reached_end"] is True
+    assert row["mode"] == "full"
+    assert row["deepest_rank"] == 300
+
+
+@pytest.mark.django_db
 def test_a_cohort_outlier_is_still_listed_and_carries_its_flag(catalog):
     """The opposite decision, deliberately: "not believable as a market price" is
     a warning to show, not a reason to hide the listing a buyer came to find."""

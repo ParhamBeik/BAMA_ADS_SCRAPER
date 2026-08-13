@@ -1,0 +1,158 @@
+{
+  "generated_at": "2026-08-11T160859Z",
+  "phase": "validity_outliers_identity_drift",
+  "data": {
+    "summary": [
+      {
+        "ads": 65930,
+        "active_ads": 36054,
+        "removed_ads": 29876,
+        "invalid_status": 0,
+        "orphan_brand": 0,
+        "orphan_model": 0,
+        "orphan_variant": 0,
+        "orphan_city": 0,
+        "latest_last_seen": "2026-08-11 16:08:50.228917+00",
+        "freshness_lag_hours": 0.0,
+        "snapshot_at": "2026-08-11 16:08:53.862634+00"
+      }
+    ],
+    "sentinels": [
+      {
+        "placeholder_body_color": 198,
+        "placeholder_trim": 0,
+        "year_zero": 0,
+        "year_unnormalized": 0,
+        "negative_mileage": 0,
+        "nonpositive_price": 0,
+        "price_below_band": 0,
+        "price_above_band": 19,
+        "mileage_above_band": 53
+      }
+    ],
+    "quality_flags": [
+      {
+        "flag": "(none)",
+        "ads": 65421
+      },
+      {
+        "flag": "mileage_zero_on_old_car",
+        "ads": 341
+      },
+      {
+        "flag": "mileage_implausible_for_age",
+        "ads": 139
+      },
+      {
+        "flag": "mileage_implausible",
+        "ads": 53
+      },
+      {
+        "flag": "price_too_high",
+        "ads": 19
+      },
+      {
+        "flag": "mileage_regression",
+        "ads": 6
+      },
+      {
+        "flag": "price_too_low",
+        "ads": 2
+      },
+      {
+        "flag": "price_sentinel",
+        "ads": 1
+      }
+    ],
+    "cohort_flags": [
+      {
+        "flag": "(none)",
+        "ads": 65304
+      },
+      {
+        "flag": "price_outlier_low",
+        "ads": 442
+      },
+      {
+        "flag": "price_outlier_high",
+        "ads": 184
+      }
+    ],
+    "identity": [
+      {
+        "identities": 58578,
+        "episodes": 65908,
+        "multi_code_identities": 66,
+        "codes_in_multi_identities": 142
+      }
+    ],
+    "rejects": [
+      {
+        "rule": "price_too_low",
+        "rejects": 518
+      },
+      {
+        "rule": "price_sentinel",
+        "rejects": 3
+      }
+    ],
+    "drift": [
+      {
+        "snapshot_date": "2026-08-11",
+        "active_ads": 36705,
+        "rejects_today": 22,
+        "unconfirmed_brands": 1,
+        "unconfirmed_models": 4,
+        "price_median": 2270000128,
+        "null_rate_year_jalali": 0.0001,
+        "null_rate_mileage": 0.0,
+        "null_rate_current_price": 0.2083,
+        "null_rate_city_id": 0.0,
+        "distinct_body_color": 46,
+        "distinct_transmission": 2,
+        "distinct_fuel": 8,
+        "alarm_count": 0
+      },
+      {
+        "snapshot_date": "2026-08-10",
+        "active_ads": 36241,
+        "rejects_today": 4,
+        "unconfirmed_brands": 0,
+        "unconfirmed_models": 3,
+        "price_median": 2300000000,
+        "null_rate_year_jalali": 0.0001,
+        "null_rate_mileage": 0.0,
+        "null_rate_current_price": 0.2135,
+        "null_rate_city_id": 0.0,
+        "distinct_body_color": 46,
+        "distinct_transmission": 2,
+        "distinct_fuel": 8,
+        "alarm_count": 0
+      },
+      {
+        "snapshot_date": "2026-08-08",
+        "active_ads": 38890,
+        "rejects_today": 19,
+        "unconfirmed_brands": 0,
+        "unconfirmed_models": 0,
+        "price_median": 2310000000,
+        "null_rate_year_jalali": 0.0001,
+        "null_rate_mileage": 0.0,
+        "null_rate_current_price": 0.2127,
+        "null_rate_city_id": 0.0,
+        "distinct_body_color": 46,
+        "distinct_transmission": 2,
+        "distinct_fuel": 8,
+        "alarm_count": 0
+      }
+    ],
+    "price_band": [
+      {
+        "median_price": 2290000000,
+        "p01": 90000000,
+        "p99": 27561999999.999973,
+        "priced_active": 28539
+      }
+    ]
+  }
+}

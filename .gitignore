@@ -11,6 +11,7 @@ __pycache__/
 .env.*
 !.env.example
 !bama-saas/.env.example
+!bama-saas/deploy/.env.production.example
 
 # Local knowledge graphs + tooling output
 graphify-out/

@@ -21,6 +21,7 @@ dependencies = [
     "requests>=2.31",
     "gunicorn>=22.0",
     "numpy>=1.26",
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]

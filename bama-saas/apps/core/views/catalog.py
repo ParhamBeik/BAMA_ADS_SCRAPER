@@ -81,7 +81,9 @@ class AdViewSet(viewsets.ReadOnlyModelViewSet):
         # Cohort outliers are NOT excluded — that flag says "not believable as a
         # market price", and hiding the listing would delete the suspiciously
         # cheap car a buyer came to find. It is serialized instead.
-        qs = verified(Ad.objects)
+        qs = verified(Ad.objects).select_related(
+            "brand", "model", "variant", "city", "dealer",
+        )
         # Detail view should be able to fetch any ad by code; only the list
         # view applies the publish-complete restriction.
         if self.action == "list":

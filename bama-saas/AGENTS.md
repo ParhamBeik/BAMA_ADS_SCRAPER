@@ -1,7 +1,6 @@
 # Bama SaaS Agent Notes
 
-- Backend-first. `ui/legacy/` is a working no-build SPA (vanilla ES modules, hash
-  router, vendored Chart.js) — not a placeholder.
+- Backend-first. `ui/web/` is the product UI (React + Vite).
 - The SaaS is a Django 5.2 / DRF project. Schema lives in Django models and is
   migrated via Django migrations only — there is no Alembic, no SQLAlchemy, no
   FastAPI app. SQLite is **not** supported (PostgreSQL-only: GIN indexes,
@@ -31,6 +30,10 @@
   - **`apps/parsing/` is authoritative for payload rules**; persistence is the
     consuming app's job. The same pipeline (`extract_ad → parse_publish_time →
     ingest_ad`) backs `import_scraped`, `import_history`, and `fetch_live`.
+  - **Staff inspect APIs** (`/api/admin/inspect/*`) are a read-only window over
+    the same tables. They do not apply `verified()`. Public `/api/ads/` stays
+    curated. Worker boot runs `reap_orphan_runs` so leftover RUNNING FetchRun /
+    JobRun rows cannot look like live work.
   - **Calendar-normalized model year.** Bama publishes model years in *either*
     calendar depending on brand (measured: 36,782 Jalali vs 20,480 Gregorian
     across 57,262 ads, and 20+ brands use both). `Ad.year` keeps the raw value
@@ -79,6 +82,17 @@
   triggers are unthrottled.
 - Update this file when the backend architecture changes.
 
+## Worker cadences
+
+- **HOT** (~5 min): `fetch_live` delta + `mark_inactive` + incremental
+  `refresh_cohort_deal_scores` for models sighted in that fetch.
+- **WARM** (~30 min): `sync_episodes` + `daily_snapshot` + `build_market_index`
+  + `market_snapshot`.
+- **COLD** (~6 h sweep): full fetch + gap repair + outliers + DQ + warm
+  pipeline + full deal-score rebuild + `prune_history` (90-day observations /
+  coverage / job runs; last two completed sweeps' coverage is kept).
+- No Celery/Redis. One compose `worker` loop (or host cron, never both).
+
 ## Directory / file index convention
 
 - `config/` — project package: `settings/{base,dev,prod}.py`, `urls.py`,
@@ -96,6 +110,12 @@
 - `tests/` — pytest-django; `test_parsing.py` has no DB dependency.
 
 ## Architecture Change Log
+
+- 2026-08-13: **Cadence split + product surface collapse.** HOT tick is fetch +
+  mark_inactive + incremental deal scores; WARM (30 min) owns episodes/snapshots/
+  index; COLD sweep does full deals + `prune_history`. Dual `/insights/` API,
+  watchlists/saved searches, and `ui/legacy/` removed. Shared-VPS prod caps:
+  db 1.5G / backend 1G (2 Gunicorn workers) / worker 1.5G / frontend 256M.
 
 - 2026-08-08: **Composition-controlled market index + crawl monitoring.**
   - **`DailyInventorySnapshot` is cohort-keyed on `year_jalali`** (column

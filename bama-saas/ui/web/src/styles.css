@@ -267,6 +267,11 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .stack { display: grid; gap: 1rem; }
 .row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
 .code-block { overflow: auto; font-size: 0.8rem; }
+.inspect-table { font-variant-numeric: tabular-nums; }
+.inspect-table tr.clickable { cursor: pointer; }
+.inspect-table tr.selected { background: var(--accent-soft); }
+.badge.ok { background: color-mix(in srgb, var(--up) 18%, var(--panel)); color: var(--up); border-color: transparent; }
+.badge.fail { background: color-mix(in srgb, var(--down) 18%, var(--panel)); color: var(--down); border-color: transparent; }
 .sidebar-foot { margin-top: auto; display: grid; gap: 0.25rem; padding-top: 1rem; }
 .nav-item.linkish { background: none; border: none; width: 100%; text-align: inherit; font: inherit; }
 .warn { color: var(--warn); }

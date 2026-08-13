@@ -3,9 +3,9 @@ set -Eeuo pipefail
 
 project_dir="${PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 env_file="${ENV_FILE:-${project_dir}/.env.production}"
-compose=(docker compose -f "${project_dir}/docker-compose.prod.yml" --env-file "${env_file}")
+compose=(docker compose -f "${project_dir}/deploy/docker-compose.prod.yml" --project-directory "${project_dir}" --env-file "${env_file}")
 
-[[ -r "${env_file}" ]] || { echo "Create ${env_file} from .env.production.example" >&2; exit 1; }
+[[ -r "${env_file}" ]] || { echo "Create ${env_file} from deploy/.env.production.example" >&2; exit 1; }
 [[ "$(stat -c '%a' "${env_file}")" =~ ^[46]00$ ]] || { echo "${env_file} must have mode 400 or 600" >&2; exit 1; }
 docker network inspect vps-edge >/dev/null 2>&1 || { echo "Deploy the edge stack first; Docker network vps-edge is missing" >&2; exit 1; }
 

@@ -23,7 +23,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 
 from .auth_cookies import clear_auth_cookies, set_auth_cookies
 from .entitlements import effective_plan, plan_limits
-from .models import Favorite, ProAccessRequest, Subscription
+from .models import ProAccessRequest, Subscription
 from .serializers import (
     PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
@@ -60,8 +60,6 @@ def _me_payload(user) -> dict:
         "plan": effective_plan(user),
         "limits": {
             "favorites": limits.favorites,
-            "watchlists": limits.watchlists,
-            "saved_searches": limits.saved_searches,
             "alerts": limits.alerts,
             "valuations_per_day": limits.valuations_per_day,
             "model_comparison": limits.model_comparison,
@@ -293,8 +291,6 @@ class AccountUsageView(APIView):
         limits = plan_limits(user)
         return Response({
             "favorites": {"used": user.favorites.count(), "limit": limits.favorites},
-            "watchlists": {"used": user.watchlists.count(), "limit": limits.watchlists},
-            "saved_searches": {"used": user.saved_searches.count(), "limit": limits.saved_searches},
             "alerts": {"used": user.alerts.filter(enabled=True).count(), "limit": limits.alerts},
             "plan": effective_plan(user),
             "verified": bool(user.email_verified_at),

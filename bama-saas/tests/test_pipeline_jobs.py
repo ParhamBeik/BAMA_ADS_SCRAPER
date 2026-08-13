@@ -108,6 +108,82 @@ def test_a_failed_fetch_does_not_cascade(monkeypatch):
 
 
 @pytest.mark.django_db
+def test_hot_cadence_skips_warm_steps(monkeypatch):
+    seen = []
+
+    def track(command, *a, **k):
+        seen.append(command)
+
+    monkeypatch.setattr(P, "call_command", track)
+    monkeypatch.setattr(P, "_affected_model_ids_from_latest_fetch", lambda: [])
+    report = P.run_pipeline(fetch=False, cadence="hot")
+
+    assert "sync_episodes" not in seen
+    assert "daily_snapshot" not in seen
+    names = [s.name for s in report.steps]
+    assert names == ["mark_inactive", "deal_scores"]
+
+
+@pytest.mark.django_db
+def test_warm_cadence_skips_fetch_and_deals(monkeypatch):
+    seen = []
+
+    def track(command, *a, **k):
+        seen.append(command)
+
+    monkeypatch.setattr(P, "call_command", track)
+    report = P.run_pipeline(cadence="warm")
+
+    assert "fetch_live" not in seen
+    assert "compute_deal_scores" not in seen
+    assert [s.name for s in report.steps] == [
+        "episodes", "daily_snapshot", "market_index", "market_snapshot",
+    ]
+
+
+@pytest.mark.django_db
+def test_hot_deal_scores_are_incremental(monkeypatch):
+    called = {}
+
+    def fake_refresh(ids, **k):
+        called["ids"] = set(ids)
+        return {"refreshed_models": len(ids), "total_scored": 3}
+
+    monkeypatch.setattr(P, "call_command", lambda *a, **k: None)
+    monkeypatch.setattr(P, "_affected_model_ids_from_latest_fetch", lambda: [1, 2])
+    monkeypatch.setattr(
+        "apps.core.services.deal_score.refresh_cohort_deal_scores", fake_refresh,
+    )
+    report = P.run_pipeline(fetch=False, cadence="hot")
+
+    deal = next(s for s in report.steps if s.name == "deal_scores")
+    assert deal.ok
+    assert "incremental" in deal.detail
+    assert called["ids"] == {1, 2}
+
+
+@pytest.mark.django_db
+def test_reap_orphan_runs_fails_stuck_running_rows():
+    from apps.core.models import FetchRun
+    from apps.jobs.services.orphans import reap_orphan_runs
+
+    run = FetchRun.objects.create(
+        source=FetchRun.Source.LIVE_FETCH, status=FetchRun.Status.RUNNING,
+        mode=FetchRun.Mode.FULL,
+    )
+    job = JobRun.objects.create(name="fetch", status=JobRun.Status.RUNNING)
+
+    counts = reap_orphan_runs()
+    run.refresh_from_db()
+    job.refresh_from_db()
+
+    assert counts == {"fetch_runs": 1, "job_runs": 1}
+    assert run.status == FetchRun.Status.FAILED
+    assert run.stop_reason == FetchRun.StopReason.INTERRUPTED
+    assert job.status == JobRun.Status.FAILED
+
+
+@pytest.mark.django_db
 def test_record_job_marks_failure_and_reraises():
     with pytest.raises(ValueError):
         with P.record_job("custom"):

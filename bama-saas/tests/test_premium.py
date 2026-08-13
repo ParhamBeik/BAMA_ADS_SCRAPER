@@ -20,7 +20,6 @@ from apps.accounts.models import (
     Alert,
     Favorite,
     Notification,
-    SavedSearch,
     Subscription,
     User,
 )
@@ -138,53 +137,8 @@ def test_favorites_are_owner_scoped(catalog):
 
 
 # ---------------------------------------------------------------------------
-# Watchlists
+# Alerts (shape validation)
 # ---------------------------------------------------------------------------
-
-@pytest.mark.django_db
-def test_watchlist_create_add_ad_list(catalog):
-    client, _, _ = _authed_client("wl@example.com")
-
-    # create
-    resp = client.post("/api/watchlists/", {"name": "My list"}, format="json")
-    assert resp.status_code == 201, resp.content
-    wl_id = resp.json()["id"]
-
-    # add ad
-    resp = client.post(
-        f"/api/watchlists/{wl_id}/ads/", {"code": "c1"}, format="json"
-    )
-    assert resp.status_code == 201, resp.content
-
-    # list ads
-    resp = client.get(f"/api/watchlists/{wl_id}/ads/")
-    assert resp.status_code == 200
-    assert resp.json()["ads"] == ["c1"]
-
-    # remove ad
-    resp = client.delete(f"/api/watchlists/{wl_id}/ads/c1/")
-    assert resp.status_code == 204
-    resp = client.get(f"/api/watchlists/{wl_id}/ads/")
-    assert resp.json()["ads"] == []
-
-
-# ---------------------------------------------------------------------------
-# SavedSearches + Alerts (shape validation)
-# ---------------------------------------------------------------------------
-
-@pytest.mark.django_db
-def test_saved_search_create(catalog):
-    client, _, _ = _authed_client("ss@example.com")
-    resp = client.post(
-        "/api/saved-searches/",
-        {"name": "peugeots", "params": {"brand": "brand1"}, "notify": True},
-        format="json",
-    )
-    assert resp.status_code == 201, resp.content
-    assert SavedSearch.objects.filter(name="peugeots").exists()
-
-
-@pytest.mark.django_db
 def test_alert_price_drop_valid(catalog):
     client, user, _ = _authed_client("al@example.com")
     resp = client.post(
@@ -197,7 +151,7 @@ def test_alert_price_drop_valid(catalog):
 
 @pytest.mark.django_db
 def test_alert_price_drop_missing_target_is_400(catalog):
-    """price_drop without ad OR watchlist is rejected at the serializer level."""
+    """price_drop without an ad is rejected at the serializer level."""
     client, _, _ = _authed_client("al2@example.com")
     resp = client.post(
         "/api/alerts/",
@@ -212,15 +166,6 @@ def test_alert_undervalued_missing_model_is_400(catalog):
     client, _, _ = _authed_client("al3@example.com")
     resp = client.post(
         "/api/alerts/", {"alert_type": "undervalued"}, format="json"
-    )
-    assert resp.status_code == 400
-
-
-@pytest.mark.django_db
-def test_alert_new_listing_missing_saved_search_is_400(catalog):
-    client, _, _ = _authed_client("al4@example.com")
-    resp = client.post(
-        "/api/alerts/", {"alert_type": "new_listing"}, format="json"
     )
     assert resp.status_code == 400
 

@@ -19,6 +19,7 @@ import { api } from "../api/client";
 import type { Envelope, Paginated } from "../api/client";
 import { qs, useFilters } from "../filters";
 import { Async, Card, Fa, Provenance, Table, toman } from "../ui";
+import { ListingActions } from "../engagement";
 
 interface AdRow {
   code: string;
@@ -248,6 +249,7 @@ function FairPricePanel({ code }: { code: string | null }) {
             </Table>
 
             <Provenance envelope={data} />
+            <ListingActions code={code} />
           </>
         )}
       </Async>

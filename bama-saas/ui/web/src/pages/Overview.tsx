@@ -9,8 +9,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { Envelope } from "../api/client";
-import { Chart } from "../Chart";
 import { Async, Card, Fa, Provenance, Stat, Table } from "../ui";
+import { lazy, Suspense } from "react";
+
+const Chart = lazy(() => import("../Chart").then((m) => ({ default: m.Chart })));
 
 interface Overview extends Envelope {
   active_listings: number;
@@ -98,6 +100,7 @@ export function Overview() {
         <Async query={index} empty="No index history yet.">
           {() =>
             points.length ? (
+              <Suspense fallback={<p className="muted">…</p>}>
               <Chart
                 x={points.map((p) => p.date)}
                 series={[
@@ -109,6 +112,7 @@ export function Overview() {
                 ]}
                 yFormatter={(v) => v.toFixed(1)}
               />
+              </Suspense>
             ) : (
               <div className="state">No index history yet.</div>
             )

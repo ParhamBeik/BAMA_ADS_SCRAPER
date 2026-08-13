@@ -1,5 +1,11 @@
 """Worker pipeline: the scheduled data cycle, with retry + structured logging.
 
+Cadences (see ``HOT_STEPS`` / ``WARM_STEPS``):
+
+    hot   (~5 min)  fetch + mark_inactive + incremental deal scores
+    warm  (~30 min) episodes + daily_snapshot + market_index + market_snapshot
+    full            every step, with a full deal-score rebuild
+
 Each step reuses an existing primitive rather than reimplementing it:
 
     fetch_live        (network) — pulls new/changed Bama ads; writes Ad/AdVersion/
@@ -10,7 +16,8 @@ Each step reuses an existing primitive rather than reimplementing it:
     market_snapshot   (local)  — idempotently refreshes today's whole-market rollup.
     market_index      (local)  — chains cohort medians into the price index;
                                  must follow daily_snapshot, whose rows it reads.
-    deal_scores       (local)  — rebuilds per-ad DealScoreCache (best-deal board).
+    deal_scores       (local)  — HOT: refresh models sighted in the latest fetch;
+                                 FULL: rebuild DealScoreCache. Sweep also rebuilds.
 
 ``refresh_analytics`` used to be a step here. It has been deleted outright: the
 only table it wrote, ``PriceStatistics``, was read by no view, serializer or
@@ -47,8 +54,8 @@ from django.utils import timezone
 
 logger = logging.getLogger("bama.worker")
 
-# Ordered step list — the canonical pipeline. ``run_pipeline`` runs exactly
-# these, in this order, unless the caller restricts via ``steps``.
+# Ordered step list — the canonical full pipeline. ``run_pipeline`` runs exactly
+# these, in this order, unless the caller restricts via ``steps`` or ``cadence``.
 STEP_ORDER = (
     "fetch",
     "mark_inactive",
@@ -58,6 +65,14 @@ STEP_ORDER = (
     "market_snapshot",
     "deal_scores",
 )
+
+HOT_STEPS = ("fetch", "mark_inactive", "deal_scores")
+WARM_STEPS = ("episodes", "daily_snapshot", "market_index", "market_snapshot")
+CADENCES = {
+    "hot": HOT_STEPS,
+    "warm": WARM_STEPS,
+    "full": STEP_ORDER,
+}
 
 # Local step name → management command. The network step (fetch) is special-cased.
 _LOCAL_COMMANDS = {
@@ -229,12 +244,69 @@ def _exec_cmd_step(
         return StepResult(name, False, str(exc)[:500], dur)
 
 
+def _affected_model_ids_from_latest_fetch() -> list[int]:
+    """Models sighted in the most recent successful live fetch."""
+    from apps.core.models import AdObservation, FetchRun
+
+    run = (
+        FetchRun.objects.filter(
+            source=FetchRun.Source.LIVE_FETCH,
+            status=FetchRun.Status.SUCCEEDED,
+        )
+        .order_by("-finished_at", "-started_at")
+        .first()
+    )
+    if run is None:
+        return []
+    return list(
+        AdObservation.objects.filter(fetch_run=run)
+        .exclude(ad__model_id=None)
+        .values_list("ad__model_id", flat=True)
+        .distinct()
+    )
+
+
+def _deal_scores_step(*, incremental: bool, triggered_by: str = "scheduler") -> StepResult:
+    """HOT: rescore models from the latest fetch. FULL: wipe-and-rebuild."""
+    if not incremental:
+        return _exec_cmd_step(
+            "deal_scores", "compute_deal_scores", triggered_by=triggered_by,
+        )
+
+    start = time.monotonic()
+    try:
+        with record_job("deal_scores", triggered_by=triggered_by) as job:
+            model_ids = _affected_model_ids_from_latest_fetch()
+            if not model_ids:
+                detail = "no affected models in latest fetch"
+                job.status = job.Status.SKIPPED
+                job.detail = detail
+                dur = time.monotonic() - start
+                logger.info("step=deal_scores SKIPPED duration=%.1fs %s", dur, detail)
+                return StepResult("deal_scores", True, detail, dur)
+            from apps.core.services.deal_score import refresh_cohort_deal_scores
+            res = refresh_cohort_deal_scores(model_ids)
+            detail = (
+                f"incremental models={res['refreshed_models']} "
+                f"scored={res['total_scored']}"
+            )
+            job.detail = detail[:4000]
+            dur = time.monotonic() - start
+            logger.info("step=deal_scores OK duration=%.1fs %s", dur, detail)
+            return StepResult("deal_scores", True, detail, dur)
+    except Exception as exc:  # noqa: BLE001
+        dur = time.monotonic() - start
+        logger.exception("step=deal_scores FAILED duration=%.1fs err=%s", dur, exc)
+        return StepResult("deal_scores", False, str(exc)[:500], dur)
+
+
 def run_pipeline(
     *,
     fetch: bool = True,
     fetch_max_ads: Optional[int] = None,
     mode: str = "delta",
     steps: Optional[set[str]] = None,
+    cadence: Optional[str] = None,
     fetch_attempts: int = 3,
     fetch_retry_delay: float = 5.0,
 ) -> PipelineReport:
@@ -251,16 +323,35 @@ def run_pipeline(
     mode : str
         Ingestion mode: "delta" (fast-delta with early-stopping) or "full" (full scan).
     steps : set[str] | None
-        Explicit subset of STEP_ORDER to run. None means every enabled step.
+        Explicit subset of STEP_ORDER to run. Overrides ``cadence`` when set.
+        None with no cadence means every step (full).
+    cadence : str | None
+        ``hot`` / ``warm`` / ``full``. Ignored when ``steps`` is set.
+        Library default (None) is full STEP_ORDER so existing callers stay intact.
+        The worker command defaults to ``hot``.
     fetch_attempts / fetch_retry_delay :
         Exponential-backoff retry only for the network fetch (1, base_delay, 2*base_delay, …).
     """
-    enabled = set(steps) if steps is not None else set(STEP_ORDER)
+    if steps is not None:
+        enabled = set(steps)
+        incremental_deals = False
+    elif cadence:
+        if cadence not in CADENCES:
+            raise ValueError(f"Unknown cadence {cadence!r}. Choices: {', '.join(CADENCES)}")
+        enabled = set(CADENCES[cadence])
+        incremental_deals = cadence == "hot"
+    else:
+        enabled = set(STEP_ORDER)
+        incremental_deals = False
     if not fetch:
         enabled.discard("fetch")
 
     report = PipelineReport(started_at=timezone.now())
-    logger.info("pipeline start mode=%s steps=[%s]", mode, ",".join(s for s in STEP_ORDER if s in enabled))
+    logger.info(
+        "pipeline start mode=%s cadence=%s steps=[%s]",
+        mode, cadence or "full",
+        ",".join(s for s in STEP_ORDER if s in enabled),
+    )
 
     failed: set[str] = set()
     for name in STEP_ORDER:
@@ -283,6 +374,14 @@ def run_pipeline(
                 retry={"attempts": fetch_attempts, "base_delay": fetch_retry_delay},
                 **opts,
             )
+        elif name == "deal_scores":
+            if incremental_deals and "fetch" in failed:
+                reason = "fetch failed"
+                logger.warning("step=deal_scores SKIPPED (%s)", reason)
+                record_skipped("deal_scores", reason)
+                result = StepResult("deal_scores", False, f"skipped: {reason}", 0.0)
+            else:
+                result = _deal_scores_step(incremental=incremental_deals)
         else:
             result = _exec_cmd_step(name, _LOCAL_COMMANDS[name])
         report.steps.append(result)

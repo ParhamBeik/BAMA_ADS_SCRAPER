@@ -1,0 +1,705 @@
+{
+  "generated_at": "2026-08-11T160853Z",
+  "phase": "completeness",
+  "data": {
+    "summary": [
+      {
+        "ads": 65838,
+        "distinct_codes": 65838,
+        "active_ads": 35962,
+        "removed_ads": 29876,
+        "invalid_status": 0,
+        "orphan_brand": 0,
+        "orphan_model": 0,
+        "orphan_variant": 0,
+        "orphan_city": 0,
+        "earliest_first_seen": "2026-07-05 16:53:25.593367+00",
+        "latest_last_seen": "2026-08-11 14:55:14.805863+00",
+        "freshness_lag_hours": 1.22,
+        "snapshot_at": "2026-08-11 16:08:14.951509+00"
+      }
+    ],
+    "fields": [
+      {
+        "field": "current_installments",
+        "rows": 65838,
+        "complete_rows": 1859,
+        "missing_rows": 63979,
+        "complete_pct": 2.82,
+        "active_pct": 3.56,
+        "removed_pct": 1.94,
+        "family": "Pricing",
+        "expectation": "Conditional",
+        "interpretation": "Complete for all installment ads; not applicable otherwise."
+      },
+      {
+        "field": "current_payment",
+        "rows": 65838,
+        "complete_rows": 1859,
+        "missing_rows": 63979,
+        "complete_pct": 2.82,
+        "active_pct": 3.56,
+        "removed_pct": 1.94,
+        "family": "Pricing",
+        "expectation": "Conditional",
+        "interpretation": "Complete for all installment ads; not applicable otherwise."
+      },
+      {
+        "field": "current_prepayment",
+        "rows": 65838,
+        "complete_rows": 1859,
+        "missing_rows": 63979,
+        "complete_pct": 2.82,
+        "active_pct": 3.56,
+        "removed_pct": 1.94,
+        "family": "Pricing",
+        "expectation": "Conditional",
+        "interpretation": "Complete for all installment ads; not applicable otherwise."
+      },
+      {
+        "field": "dealer_id",
+        "rows": 65838,
+        "complete_rows": 18895,
+        "missing_rows": 46943,
+        "complete_pct": 28.7,
+        "active_pct": 32.67,
+        "removed_pct": 23.92,
+        "family": "Dimensions",
+        "expectation": "Optional",
+        "interpretation": "Presence identifies dealer listings; private listings legitimately lack it."
+      },
+      {
+        "field": "removed_at",
+        "rows": 65838,
+        "complete_rows": 29876,
+        "missing_rows": 35962,
+        "complete_pct": 45.38,
+        "active_pct": 0.0,
+        "removed_pct": 100.0,
+        "family": "Lifecycle",
+        "expectation": "Conditional",
+        "interpretation": "Complete for every removed ad; not applicable to active ads."
+      },
+      {
+        "field": "current_price",
+        "rows": 65838,
+        "complete_rows": 55509,
+        "missing_rows": 10329,
+        "complete_pct": 84.31,
+        "active_pct": 79.12,
+        "removed_pct": 90.56,
+        "family": "Pricing",
+        "expectation": "Conditional",
+        "interpretation": "Negotiable ads legitimately have no numeric price; lump-sum ads are complete."
+      },
+      {
+        "field": "description_length",
+        "rows": 65838,
+        "complete_rows": 61165,
+        "missing_rows": 4673,
+        "complete_pct": 92.9,
+        "active_pct": 89.43,
+        "removed_pct": 97.08,
+        "family": "Presentation",
+        "expectation": "Expected when supplied",
+        "interpretation": "Missing source values are null/non-string and are not recoverable from stored payloads."
+      },
+      {
+        "field": "image_count",
+        "rows": 65838,
+        "complete_rows": 62158,
+        "missing_rows": 3680,
+        "complete_pct": 94.41,
+        "active_pct": 89.77,
+        "removed_pct": 100.0,
+        "family": "Presentation",
+        "expectation": "Expected",
+        "interpretation": "Zero is a valid populated value."
+      },
+      {
+        "field": "body_color",
+        "rows": 65838,
+        "complete_rows": 65838,
+        "missing_rows": 0,
+        "complete_pct": 100.0,
+        "active_pct": 100.0,
+        "removed_pct": 100.0,
+        "family": "Core listing",
+        "expectation": "Observed",
+        "interpretation": "Null and empty strings count as missing; numeric zero remains complete."
+      },
+      {
+        "field": "body_status",
+        "rows": 65838,
+        "complete_rows": 65838,
+        "missing_rows": 0,
+        "complete_pct": 100.0,
+        "active_pct": 100.0,
+        "removed_pct": 100.0,
+        "family": "Core listing",
+        "expectation": "Observed",
+        "interpretation": "Null and empty strings count as missing; numeric zero remains complete."
+      },
+      {
+        "field": "body_type",
+        "rows": 65838,
+        "complete_rows": 65838,
+        "missing_rows": 0,
+        "complete_pct": 100.0,
+        "active_pct": 100.0,
+        "removed_pct": 100.0,
+        "family": "Core listing",
+        "expectation": "Observed",
+        "interpretation": "Null and empty strings count as missing; numeric zero remains complete."
+      },
+      {
+        "field": "brand_id",
+        "rows": 65838,
+        "complete_rows": 65838,
+        "missing_rows": 0,
+        "complete_pct": 100.0,
+        "active_pct": 100.0,
+        "removed_pct": 100.0,
+        "family": "Core listing",
+        "expectation": "Observed",
+        "interpretation": "Null and empty strings count as missing; numeric zero remains complete."
+      },
+      {
+        "field": "canonical_path",
+        "rows": 65838,
+        "complete_rows": 65838,
+        "missing_rows": 0,
+        "complete_pct": 100.0,
+        "active_pct": 100.0,
+        "removed_pct": 100.0,
+        "family": "Core listing",
+        "expectation": "Observed",
+        "interpretation": "Null and empty strings count as missing; numeric zero remains complete."
+      },
+      {
+        "field": "category",
+        "rows": 65838,
+        "complete_rows": 65838,
+        "missing_rows": 0,
+        "complete_pct": 100.0,
+        "active_pct": 100.0,
+        "removed_pct": 100.0,
+        "family": "Core listing",
+        "expectation": "Observed",
+        "interpretation": "Null and empty strings count as missing; numeric zero remains complete."
+      },
+      {
+        "field": "city_id",
+        "rows": 65838,
+        "complete_rows": 65838,
+        "missing_rows": 0,
+        "complete_pct": 100.0,
+        "active_pct": 100.0,
+        "removed_pct": 100.0,
+        "family": "Core listing",
+        "expectation": "Observed",
+        "interpretation": "Null and empty strings count as missing; numeric zero remains complete."
+      },
+      {
+        "field": "code",
+        "rows": 65838,
+        "complete_rows": 65838,
+        "missing_rows": 0,
+        "complete_pct": 100.0,
+        "active_pct": 100.0,
+        "removed_pct": 100.0,
+        "family": "Core listing",
+        "expectation": "Observed",
+        "interpretation": "Null and empty strings count as missing; numeric zero remains complete."
+      },
+      {
+        "field": "cohort_flags",
+        "rows": 65838,
+        "complete_rows": 65838,
+        "missing_rows": 0,
+        "complete_pct": 100.0,
+        "active_pct": 100.0,
+        "removed_pct": 100.0,
+        "family": "Quality metadata",
+        "expectation": "Required",
+        "interpretation": "An empty JSON array is valid and means no cohort flag fired."
+      },
+      {
+        "field": "first_seen_at",
+        "rows": 65838,
+        "complete_rows": 65838,
+        "missing_rows": 0,
+        "complete_pct": 100.0,
+        "active_pct": 100.0,
+        "removed_pct": 100.0,
+        "family": "Core listing",
+        "expectation": "Observed",
+        "interpretation": "Null and empty strings count as missing; numeric zero remains complete."
+      },
+      {
+        "field": "fuel",
+        "rows": 65838,
+        "complete_rows": 65838,
+        "missing_rows": 0,
+        "complete_pct": 100.0,
+        "active_pct": 100.0,
+        "removed_pct": 100.0,
+        "family": "Core listing",
+        "expectation": "Observed",
+        "interpretation": "Null and empty strings count as missing; numeric zero remains complete."
+      },
+      {
+        "field": "last_seen_at",
+        "rows": 65838,
+        "complete_rows": 65838,
+        "missing_rows": 0,
+        "complete_pct": 100.0,
+        "active_pct": 100.0,
+        "removed_pct": 100.0,
+        "family": "Core listing",
+        "expectation": "Observed",
+        "interpretation": "Null and empty strings count as missing; numeric zero remains complete."
+      },
+      {
+        "field": "location",
+        "rows": 65838,
+        "complete_rows": 65838,
+        "missing_rows": 0,
+        "complete_pct": 100.0,
+        "active_pct": 100.0,
+        "removed_pct": 100.0,
+        "family": "Core listing",
+        "expectation": "Observed",
+        "interpretation": "Null and empty strings count as missing; numeric zero remains complete."
+      },
+      {
+        "field": "mileage",
+        "rows": 65838,
+        "complete_rows": 65838,
+        "missing_rows": 0,
+        "complete_pct": 100.0,
+        "active_pct": 100.0,
+        "removed_pct": 100.0,
+        "family": "Core listing",
+        "expectation": "Observed",
+        "interpretation": "Null and empty strings count as missing; numeric zero remains complete."
+      },
+      {
+        "field": "model_id",
+        "rows": 65838,
+        "complete_rows": 65838,
+        "missing_rows": 0,
+        "complete_pct": 100.0,
+        "active_pct": 100.0,
+        "removed_pct": 100.0,
+        "family": "Core listing",
+        "expectation": "Observed",
+        "interpretation": "Null and empty strings count as missing; numeric zero remains complete."
+      },
+      {
+        "field": "price_type",
+        "rows": 65838,
+        "complete_rows": 65838,
+        "missing_rows": 0,
+        "complete_pct": 100.0,
+        "active_pct": 100.0,
+        "removed_pct": 100.0,
+        "family": "Core listing",
+        "expectation": "Observed",
+        "interpretation": "Null and empty strings count as missing; numeric zero remains complete."
+      },
+      {
+        "field": "publish_at",
+        "rows": 65838,
+        "complete_rows": 65838,
+        "missing_rows": 0,
+        "complete_pct": 100.0,
+        "active_pct": 100.0,
+        "removed_pct": 100.0,
+        "family": "Core listing",
+        "expectation": "Observed",
+        "interpretation": "Null and empty strings count as missing; numeric zero remains complete."
+      },
+      {
+        "field": "publish_phrase",
+        "rows": 65838,
+        "complete_rows": 65838,
+        "missing_rows": 0,
+        "complete_pct": 100.0,
+        "active_pct": 100.0,
+        "removed_pct": 100.0,
+        "family": "Core listing",
+        "expectation": "Observed",
+        "interpretation": "Null and empty strings count as missing; numeric zero remains complete."
+      },
+      {
+        "field": "quality_flags",
+        "rows": 65838,
+        "complete_rows": 65838,
+        "missing_rows": 0,
+        "complete_pct": 100.0,
+        "active_pct": 100.0,
+        "removed_pct": 100.0,
+        "family": "Quality metadata",
+        "expectation": "Required",
+        "interpretation": "An empty JSON array is valid and means no rule fired."
+      },
+      {
+        "field": "raw_payload",
+        "rows": 65838,
+        "complete_rows": 65838,
+        "missing_rows": 0,
+        "complete_pct": 100.0,
+        "active_pct": 100.0,
+        "removed_pct": 100.0,
+        "family": "Core listing",
+        "expectation": "Observed",
+        "interpretation": "Null and empty strings count as missing; numeric zero remains complete."
+      },
+      {
+        "field": "seller_authenticated",
+        "rows": 65838,
+        "complete_rows": 65838,
+        "missing_rows": 0,
+        "complete_pct": 100.0,
+        "active_pct": 100.0,
+        "removed_pct": 100.0,
+        "family": "Presentation",
+        "expectation": "Expected",
+        "interpretation": "False is a valid populated value."
+      },
+      {
+        "field": "source_modified_at",
+        "rows": 65838,
+        "complete_rows": 65838,
+        "missing_rows": 0,
+        "complete_pct": 100.0,
+        "active_pct": 100.0,
+        "removed_pct": 100.0,
+        "family": "Presentation",
+        "expectation": "Expected",
+        "interpretation": "Source activity timestamp."
+      },
+      {
+        "field": "status",
+        "rows": 65838,
+        "complete_rows": 65838,
+        "missing_rows": 0,
+        "complete_pct": 100.0,
+        "active_pct": 100.0,
+        "removed_pct": 100.0,
+        "family": "Core listing",
+        "expectation": "Observed",
+        "interpretation": "Null and empty strings count as missing; numeric zero remains complete."
+      },
+      {
+        "field": "title",
+        "rows": 65838,
+        "complete_rows": 65838,
+        "missing_rows": 0,
+        "complete_pct": 100.0,
+        "active_pct": 100.0,
+        "removed_pct": 100.0,
+        "family": "Core listing",
+        "expectation": "Observed",
+        "interpretation": "Null and empty strings count as missing; numeric zero remains complete."
+      },
+      {
+        "field": "transmission",
+        "rows": 65838,
+        "complete_rows": 65838,
+        "missing_rows": 0,
+        "complete_pct": 100.0,
+        "active_pct": 100.0,
+        "removed_pct": 100.0,
+        "family": "Core listing",
+        "expectation": "Observed",
+        "interpretation": "Null and empty strings count as missing; numeric zero remains complete."
+      },
+      {
+        "field": "trim",
+        "rows": 65838,
+        "complete_rows": 65838,
+        "missing_rows": 0,
+        "complete_pct": 100.0,
+        "active_pct": 100.0,
+        "removed_pct": 100.0,
+        "family": "Core listing",
+        "expectation": "Observed",
+        "interpretation": "Null and empty strings count as missing; numeric zero remains complete."
+      },
+      {
+        "field": "url",
+        "rows": 65838,
+        "complete_rows": 65838,
+        "missing_rows": 0,
+        "complete_pct": 100.0,
+        "active_pct": 100.0,
+        "removed_pct": 100.0,
+        "family": "Core listing",
+        "expectation": "Observed",
+        "interpretation": "Null and empty strings count as missing; numeric zero remains complete."
+      },
+      {
+        "field": "variant_id",
+        "rows": 65838,
+        "complete_rows": 65838,
+        "missing_rows": 0,
+        "complete_pct": 100.0,
+        "active_pct": 100.0,
+        "removed_pct": 100.0,
+        "family": "Core listing",
+        "expectation": "Observed",
+        "interpretation": "Null and empty strings count as missing; numeric zero remains complete."
+      },
+      {
+        "field": "year",
+        "rows": 65838,
+        "complete_rows": 65835,
+        "missing_rows": 3,
+        "complete_pct": 100.0,
+        "active_pct": 99.99,
+        "removed_pct": 100.0,
+        "family": "Core listing",
+        "expectation": "Observed",
+        "interpretation": "Null and empty strings count as missing; numeric zero remains complete."
+      },
+      {
+        "field": "year_calendar",
+        "rows": 65838,
+        "complete_rows": 65838,
+        "missing_rows": 0,
+        "complete_pct": 100.0,
+        "active_pct": 100.0,
+        "removed_pct": 100.0,
+        "family": "Core listing",
+        "expectation": "Observed",
+        "interpretation": "Null and empty strings count as missing; numeric zero remains complete."
+      },
+      {
+        "field": "year_gregorian",
+        "rows": 65838,
+        "complete_rows": 65835,
+        "missing_rows": 3,
+        "complete_pct": 100.0,
+        "active_pct": 99.99,
+        "removed_pct": 100.0,
+        "family": "Core listing",
+        "expectation": "Observed",
+        "interpretation": "Null and empty strings count as missing; numeric zero remains complete."
+      },
+      {
+        "field": "year_jalali",
+        "rows": 65838,
+        "complete_rows": 65835,
+        "missing_rows": 3,
+        "complete_pct": 100.0,
+        "active_pct": 99.99,
+        "removed_pct": 100.0,
+        "family": "Core listing",
+        "expectation": "Observed",
+        "interpretation": "Null and empty strings count as missing; numeric zero remains complete."
+      }
+    ],
+    "families": [
+      {
+        "family": "Presentation evidence",
+        "complete_rows": 58455,
+        "total_rows": 65864,
+        "complete_pct": 88.7511,
+        "missing_pct": 11.2489,
+        "complete_rate": 0.8875109999999999,
+        "missing_rate": 0.112489
+      },
+      {
+        "family": "Descriptive attributes",
+        "complete_rows": 65665,
+        "total_rows": 65864,
+        "complete_pct": 99.6979,
+        "missing_pct": 0.3021,
+        "complete_rate": 0.9969790000000001,
+        "missing_rate": 0.003021
+      },
+      {
+        "family": "Catalog dimensions",
+        "complete_rows": 65861,
+        "total_rows": 65864,
+        "complete_pct": 99.9954,
+        "missing_pct": 0.0046,
+        "complete_rate": 0.999954,
+        "missing_rate": 4.6e-05
+      },
+      {
+        "family": "Conditional pricing",
+        "complete_rows": 65864,
+        "total_rows": 65864,
+        "complete_pct": 100.0,
+        "missing_pct": 0.0,
+        "complete_rate": 1.0,
+        "missing_rate": 0.0
+      },
+      {
+        "family": "Identity and provenance",
+        "complete_rows": 65864,
+        "total_rows": 65864,
+        "complete_pct": 100.0,
+        "missing_pct": 0.0,
+        "complete_rate": 1.0,
+        "missing_rate": 0.0
+      },
+      {
+        "family": "Lifecycle",
+        "complete_rows": 65864,
+        "total_rows": 65864,
+        "complete_pct": 100.0,
+        "missing_pct": 0.0,
+        "complete_rate": 1.0,
+        "missing_rate": 0.0
+      }
+    ],
+    "brands": [
+      {
+        "brand": "پژو",
+        "ads": 10254,
+        "active_pct": 50.73,
+        "description_pct": 92.29,
+        "normalized_year_pct": 100.0,
+        "meaningful_body_color_pct": 99.6
+      },
+      {
+        "brand": "تویوتا",
+        "ads": 4510,
+        "active_pct": 55.45,
+        "description_pct": 94.43,
+        "normalized_year_pct": 100.0,
+        "meaningful_body_color_pct": 99.89
+      },
+      {
+        "brand": "هیوندای",
+        "ads": 3086,
+        "active_pct": 53.86,
+        "description_pct": 96.05,
+        "normalized_year_pct": 100.0,
+        "meaningful_body_color_pct": 100.0
+      },
+      {
+        "brand": "دنا",
+        "ads": 2566,
+        "active_pct": 60.09,
+        "description_pct": 85.07,
+        "normalized_year_pct": 99.96,
+        "meaningful_body_color_pct": 99.03
+      },
+      {
+        "brand": "رنو",
+        "ads": 2333,
+        "active_pct": 59.19,
+        "description_pct": 92.84,
+        "normalized_year_pct": 100.0,
+        "meaningful_body_color_pct": 100.0
+      },
+      {
+        "brand": "کیا",
+        "ads": 2326,
+        "active_pct": 52.15,
+        "description_pct": 95.01,
+        "normalized_year_pct": 100.0,
+        "meaningful_body_color_pct": 99.91
+      },
+      {
+        "brand": "فونیکس",
+        "ads": 2314,
+        "active_pct": 53.33,
+        "description_pct": 93.86,
+        "normalized_year_pct": 100.0,
+        "meaningful_body_color_pct": 99.87
+      },
+      {
+        "brand": "ب ام و",
+        "ads": 2137,
+        "active_pct": 58.91,
+        "description_pct": 93.96,
+        "normalized_year_pct": 100.0,
+        "meaningful_body_color_pct": 99.95
+      },
+      {
+        "brand": "ام وی ام",
+        "ads": 2087,
+        "active_pct": 59.66,
+        "description_pct": 92.81,
+        "normalized_year_pct": 100.0,
+        "meaningful_body_color_pct": 100.0
+      },
+      {
+        "brand": "کی ام سی",
+        "ads": 2033,
+        "active_pct": 55.53,
+        "description_pct": 94.69,
+        "normalized_year_pct": 100.0,
+        "meaningful_body_color_pct": 100.0
+      },
+      {
+        "brand": "پراید",
+        "ads": 2032,
+        "active_pct": 47.54,
+        "description_pct": 92.77,
+        "normalized_year_pct": 100.0,
+        "meaningful_body_color_pct": 99.95
+      },
+      {
+        "brand": "سمند",
+        "ads": 1930,
+        "active_pct": 44.56,
+        "description_pct": 95.13,
+        "normalized_year_pct": 100.0,
+        "meaningful_body_color_pct": 98.39
+      }
+    ],
+    "recency": [
+      {
+        "recency_bucket": "Latest 24 hours",
+        "ads": 34318,
+        "description_pct": 89.07,
+        "normalized_year_pct": 99.99,
+        "raw_price_pct": 78.99
+      },
+      {
+        "recency_bucket": "Days 2–7",
+        "ads": 4120,
+        "description_pct": 96.38,
+        "normalized_year_pct": 99.98,
+        "raw_price_pct": 78.45
+      },
+      {
+        "recency_bucket": "Days 8–30",
+        "ads": 17999,
+        "description_pct": 96.68,
+        "normalized_year_pct": 100.0,
+        "raw_price_pct": 87.58
+      },
+      {
+        "recency_bucket": "Older than 30 days",
+        "ads": 9493,
+        "description_pct": 98.06,
+        "normalized_year_pct": 100.0,
+        "raw_price_pct": 100.0
+      }
+    ],
+    "exceptions": [
+      {
+        "missing_description": 4681,
+        "recoverable_descriptions": 2393,
+        "missing_normalized_year": 3,
+        "zero_raw_year": 3,
+        "placeholder_body_color": 198,
+        "placeholder_trim": 1,
+        "lumpsum_ads": 53892,
+        "lumpsum_with_price": 53892,
+        "installment_ads": 1703,
+        "complete_installments": 1703,
+        "removed_ads": 29876,
+        "removed_with_timestamp": 29876
+      }
+    ]
+  }
+}

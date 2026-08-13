@@ -1,4 +1,14 @@
-# BAMA Ads Scraper
+# BAMA Ads Scraper (archive / seed only)
+
+**Not part of the live SaaS.** Production crawl lives in
+`bama-saas/apps/jobs/services/fetcher.py`. Do not run this scraper against the
+same feed while the SaaS worker is running.
+
+This tree remains as an offline SQLite tool and a seed producer
+(`data/bama.db` can be copied into `bama-saas/data/` for `import_scraped` /
+`import_history`). CI may still test it.
+
+---
 
 A standalone scraper that turns Bama.ir's car listings into a single, queryable
 SQLite database. Run it once and you get a snapshot of the market; run it

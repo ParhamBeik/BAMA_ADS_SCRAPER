@@ -18,13 +18,12 @@ SQLite is not supported.
 | Identity | `VehicleIdentity` + `ListingEpisode`. Cars are matched on Bama's per-vehicle image folder uuid, which it reuses across relistings — 65 uuids cover 139 codes. Shared identity is classified by dates: overlapping = duplicate listing, sequential = relist. |
 | Insight products | **Liquidity** (Kaplan-Meier with right-censoring, hazard by price position), **fair price** (explainable components + measured negotiation room + dispersion leaderboard), **retention** (per-year medians, cohort-adjusted regional spreads). |
 | Job visibility | `JobRun` records every scheduled step including `skipped` when a prerequisite failed. `GET /api/admin/jobs/overview/`. |
-| Frontend (new) | `ui/web/` — React + Vite + TypeScript, five workspaces, types generated from the OpenAPI schema, light/dark/system. Runs alongside the old SPA until parity. |
+| Frontend | `ui/web/` — React + Vite + TypeScript: Explorer, Deals, Research, Compare, My Market, Control. |
 | Analytics | true-mean, Bollinger (median-based), liquidity, market depth, undervalued, depreciation, rankings, regional, dealers, inventory trend, time-on-market, fast movers, price drops, mileage-adjusted deal scores. |
 | **Market index** | **Matched-cohort chained index** (`services/index.py`) — the composition-controlled answer to "did prices move". Market/brand/model scopes. |
 | Monitoring | `crawl_health` — sweep freshness, failed runs, ingest-reject spikes, coverage gaps, ingest progress. CLI (exit 1) + `GET /api/admin/jobs/crawl-health/` (503). |
-| Engagement | Favorites, watchlists, saved searches, alerts, notification inbox; subscription-aware throttles on writes. |
-| Frontend | **Working** no-build Persian SPA: vanilla ES modules, hash router, vendored Chart.js, 5 page modules. Not a placeholder. |
-| Worker | cron (`install_cron.sh`) **or** the in-container loop (`run_worker.sh`); they refuse to run together. |
+| Engagement | Favorites, alerts, notification inbox; subscription-aware throttles on writes. |
+| Worker | HOT/WARM/COLD cadences via cron (`install_cron.sh`) **or** the in-container loop (`run_worker.sh`); they refuse to run together. |
 
 ## The market index — why it exists
 

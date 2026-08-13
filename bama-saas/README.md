@@ -27,14 +27,18 @@ bama-saas/
 │   ├── jobs/               management commands + ingestion services (no models)
 │   └── parsing/            zero-Django pure-Python Bama payload rules (ported)
 ├── ui/
-│   ├── legacy/             no-build Persian SPA (vanilla ES modules)
-│   └── web/                React + Vite + TypeScript workspaces (see "Frontend")
-├── docs/                   implementation status and audit artifacts
-├── deploy/worker/          cron installer + runner scripts (pipeline, sweep, alerts, digest)
+│   └── web/                React + Vite + TypeScript (see "Frontend")
+├── docs/                   implementation status, audit, data-quality, perf baseline
+├── deploy/
+│   ├── docker-compose.prod.yml
+│   ├── Dockerfile.prod
+│   ├── .env.production.example
+│   ├── vps/                deploy + encrypted Postgres backup + restore runbook
+│   └── worker/             cron installer + runner scripts (pipeline, analytics, sweep, alerts, digest)
 ├── tests/                  pytest-django: parsing, verification, analytics, crawler, pipeline
 ├── manage.py
-├── docker-compose.yml
-├── Dockerfile
+├── docker-compose.yml      local stack (Postgres, Django, worker, Vite frontend)
+├── Dockerfile              local Django image
 └── requirements.txt
 ```
 
@@ -98,17 +102,21 @@ database** from any native PostgreSQL you run locally.
 
 ### Production VPS
 
-`docker-compose.prod.yml` runs an internal-only PostgreSQL database, Gunicorn,
+`deploy/docker-compose.prod.yml` runs an internal-only PostgreSQL database, Gunicorn,
 the in-container scheduler, and the built React frontend behind nginx. Only the
 frontend joins the shared `vps-edge` network; the database and backend remain on
 this project's private network.
 
 ```bash
-cp .env.production.example .env.production
+cp deploy/.env.production.example .env.production
 chmod 600 .env.production
 # Start the edge stack from portfolio-saas/deploy/edge first.
 BACKUP_PASSPHRASE_FILE=/root/secrets/bama-backup-passphrase deploy/vps/deploy.sh
 ```
+
+`deploy/vps/deploy.sh` and `deploy/vps/backup_postgres.sh` always invoke Compose with
+`--project-directory` set to the `bama-saas/` root, so build contexts and
+`deploy/worker/*` paths stay stable after the prod files moved under `deploy/`.
 
 The passphrase file must be outside the repository with mode `400` or `600`.
 The first deployment skips the pre-deploy backup because no database exists yet;
@@ -158,7 +166,7 @@ For fresh data, run `python manage.py fetch_live --max-ads 1000` instead.
 ## Background worker
 
 A Linux cron + `flock` worker (no Celery) keeps the data fresh and the alerts
-firing. `deploy/worker/install_cron.sh` installs four auto-managed crontab
+firing. `deploy/worker/install_cron.sh` installs auto-managed crontab
 entries (idempotent — each owns a distinct marker line). It refuses to install
 while the compose `worker` container is running: the two cannot see each other's
 `flock` files (host `/tmp` vs container `/tmp`), so both would mean two fetchers
@@ -166,8 +174,9 @@ against one database.
 
 | Cadence | Runner | Job |
 | --- | --- | --- |
-| every 5 min | `run_pipeline.sh` | `run_pipeline` (delta fetch → mark_inactive → episodes → snapshots → market index → deal scores) |
-| every 6 h | `run_sweep.sh` | `fetch_live --mode full → crawl_gaps → flag_cohort_outliers → data_quality → crawl_health` |
+| every 5 min | `run_pipeline.sh --cadence hot` | delta fetch → mark_inactive → incremental deal scores |
+| every 30 min | `run_analytics.sh` | episodes → daily_snapshot → market_index → market_snapshot |
+| every 6 h | `run_sweep.sh` | full fetch → crawl_gaps → outliers → DQ → warm pipeline → full deal scores → prune_history → crawl_health |
 | every 30 min | `run_alerts.sh` | `evaluate_alerts` (user alerts → notifications) |
 | daily ~08:17 | `run_digest.sh` | `send_digest --kind daily` |
 
@@ -216,8 +225,10 @@ via **drf-spectacular**.
 - `GET /api/markets/<model_id>/price-trends/?variant=&bucket=day|week|month`
 - `GET /api/ads/<code>/price-history/` — single ad's change-only price series.
 
-**Insights** (`/api/`) — kind ∈ `liquidity | market-depth | undervalued | depreciation`:
-- `GET /api/insights/<model_id>/<kind>/?variant=&year=`
+**Research** (`/api/research/` + `/api/analytics/overview/`) — canonical insight products:
+- `GET /api/analytics/overview/` — public market snapshot with provenance envelope.
+- `GET /api/research/{liquidity,price-position,negotiation,depreciation}/<model_id>/`
+- `GET /api/ads/<code>/fair-price/`, `GET /api/research/compare/`
 
 **Analytics** (`/api/analytics/`) — deal scoring, rankings, and market metrics (Phase 4):
 - `GET /api/analytics/deal-scores/` — top deals vs peers (`?model=&brand=&year=&min_score=&limit=`); `GET /api/analytics/deal-scores/<code>/` for one ad.
@@ -239,13 +250,8 @@ viewsets carry `SubscriptionThrottle` (burst by plan) + `MonthlyQuotaThrottle` (
 monthly cap):
 - Favorites: `GET/POST /api/favorites/` (POST body `{code}`; idempotent),
   `DELETE /api/favorites/<code>/`.
-- Watchlists: `GET/POST /api/watchlists/`, `GET/PATCH/DELETE /api/watchlists/<pk>/`,
-  `GET/POST /api/watchlists/<pk>/ads/` (POST `{code}`),
-  `DELETE /api/watchlists/<pk>/ads/<code>/`.
-- Saved searches: `GET/POST/PATCH/DELETE /api/saved-searches/` (`{name, params, notify}`).
 - Alerts: `GET/POST/PATCH/DELETE /api/alerts/` (`alert_type` ∈
-  `price_drop|undervalued|new_listing`, with an ad/watchlist/model/saved-search target
-  and a `threshold`).
+  `price_drop|undervalued`, targeting an ad or a model, plus optional `threshold`).
 - Notifications: `GET /api/notifications/` — read-only in-app inbox (paged).
 
 **Admin** (`/api/admin/`) — IsStaff-gated. The POST triggers run their command in
@@ -271,8 +277,8 @@ curl -s http://localhost:8000/api/markets/?limit=20 | jq
 # True-mean for model 7 (z-score trim)
 curl -s 'http://localhost:8000/api/markets/7/true-mean/?year=1401&method=zscore&z=2.0' | jq
 
-# Undervalued listings for model 7, year 1401
-curl -s 'http://localhost:8000/api/insights/7/undervalued/?year=1401' | jq
+# Fair price for one listing
+curl -s 'http://localhost:8000/api/ads/CODE/fair-price/' | jq
 
 # Login (dev allows anonymous reads; login needed for /me and prod)
 curl -s -X POST http://localhost:8000/api/auth/login/ \
@@ -283,7 +289,7 @@ curl -s -X POST http://localhost:8000/api/auth/login/ \
 ## Auth & throttling
 
 - `dev.py`: read endpoints are `AllowAny`; `prod.py` keeps the global `IsAuthenticated` default.
-- `apps/accounts/throttles.py` ships `SubscriptionThrottle` (burst/min scaled by plan) and `MonthlyQuotaThrottle` (hard monthly cap from `Subscription.monthly_api_limit`, atomic increment). These are attached to every **engagement write** viewset (favorites, watchlists, saved searches, alerts); read endpoints and the operator-only admin job triggers are unthrottled.
+- `apps/accounts/throttles.py` ships `SubscriptionThrottle` (burst/min scaled by plan) and `MonthlyQuotaThrottle` (hard monthly cap from `Subscription.monthly_api_limit`, atomic increment). These are attached to every **engagement write** viewset (favorites, alerts); read endpoints and the operator-only admin job triggers are unthrottled.
 
 ## Measuring market movement
 
@@ -393,14 +399,11 @@ WHERE observed_at > now() - interval '1 day' GROUP BY rule ORDER BY 2 DESC;
 
 ## Frontend
 
-Two live side by side until parity:
-
-- `ui/legacy/` — the working no-build Persian SPA (vanilla ES modules, hash
-  router, vendored Chart.js).
-- `ui/web/` — **React + Vite + TypeScript**, five workspaces: Market Overview
-  (public), Buyer Explorer, Research (subscription), My Market, Operations
-  (staff). `npm run dev` proxies `/api` to Django so the browser sees one origin
-  and dev has no CORS/cookie-domain difference from production.
+`ui/web/` is the product UI: React + Vite + TypeScript. Workspaces: Landing,
+Explorer, Deals, Research, Compare, My Market (favorites/alerts), Market
+overview, and `/control` (staff). `npm run dev` proxies `/api` to Django so the
+browser sees one origin and dev has no CORS/cookie-domain difference from
+production.
 
 Three decisions there are worth knowing before changing anything:
 
@@ -447,8 +450,3 @@ empty-page truncation guard — **382 tests** total, all green against PostgreSQ
 The pagination tests mock `session.get`, not `fetch_page`, deliberately: mocking
 the higher level is what let a 0-based-`pageIndex` bug survive undetected, so the
 page-index arithmetic must stay inside the system under test.
-
-
-## Frontend rebuild notes
-
-`ui/legacy/` remains available until the React app passes parity acceptance; do not remove it yet.

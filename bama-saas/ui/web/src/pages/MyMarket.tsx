@@ -1,11 +1,9 @@
 /**
- * My Market — the signed-in user's own saved work.
- *
- * Kept deliberately thin: favorites, watchlists and alerts already exist on the
- * backend and this is a surface for them, not a redesign of them.
+ * My Market — favorites, alerts, and notifications.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Trash2 } from "lucide-react";
+import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../auth";
 import type { Paginated } from "../api/client";
@@ -19,17 +17,16 @@ interface Favorite {
 }
 
 interface Alert {
-  id: number;
-  name: string;
-  is_active: boolean;
+  id: string;
+  alert_type: string;
+  enabled: boolean;
 }
 
 interface Notification {
-  id: number;
-  title: string;
+  id: string;
+  subject: string;
   body: string;
   created_at: string;
-  is_read: boolean;
 }
 
 export function MyMarket() {
@@ -38,14 +35,17 @@ export function MyMarket() {
 
   const favorites = useQuery({
     queryKey: ["favorites"],
+    enabled: Boolean(me),
     queryFn: ({ signal }) => api.get<Paginated<Favorite>>("/api/favorites/", signal),
   });
   const alerts = useQuery({
     queryKey: ["alerts"],
+    enabled: Boolean(me),
     queryFn: ({ signal }) => api.get<Paginated<Alert>>("/api/alerts/", signal),
   });
   const notifications = useQuery({
     queryKey: ["notifications"],
+    enabled: Boolean(me),
     queryFn: ({ signal }) =>
       api.get<Paginated<Notification>>("/api/notifications/", signal),
   });
@@ -65,21 +65,21 @@ export function MyMarket() {
 
   return (
     <div className="grid cols-2">
-      <Card title="Saved cars">
-        <Async query={favorites} empty="Nothing saved yet.">
+      <Card title="آگهی‌های ذخیره‌شده">
+        <Async query={favorites} empty="هنوز چیزی ذخیره نشده.">
           {(data) =>
             data.results.length ? (
-              <Table head={["Car", "Price", ""]}>
+              <Table head={["آگهی", "قیمت", ""]}>
                 {data.results.map((f) => (
                   <tr key={f.id}>
                     <td>
-                      <Fa>{f.ad_title ?? f.code}</Fa>
+                      <Link to={`/listing/${f.code}`}><Fa>{f.ad_title ?? f.code}</Fa></Link>
                     </td>
                     <td className="num">{toman(f.ad_price ?? null)}</td>
                     <td className="num">
                       <button
                         onClick={() => removeFavorite.mutate(f.code)}
-                        aria-label="Remove"
+                        aria-label="حذف"
                       >
                         <Trash2 size={13} />
                       </button>
@@ -88,54 +88,54 @@ export function MyMarket() {
                 ))}
               </Table>
             ) : (
-              <div className="state">Nothing saved yet.</div>
+              <div className="state">هنوز چیزی ذخیره نشده.</div>
             )
           }
         </Async>
       </Card>
 
-      <Card title="Alerts">
-        <Async query={alerts} empty="No alerts configured.">
+      <Card title="هشدارها">
+        <Async query={alerts} empty="هشداری تنظیم نشده.">
           {(data) =>
             data.results.length ? (
-              <Table head={["Alert", "Status"]}>
+              <Table head={["نوع", "وضعیت"]}>
                 {data.results.map((a) => (
                   <tr key={a.id}>
-                    <td>{a.name}</td>
+                    <td>{a.alert_type}</td>
                     <td className="num">
-                      <span className={`badge ${a.is_active ? "accent" : ""}`}>
-                        {a.is_active ? "on" : "off"}
+                      <span className={`badge ${a.enabled ? "accent" : ""}`}>
+                        {a.enabled ? "فعال" : "خاموش"}
                       </span>
                     </td>
                   </tr>
                 ))}
               </Table>
             ) : (
-              <div className="state">No alerts configured.</div>
+              <div className="state">هشداری تنظیم نشده.</div>
             )
           }
         </Async>
       </Card>
 
-      <Card title="Notifications">
-        <Async query={notifications} empty="Nothing new.">
+      <Card title="اعلان‌ها">
+        <Async query={notifications} empty="اعلان تازه‌ای نیست.">
           {(data) =>
             data.results.length ? (
-              <Table head={["Message", "When"]}>
+              <Table head={["پیام", "زمان"]}>
                 {data.results.map((n) => (
                   <tr key={n.id}>
                     <td>
-                      <strong>{n.title}</strong>
+                      <strong>{n.subject}</strong>
                       <div className="stat-sub">{n.body}</div>
                     </td>
                     <td className="num">
-                      {new Date(n.created_at).toLocaleDateString("en-GB")}
+                      {new Date(n.created_at).toLocaleDateString("fa-IR")}
                     </td>
                   </tr>
                 ))}
               </Table>
             ) : (
-              <div className="state">Nothing new.</div>
+              <div className="state">اعلان تازه‌ای نیست.</div>
             )
           }
         </Async>

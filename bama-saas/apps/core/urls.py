@@ -39,9 +39,6 @@ urlpatterns = [
     path("markets/<int:model_id>/price-trends/", views.market_price_trends, name="price-trends"),
     path("ads/<str:code>/price-history/", views.ad_price_history, name="ad-price-history"),
 
-    # --- analytics: legacy insights keeps bare /api/insights/... ---
-    path("insights/<int:model_id>/<str:kind>/", views.insight, name="insight"),
-
     # --- analytics: deal scores (under /api/analytics/...) ---
     path("analytics/deal-scores/", views.deal_scores, name="deal-scores"),
     path("analytics/deal-scores/<str:code>/", views.deal_score_detail, name="deal-score-detail"),

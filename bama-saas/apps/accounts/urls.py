@@ -14,8 +14,6 @@ app_name = "accounts"
 
 router = DefaultRouter()
 router.register("favorites", views.FavoriteViewSet, basename="favorite")
-router.register("watchlists", views.WatchlistViewSet, basename="watchlist")
-router.register("saved-searches", views.SavedSearchViewSet, basename="saved-search")
 router.register("alerts", views.AlertViewSet, basename="alert")
 router.register("notifications", views.NotificationViewSet, basename="notification")
 

@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import { Async, Fa, Provenance, toman } from "../ui";
+import { ListingActions } from "../engagement";
 
 type Ad = {
   code: string;
@@ -27,7 +28,7 @@ type Ad = {
 type FairPrice = {
   available?: boolean;
   reason?: string;
-  data?: { fair_price?: number; components?: Record<string, number> };
+  fair_value?: number | null;
   as_of?: string;
   methodology_version?: number;
   coverage?: Record<string, unknown>;
@@ -41,7 +42,7 @@ export function ListingDetail() {
     enabled: !!code,
   });
   const fair = useQuery({
-    queryKey: ["fair", code],
+    queryKey: ["fair-price", code],
     queryFn: ({ signal }) => api.get<FairPrice>(`/api/ads/${code}/fair-price/`, signal),
     enabled: !!code,
   });
@@ -85,6 +86,7 @@ export function ListingDetail() {
                   {data.url && (
                     <a className="btn" href={data.url} target="_blank" rel="noreferrer">مشاهده در باما</a>
                   )}
+                  <ListingActions code={data.code} />
                 </div>
                 <div className="card">
                   <h2>توضیحات</h2>
@@ -103,7 +105,7 @@ export function ListingDetail() {
             <p className="muted">داده کافی نیست: {fp.reason}</p>
           ) : (
             <>
-              <p>قیمت منصفانه: {fp.data?.fair_price != null ? toman(fp.data.fair_price) : "—"}</p>
+              <p>قیمت منصفانه: {fp.fair_value != null ? toman(fp.fair_value) : "—"}</p>
               {fp.as_of && <Provenance envelope={fp as never} />}
             </>
           )}

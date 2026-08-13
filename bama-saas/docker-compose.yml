@@ -45,6 +45,8 @@ services:
       EMAIL_HOST: mailpit
       EMAIL_PORT: 1025
       EMAIL_USE_TLS: "false"
+      DEV_ADMIN_EMAIL: ${DEV_ADMIN_EMAIL:-admin@bama.local}
+      DEV_ADMIN_PASSWORD: ${DEV_ADMIN_PASSWORD:-LocalOps-2026}
     volumes:
       - .:/app
       - ./data:/data:ro
@@ -53,7 +55,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    command: sh -c "python manage.py migrate --noinput && python manage.py runserver 0.0.0.0:8000"
+    command: sh -c "python manage.py migrate --noinput && python manage.py ensure_dev_admin && python manage.py runserver 0.0.0.0:8000"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health/"]
       interval: 10s
@@ -67,6 +69,7 @@ services:
     image: node:24-alpine
     container_name: bama-frontend
     init: true
+    restart: unless-stopped
     working_dir: /app
     environment:
       VITE_API_TARGET: http://django:8000
@@ -137,15 +140,6 @@ services:
         condition: service_healthy
     networks:
       - bama-network
-
-  # Enabled in Phase 5 (Celery + Redis).
-  # redis:
-  #   image: redis:7-alpine
-  #   networks: [bama-network]
-  # celery:
-  #   build: .
-  #   command: celery -A config worker -l info
-  #   depends_on: [redis]
 
 volumes:
   postgres_data:

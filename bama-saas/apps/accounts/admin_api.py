@@ -176,16 +176,29 @@ class AdminHealthView(APIView):
             connections = cur.fetchone()[0]
         from django.db.migrations.recorder import MigrationRecorder
         applied = MigrationRecorder.Migration.objects.count()
+        since = timezone.now() - timedelta(hours=24)
+        status_counts = {
+            row["status"]: row["n"]
+            for row in Ad.objects.values("status").annotate(n=Count("code"))
+        }
+        reject_rules = list(
+            IngestReject.objects.filter(observed_at__gte=since)
+            .values("rule")
+            .annotate(n=Count("id"))
+            .order_by("-n")
+        )
         return Response({
             "database": {"size_bytes": db_size, "connections": connections, "migrations_applied": applied},
             "catalog": {
                 "ads": Ad.objects.count(),
-                "active_ads": Ad.objects.filter(status=Ad.Status.ACTIVE).count(),
+                "active_ads": status_counts.get(Ad.Status.ACTIVE, 0),
+                "removed_ads": status_counts.get(Ad.Status.REMOVED, 0),
                 "brands": Brand.objects.count(),
                 "models": Model.objects.count(),
-                "rejects_24h": IngestReject.objects.filter(
-                    observed_at__gte=timezone.now() - timedelta(hours=24)
-                ).count(),
+                "unconfirmed_brands": Brand.objects.filter(is_confirmed=False).count(),
+                "unconfirmed_models": Model.objects.filter(is_confirmed=False).count(),
+                "rejects_24h": IngestReject.objects.filter(observed_at__gte=since).count(),
+                "reject_rules_24h": reject_rules,
             },
             "crawl": crawl,
             "plan_limits": {k: v.__dict__ for k, v in PLAN_LIMITS.items()},

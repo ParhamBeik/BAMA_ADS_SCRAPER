@@ -81,10 +81,8 @@ class Command(BaseCommand):
             end_page=opts["end_page"],
         )
 
-        # Deliberately no deal-score refresh here. run_pipeline's `deal_scores`
-        # step rebuilds the whole board immediately after this command on every
-        # tick, so doing a cohort refresh first was scoring the same ads twice.
-        # crawl_gaps keeps its own refresh — it runs outside the pipeline.
+        # Deal scores: the HOT pipeline tick refreshes models sighted in this
+        # run; the sweep does a full rebuild. Do not rescore here.
         self.stdout.write(
             self.style.SUCCESS(
                 f"Done. status={run.status} stop_reason={run.stop_reason} "

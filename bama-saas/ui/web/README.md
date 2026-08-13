@@ -1,7 +1,7 @@
 # Bama Market Intelligence — web
 
-React + Vite + TypeScript. Five workspaces: Market Overview (public), Buyer
-Explorer, Research (subscription), My Market, Operations (staff).
+React + Vite + TypeScript. Workspaces: Landing, Explorer, Deals, Research,
+Compare, My Market, Market overview, Control (staff).
 
 ```bash
 npm install

@@ -16,10 +16,9 @@ from rest_framework.response import Response
 
 from apps.core.models import DealScoreCache, MarketIndex
 from apps.core.services import metrics
-from apps.core.services import insights
 from apps.core.services.index import read_index
 from apps.core.services.quality import verified, verified_by_ad
-from apps.core.models import Ad, Model
+from apps.core.models import Ad
 
 
 def _opt_int(params, key):
@@ -51,42 +50,6 @@ def _clamp_limit(params, default, lo, hi):
         return max(lo, min(int(raw), hi))
     except (TypeError, ValueError):
         raise ValueError("limit must be an integer")
-
-
-@extend_schema(
-    tags=["Analytics"],
-    responses={200: OpenApiTypes.OBJECT},
-    parameters=[
-        OpenApiParameter("variant", int, OpenApiParameter.QUERY, required=False),
-        OpenApiParameter("year", int, OpenApiParameter.QUERY, required=False),
-    ],
-)
-@api_view(["GET"])
-def insight(request, model_id: int, kind: str):
-    model = get_object_or_404(Model, id=model_id)
-    params = request.query_params
-    try:
-        variant = _opt_int(params, "variant")
-        year = _opt_int(params, "year")
-    except ValueError as exc:
-        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-
-    if kind == "liquidity":
-        data = insights.liquidity(model.id, variant_id=variant, year=year)
-    elif kind == "market-depth":
-        data = insights.market_depth(model.id, variant_id=variant, year=year)
-    elif kind == "undervalued":
-        data = insights.undervalued(model.id, variant_id=variant, year=year)
-    elif kind == "depreciation":
-        data = insights.depreciation(model.id, variant_id=variant)
-    else:
-        return Response(
-            {"detail": "kind must be one of: liquidity, market-depth, undervalued, depreciation"},
-            status=status.HTTP_404_NOT_FOUND,
-        )
-    data["model_name"] = model.name_fa
-    data["brand_name"] = model.brand.name_fa
-    return Response(data)
 
 
 # ---------------------------------------------------------------------------
@@ -172,7 +135,7 @@ def deal_scores(request):
 def deal_score_detail(request, code: str):
     """Single ad's deal score or 404."""
     obj = get_object_or_404(
-        DealScoreCache.objects.select_related("ad")
+        verified_by_ad(DealScoreCache.objects.select_related("ad"))
         .annotate(
             model_name=F("ad__model__name_fa"),
             brand_name=F("ad__brand__name_fa"),

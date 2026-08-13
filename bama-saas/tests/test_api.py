@@ -156,6 +156,32 @@ def test_login_returns_access_and_refresh(api_client):
 
 
 @pytest.mark.django_db
+def test_ensure_dev_admin_creates_verified_staff(settings):
+    from django.core.management import call_command
+
+    settings.DEBUG = True
+    settings.DEV_ADMIN_EMAIL = "admin@bama.local"
+    settings.DEV_ADMIN_PASSWORD = "LocalOps-2026"
+    call_command("ensure_dev_admin")
+    user = User.objects.get(email="admin@bama.local")
+    assert user.is_staff
+    assert user.email_verified_at is not None
+    assert user.check_password("LocalOps-2026")
+
+
+@pytest.mark.django_db
+def test_ensure_dev_admin_refuses_when_not_debug(settings):
+    from django.core.management import call_command
+    from django.core.management.base import CommandError
+
+    settings.DEBUG = False
+    settings.DEV_ADMIN_EMAIL = "admin@bama.local"
+    settings.DEV_ADMIN_PASSWORD = "LocalOps-2026"
+    with pytest.raises(CommandError):
+        call_command("ensure_dev_admin")
+
+
+@pytest.mark.django_db
 def test_refresh_issues_new_access_token(api_client):
     User.objects.create_user(email="refresh@example.com", password="Sup3rSecret!")
     login = api_client.post(
@@ -375,26 +401,13 @@ def test_ad_price_history_404_for_missing_ad(api_client):
 
 
 # ---------------------------------------------------------------------------
-# Insights endpoints (/api/insights/<id>/<kind>/)
+# Insights endpoints were collapsed into /api/research/...
 # ---------------------------------------------------------------------------
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("kind", ["liquidity", "market-depth", "undervalued", "depreciation"])
-def test_insights_kinds_200(api_client, catalog, kind):
+def test_legacy_insights_path_is_gone(api_client, catalog):
     model = catalog["model"]
-    resp = api_client.get(f"/api/insights/{model.id}/{kind}/")
-    assert resp.status_code == 200, resp.content
-    body = resp.json()
-    assert body["model_id"] == model.id
-    # Every insight decorates its payload with the dimension names.
-    assert body["model_name"] == model.name_fa
-    assert "brand_name" in body
-
-
-@pytest.mark.django_db
-def test_insights_unknown_kind_is_404(api_client, catalog):
-    model = catalog["model"]
-    resp = api_client.get(f"/api/insights/{model.id}/nonsense/")
+    resp = api_client.get(f"/api/insights/{model.id}/liquidity/")
     assert resp.status_code == 404
 
 
@@ -585,7 +598,7 @@ def test_admin_refresh_staff_is_202(staff_client):
     # analytics. The old ``min_count`` argument was a PriceStatistics concept and
     # no longer exists, so there is no input left to validate.
     assert body["command"] == "run_pipeline"
-    mock_spawn.assert_called_once_with("run_pipeline", skip_fetch=True)
+    mock_spawn.assert_called_once_with("run_pipeline", skip_fetch=True, cadence="full")
 
 
 @pytest.mark.django_db

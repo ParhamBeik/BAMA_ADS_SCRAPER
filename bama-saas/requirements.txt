@@ -1,3 +1,6 @@
+# Runtime install for Docker — keep aligned with pyproject.toml [project.dependencies].
+# pytest is also listed so `docker compose exec django pytest` works without a
+# second install; the canonical extra is pyproject.toml [project.optional-dependencies] test.
 Django>=5.0,<6.0
 djangorestframework>=3.15
 djangorestframework-simplejwt>=5.3

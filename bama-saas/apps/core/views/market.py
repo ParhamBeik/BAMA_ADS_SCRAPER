@@ -194,9 +194,9 @@ def market_price_trends(request, model_id: int):
 @api_view(["GET"])
 def ad_price_history(request, code: str):
     """Single ad's change-only price series over time."""
-    ad = get_object_or_404(Ad, code=code)
+    ad = get_object_or_404(verified(Ad.objects.all()), code=code)
     rows = (
-        PriceObservation.objects.filter(ad=ad)
+        verified_by_ad(PriceObservation.objects.filter(ad=ad))
         .order_by("observed_at")
         .values("observed_at", "price", "payment", "prepayment",
                 "installments", "price_type")

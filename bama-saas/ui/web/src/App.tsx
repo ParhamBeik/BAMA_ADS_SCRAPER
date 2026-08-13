@@ -4,7 +4,7 @@
 import { lazy, Suspense } from "react";
 import { Link, NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import {
-  BarChart3, Bookmark, GitCompare, LayoutDashboard, Search, UserRound,
+  BarChart3, Bookmark, GitCompare, LayoutDashboard, Percent, Search, UserRound,
 } from "lucide-react";
 import { useAuth } from "./auth";
 import { useTheme, type ThemeChoice } from "./theme";
@@ -12,14 +12,11 @@ import { Landing } from "./pages/Landing";
 import { Explorer } from "./pages/Explorer";
 import { MyMarket } from "./pages/MyMarket";
 import { Overview } from "./pages/Overview";
+import { Deals } from "./pages/Deals";
 import { ListingDetail } from "./pages/ListingDetail";
 import { BrandPage } from "./pages/BrandPage";
 import { ModelPage } from "./pages/ModelPage";
 import { Login } from "./pages/auth/Login";
-import { Register } from "./pages/auth/Register";
-import { Verify } from "./pages/auth/Verify";
-import { ForgotPassword } from "./pages/auth/ForgotPassword";
-import { ResetPassword } from "./pages/auth/ResetPassword";
 import { Account } from "./pages/auth/Account";
 
 const ControlApp = lazy(() =>
@@ -35,6 +32,7 @@ const CompareLazy = lazy(() =>
 const NAV = [
   { to: "/", label: "خانه", icon: LayoutDashboard, end: true },
   { to: "/explore", label: "کاوش", icon: Search, end: false },
+  { to: "/deals", label: "پیشنهادها", icon: Percent, end: false },
   { to: "/research", label: "تحقیق", icon: BarChart3, end: false },
   { to: "/compare", label: "مقایسه", icon: GitCompare, end: false },
   { to: "/my-market", label: "بازار من", icon: Bookmark, end: false },
@@ -74,6 +72,7 @@ export function App() {
         <div className="sidebar-foot">
           {me ? (
             <>
+              {me.user.is_staff && <Link className="nav-item" to="/control">کنترل</Link>}
               <Link className="nav-item" to="/account"><UserRound size={16} /> حساب</Link>
               <button className="nav-item linkish" onClick={() => void logout()}>خروج</button>
             </>
@@ -94,6 +93,7 @@ export function App() {
         <Routes>
           <Route path="/" element={<Landing />} />
           <Route path="/explore" element={<Explorer />} />
+          <Route path="/deals" element={<Deals />} />
           <Route path="/research" element={<Suspense fallback={<p>…</p>}><Research /></Suspense>} />
           <Route path="/compare" element={<Suspense fallback={<p>…</p>}><CompareLazy /></Suspense>} />
           <Route path="/my-market" element={<MyMarket />} />
@@ -102,10 +102,6 @@ export function App() {
           <Route path="/brand/:slug" element={<BrandPage />} />
           <Route path="/model/:id" element={<ModelPage />} />
           <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
-          <Route path="/verify" element={<Verify />} />
-          <Route path="/forgot-password" element={<ForgotPassword />} />
-          <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/account" element={<Account />} />
           <Route path="/ops" element={<Navigate to="/control" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />

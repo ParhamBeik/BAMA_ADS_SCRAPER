@@ -130,54 +130,11 @@ class Favorite(models.Model):
         ]
 
 
-class Watchlist(models.Model):
-    """A named group of ads a user is tracking (M2M to ``catalog.Ad``)."""
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name="watchlists"
-    )
-    name = models.CharField(max_length=120)
-    ads = models.ManyToManyField("core.Ad", related_name="watchlists", blank=True)
-    created_at = models.DateTimeField(default=timezone.now)
-
-    class Meta:
-        db_table = "accounts_watchlist"
-        ordering = ("-created_at",)
-        constraints = [
-            models.UniqueConstraint(fields=("user", "name"), name="uq_watchlist_user_name"),
-        ]
-
-
-class SavedSearch(models.Model):
-    """A persisted catalog query, optionally watched for new matches.
-
-    ``params`` mirrors the AdFilter query dict (brand, model, year/price/mileage
-    ranges, city, transmission…). ``last_checked_at`` lets the evaluator find
-    ads first seen since the last check without re-notifying about old ones.
-    """
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name="saved_searches"
-    )
-    name = models.CharField(max_length=160, blank=True, default="")
-    params = models.JSONField(default=dict, blank=True)
-    notify = models.BooleanField(default=True)
-    last_checked_at = models.DateTimeField(null=True, blank=True)
-    created_at = models.DateTimeField(default=timezone.now)
-
-    class Meta:
-        db_table = "accounts_savedsearch"
-        ordering = ("-created_at",)
-
-
 class Alert(models.Model):
-    """A user-configured watch rule. One of three shapes:
+    """A user-configured watch rule. One of two shapes:
 
-    - ``price_drop`` on a specific ``ad`` (or every ad in a ``watchlist``).
+    - ``price_drop`` on a specific ``ad``.
     - ``undervalued`` for a ``model`` (fires when new deals appear).
-    - ``new_listing`` from a ``saved_search``.
 
     ``channels`` is a list of "email" / "telegram" / "inapp" (default in-app +
     email). Delivery identity comes from the user (email / telegram_chat_id).
@@ -186,21 +143,12 @@ class Alert(models.Model):
     class Type(models.TextChoices):
         PRICE_DROP = "price_drop", "Price drop"
         UNDERVALUED = "undervalued", "Undervalued listing"
-        NEW_LISTING = "new_listing", "New listing"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="alerts")
     alert_type = models.CharField(max_length=16, choices=Type.choices)
-    saved_search = models.ForeignKey(
-        SavedSearch, on_delete=models.CASCADE, related_name="alerts",
-        null=True, blank=True,
-    )
     ad = models.ForeignKey(
         "core.Ad", on_delete=models.CASCADE, related_name="alerts",
-        null=True, blank=True,
-    )
-    watchlist = models.ForeignKey(
-        Watchlist, on_delete=models.CASCADE, related_name="alerts",
         null=True, blank=True,
     )
     model = models.ForeignKey(

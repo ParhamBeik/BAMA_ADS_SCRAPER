@@ -6,31 +6,22 @@ It walks every enabled alert once and, per matching event, fans out one
 Notification per channel (in-app / email / telegram). Dedup is keyed on
 ``<type>:<alert_id>:<entity_id>`` so a re-run never double-notifies.
 
-Three alert shapes:
-- ``price_drop``  — fires on PriceDropEvent rows for ``alert.ad`` or every ad
-  in ``alert.watchlist``, filtered by ``threshold`` (min drop %).
-- ``undervalued`` — delegates to ``analytics.services.insights.undervalued``
-  for ``alert.model`` (uses ``threshold`` as min discount %).
-- ``new_listing`` — applies the saved search's AdFilter params and surfaces
-  ads first-seen since ``saved_search.last_checked_at``; the watermark is
-  advanced after each run (even on zero matches) so the window doesn't grow.
+Two alert shapes:
+- ``price_drop``  — fires on PriceDropEvent rows for ``alert.ad``,
+  filtered by ``threshold`` (min drop %).
+- ``undervalued`` — delegates to ``insights.undervalued`` for ``alert.model``.
 """
 
 from __future__ import annotations
 
-from django.utils import timezone
-
-from apps.core.filters import AdFilter
 from apps.core.models import Ad
 from apps.core.models import PriceDropEvent
 
 from .models import Alert, Notification
 from .notifications import create_notification, deliver
 
-# Default channel set when an alert has none stored.
 _DEFAULT_CHANNELS = [Notification.Channel.INAPP, Notification.Channel.EMAIL]
 
-# Legacy UI / clients historically sent "in_app"; the model enum is "inapp".
 _CHANNEL_ALIASES = {
     "in_app": Notification.Channel.INAPP,
 }
@@ -48,11 +39,7 @@ def _normalize_channels(channels) -> list[str]:
 
 
 def _fan_out(alert, *, subject, body, related_ad, dedupe_key, channels, counters):
-    """Create + deliver one Notification per channel for a single event.
-
-    Only newly-created rows are delivered (a repeat run hits the dedupe guard
-    and ``created=False``, so we skip re-sending the same email/Telegram).
-    """
+    """Create + deliver one Notification per channel for a single event."""
     for channel in channels:
         notification, created = create_notification(
             alert.user,
@@ -71,32 +58,26 @@ def _fan_out(alert, *, subject, body, related_ad, dedupe_key, channels, counters
 
 def _eval_price_drop(alert, channels, counters):
     threshold = alert.threshold or 0
-    if alert.ad_id:
-        ads = [alert.ad]
-    elif alert.watchlist_id:
-        ads = list(alert.watchlist.ads.all())
-    else:
-        return  # misconfigured — nothing to scan
-
-    for ad in ads:
-        events = PriceDropEvent.objects.filter(ad=ad, drop_pct__gte=threshold)
-        for event in events:
-            dedupe_key = f"price_drop:{alert.id}:{event.id}"
-            subject = "کاهش قیمت آگهی"
-            body = (
-                f"قیمت کاهش یافت: {ad.title or ad.code} "
-                f"{event.drop_pct:.1f}% (از {event.old_price} به {event.new_price})"
-            )
-            _fan_out(
-                alert, subject=subject, body=body, related_ad=ad,
-                dedupe_key=dedupe_key, channels=channels, counters=counters,
-            )
+    if not alert.ad_id:
+        return
+    events = PriceDropEvent.objects.filter(ad=alert.ad, drop_pct__gte=threshold)
+    for event in events:
+        ad = alert.ad
+        dedupe_key = f"price_drop:{alert.id}:{event.id}"
+        subject = "کاهش قیمت آگهی"
+        body = (
+            f"قیمت کاهش یافت: {ad.title or ad.code} "
+            f"{event.drop_pct:.1f}% (از {event.old_price} به {event.new_price})"
+        )
+        _fan_out(
+            alert, subject=subject, body=body, related_ad=ad,
+            dedupe_key=dedupe_key, channels=channels, counters=counters,
+        )
 
 
 def _eval_undervalued(alert, channels, counters):
     if not alert.model_id:
         return
-    # Imported lazily to avoid a circular import at module load time.
     from apps.core.services.insights import undervalued
 
     min_discount = alert.threshold if alert.threshold is not None else 10.0
@@ -119,51 +100,18 @@ def _eval_undervalued(alert, channels, counters):
         )
 
 
-def _eval_new_listing(alert, channels, counters):
-    saved_search = alert.saved_search
-    if saved_search is None:
-        return
-
-    params = saved_search.params or {}
-    filt = AdFilter(data=params, queryset=Ad.objects.all())
-    qs = filt.qs
-    if saved_search.last_checked_at is not None:
-        qs = qs.filter(first_seen_at__gt=saved_search.last_checked_at)
-
-    for ad in qs:
-        dedupe_key = f"new_listing:{alert.id}:{ad.code}"
-        subject = "آگهی جدید"
-        body = f"آگهی جدید: {ad.title or ad.code}"
-        _fan_out(
-            alert, subject=subject, body=body, related_ad=ad,
-            dedupe_key=dedupe_key, channels=channels, counters=counters,
-        )
-
-    # Advance the watermark whether or not anything matched, so the next run
-    # only sees genuinely new ads. Guard with a fresh read in case the row
-    # was modified concurrently.
-    saved_search.refresh_from_db()
-    saved_search.last_checked_at = timezone.now()
-    saved_search.save(update_fields=["last_checked_at"])
-
-
 _EVALUATORS = {
     Alert.Type.PRICE_DROP: _eval_price_drop,
     Alert.Type.UNDERVALUED: _eval_undervalued,
-    Alert.Type.NEW_LISTING: _eval_new_listing,
 }
 
 
 def evaluate_alerts() -> dict:
-    """Run every enabled alert once. Returns a small summary dict.
-
-    Robustness: a single alert's failure does not abort the batch — each one
-    is wrapped and logged. Counts are best-effort totals across all alerts.
-    """
+    """Run every enabled alert once. Returns a small summary dict."""
     counters = {"alerts": 0, "notifications": 0, "delivered": 0}
     alerts = (
         Alert.objects.filter(enabled=True)
-        .select_related("user", "ad", "watchlist", "saved_search", "model")
+        .select_related("user", "ad", "model")
     )
     for alert in alerts:
         counters["alerts"] += 1

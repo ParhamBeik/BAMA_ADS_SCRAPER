@@ -9,9 +9,10 @@
 # (host /tmp vs container /tmp) and therefore do not see each other.
 #
 # Jobs and cadence match install_cron.sh:
-#   pipeline  5 min    delta fetch + maintain + snapshot + deal scores + analytics
+#   pipeline  5 min    HOT: delta fetch + mark_inactive + incremental deals
+#   analytics 30 min   WARM: episodes + snapshots + market index
 #   alerts    30 min   evaluate user alerts -> notifications
-#   sweep     6 h      full-inventory sweep (page 0 -> end) + gap repair
+#   sweep     6 h      full-inventory sweep + gap repair + full deals + prune
 #   digest    daily    per-user digest, first tick at/after DIGEST_HOUR local
 #
 # Logs go to stdout, so `docker compose logs -f worker` is the whole story.
@@ -26,23 +27,41 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"   # -> bama-saas/
 cd "$PROJECT_DIR"
 
 PIPELINE_EVERY="${BAMA_PIPELINE_EVERY:-300}"
+ANALYTICS_EVERY="${BAMA_ANALYTICS_EVERY:-1800}"
 ALERTS_EVERY="${BAMA_ALERTS_EVERY:-1800}"
 SWEEP_EVERY="${BAMA_SWEEP_EVERY:-21600}"
 DIGEST_HOUR="${BAMA_DIGEST_HOUR:-8}"
 HEARTBEAT="${BAMA_HEARTBEAT:-30}"
+HEARTBEAT_FILE="${BAMA_WORKER_HEARTBEAT:-/tmp/bama-worker.ok}"
 
 log() { echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] worker: $*"; }
+
+# Previous process is dead; anything still RUNNING is an orphan.
+if python manage.py reap_orphan_runs; then
+    log "reaped orphan RUNNING rows"
+else
+    log "reap_orphan_runs failed (continuing)"
+fi
 
 run() {  # <label> <script>
     label="$1"
     shift
+    date +%s > "$HEARTBEAT_FILE" || true
     log "$label start"
-    if sh "$@"; then
-        log "$label ok"
-    else
+    n=0
+    while [ "$n" -lt 3 ]; do
+        if sh "$@"; then
+            log "$label ok"
+            return 0
+        fi
         rc=$?
-        log "$label FAILED rc=$rc" >&2
-    fi
+        n=$((n + 1))
+        if [ "$n" -lt 3 ]; then
+            sleep $((n * 8))
+            log "$label retry $n after rc=$rc"
+        fi
+    done
+    log "$label FAILED rc=$rc" >&2
 }
 
 # A sweep walks ~939 pages (~15-20 min), so running one on every container
@@ -68,6 +87,7 @@ else:
 
 now=$(date +%s)
 next_pipeline=$now                       # first tick immediately: start fetching at once
+next_analytics=$((now + ANALYTICS_EVERY))
 next_alerts=$((now + ALERTS_EVERY))
 last_digest_day=""
 
@@ -85,7 +105,7 @@ else
     log "last sweep still current — next sweep in ${delay}s"
 fi
 
-log "started (pipeline=${PIPELINE_EVERY}s alerts=${ALERTS_EVERY}s sweep=${SWEEP_EVERY}s digest=${DIGEST_HOUR}:00)"
+log "started (pipeline=${PIPELINE_EVERY}s analytics=${ANALYTICS_EVERY}s alerts=${ALERTS_EVERY}s sweep=${SWEEP_EVERY}s digest=${DIGEST_HOUR}:00)"
 
 while true; do
     now=$(date +%s)
@@ -99,8 +119,13 @@ while true; do
     fi
 
     if [ "$now" -ge "$next_pipeline" ]; then
-        run pipeline "$SCRIPT_DIR/run_pipeline.sh"
+        run pipeline "$SCRIPT_DIR/run_pipeline.sh" --cadence hot
         next_pipeline=$(($(date +%s) + PIPELINE_EVERY))
+    fi
+
+    if [ "$now" -ge "$next_analytics" ]; then
+        run analytics "$SCRIPT_DIR/run_analytics.sh"
+        next_analytics=$(($(date +%s) + ANALYTICS_EVERY))
     fi
 
     if [ "$now" -ge "$next_alerts" ]; then
@@ -117,5 +142,6 @@ while true; do
         last_digest_day="$today"
     fi
 
+    date +%s > "$HEARTBEAT_FILE" || true
     sleep "$HEARTBEAT"
 done

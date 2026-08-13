@@ -1,10 +1,11 @@
 #!/usr/bin/env sh
-# Install (or refresh) the bama-saas worker crontab — all four scheduled jobs:
+# Install (or refresh) the bama-saas worker crontab — scheduled jobs:
 #
-#   pipeline   every 5 min   delta fetch + maintain + snapshot + deal scores + the local analytic steps
-#   sweep      every 6 h     full-inventory sweep (page 0 → end) + gap repair
-#   alerts     every 30 min  evaluate user alerts → notifications (email/Telegram)
-#   digest     daily ~08:17  per-user daily digest (weekly digest is a manual run)
+#   pipeline   every 5 min   HOT: delta fetch + mark_inactive + incremental deals
+#   analytics  every 30 min  WARM: episodes + snapshots + market index
+#   sweep      every 6 h     full-inventory sweep + gap repair + full deals + prune
+#   alerts     every 30 min  evaluate user alerts → notifications
+#   digest     daily ~08:17  per-user daily digest
 #
 # The pipeline tick stops early once the top of the feed goes quiet, which is
 # cheap but cannot detect ads deleted deep in the feed. The sweep is what makes
@@ -44,16 +45,18 @@ if [ ! -f "$PROJECT_DIR/.env" ]; then
 fi
 
 PIPELINE="$SCRIPT_DIR/run_pipeline.sh"
+ANALYTICS="$SCRIPT_DIR/run_analytics.sh"
 SWEEP="$SCRIPT_DIR/run_sweep.sh"
 ALERTS="$SCRIPT_DIR/run_alerts.sh"
 DIGEST="$SCRIPT_DIR/run_digest.sh"
-chmod +x "$PIPELINE" "$SWEEP" "$ALERTS" "$DIGEST"
+chmod +x "$PIPELINE" "$ANALYTICS" "$SWEEP" "$ALERTS" "$DIGEST"
 
 PIPELINE_CADENCE="${1:-*/5 * * * *}"
 ALERTS_CADENCE="${2:-*/30 * * * *}"
 DIGEST_CADENCE="${3:-17 8 * * *}"   # daily, off the :00 mark
 SWEEP_CADENCE="${4:-23 */6 * * *}"  # 6-hourly, off the :00 mark so a sweep never
                                     # starts in the same second as a tick
+ANALYTICS_CADENCE="${5:-7,37 * * * *}"
 
 # Each entry: a unique marker comment + the cron line. The marker lets us drop
 # only our own lines on refresh (safe alongside the user's other crontab jobs).
@@ -61,7 +64,9 @@ mk_entry() {  # <marker> <cadence> <runner>
     printf '%s\n%s %s >> %s/cron.log 2>&1\n' "$1" "$2" "$3" "$LOG_DIR"
 }
 
-ENTRIES="$(mk_entry "# bama-saas-worker-pipeline (auto-managed)" "$PIPELINE_CADENCE" "$PIPELINE")"
+ENTRIES="$(mk_entry "# bama-saas-worker-pipeline (auto-managed)" "$PIPELINE_CADENCE" "$PIPELINE --cadence hot")"
+ENTRIES="$ENTRIES
+$(mk_entry "# bama-saas-worker-analytics (auto-managed)" "$ANALYTICS_CADENCE" "$ANALYTICS")"
 ENTRIES="$ENTRIES
 $(mk_entry "# bama-saas-worker-sweep (auto-managed)" "$SWEEP_CADENCE" "$SWEEP")"
 ENTRIES="$ENTRIES
@@ -78,7 +83,8 @@ rm -f "$TMP"
 
 cat <<EOF
 Installed worker cron (log → $LOG_DIR/cron.log):
-  $PIPELINE_CADENCE  →  $PIPELINE
+  $PIPELINE_CADENCE  →  $PIPELINE --cadence hot
+  $ANALYTICS_CADENCE  →  $ANALYTICS
   $SWEEP_CADENCE  →  $SWEEP
   $ALERTS_CADENCE  →  $ALERTS
   $DIGEST_CADENCE  →  $DIGEST

@@ -1,7 +1,7 @@
 """IsStaff-gated admin endpoints that trigger ingestion/analytics jobs.
 
-Jobs run in a daemon thread (no Celery yet — the docker-compose Celery/Redis
-stack is a Phase 5 stub) and return HTTP 202 immediately; the client polls
+Jobs run in a daemon thread (no Celery — flock + the compose worker loop
+is the scheduler) and return HTTP 202 immediately; the client polls
 ``GET /api/fetch-runs/`` for the resulting ``FetchRun`` (fetch/import) or simply
 retries. A cheap DB-level guard rejects a new run while a same-source run is
 already ``RUNNING`` so two live fetches can't race. Per-endpoint consumer tier
@@ -156,7 +156,7 @@ def trigger_refresh(request):
     ever read. The button therefore did nothing observable. It now runs the local
     half of the pipeline, which is what "refresh analytics" always implied.
     """
-    _spawn("run_pipeline", skip_fetch=True)
+    _spawn("run_pipeline", skip_fetch=True, cadence="full")
     return _accepted("run_pipeline")
 
 

@@ -1,5 +1,5 @@
 import { type FormEvent, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth";
 import { ApiError } from "../../api/client";
 
@@ -14,8 +14,8 @@ export function Login() {
     e.preventDefault();
     setError("");
     try {
-      await login(email, password);
-      nav("/explore");
+      const me = await login(email, password);
+      nav(me.user.is_staff ? "/control" : "/explore");
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : "ورود ناموفق بود");
     }
@@ -36,11 +36,6 @@ export function Login() {
         {error && <p className="form-error">{error}</p>}
         <button type="submit" className="btn primary">ورود</button>
       </form>
-      <p className="muted">
-        حساب ندارید؟ <Link to="/register">ثبت‌نام</Link>
-        {" · "}
-        <Link to="/forgot-password">فراموشی رمز</Link>
-      </p>
     </div>
   );
 }

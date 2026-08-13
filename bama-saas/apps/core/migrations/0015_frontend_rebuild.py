@@ -25,4 +25,18 @@ class Migration(migrations.Migration):
             name='primary_image_url',
             field=models.URLField(blank=True, default='', max_length=500),
         ),
+        # Django drops column DEFAULTs after AddField; keep durable DB defaults so
+        # a mid-migration worker INSERT cannot NotNullViolation on these columns.
+        migrations.RunSQL(
+            sql=[
+                "ALTER TABLE catalog_ad ALTER COLUMN description SET DEFAULT ''",
+                "ALTER TABLE catalog_ad ALTER COLUMN primary_image_url SET DEFAULT ''",
+                "ALTER TABLE catalog_ad ALTER COLUMN image_urls SET DEFAULT '[]'::jsonb",
+            ],
+            reverse_sql=[
+                "ALTER TABLE catalog_ad ALTER COLUMN description DROP DEFAULT",
+                "ALTER TABLE catalog_ad ALTER COLUMN primary_image_url DROP DEFAULT",
+                "ALTER TABLE catalog_ad ALTER COLUMN image_urls DROP DEFAULT",
+            ],
+        ),
     ]

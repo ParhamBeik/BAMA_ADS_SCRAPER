@@ -15,20 +15,22 @@ type Ad = {
 };
 
 type Overview = {
-  data?: { active_ads?: number; brands?: number; models?: number };
+  active_listings?: number;
+  brands?: number;
+  models?: number;
 };
 
 export function Landing() {
   const brands = useQuery({
-    queryKey: ["landing-brands"],
+    queryKey: ["brands"],
     queryFn: ({ signal }) => api.get<Brand[]>("/api/brands/", signal),
   });
   const ads = useQuery({
-    queryKey: ["landing-ads"],
+    queryKey: ["ads", { page: 1 }],
     queryFn: ({ signal }) => api.get<Paginated<Ad>>("/api/ads/?page=1", signal),
   });
   const overview = useQuery({
-    queryKey: ["landing-overview"],
+    queryKey: ["overview"],
     queryFn: ({ signal }) => api.get<Overview>("/api/analytics/overview/", signal),
   });
 
@@ -42,9 +44,9 @@ export function Landing() {
           <button className="btn primary" type="submit">جستجو</button>
         </form>
         <div className="stat-row">
-          <span>{overview.data?.data?.active_ads?.toLocaleString("en-US") ?? "—"} آگهی</span>
-          <span>{overview.data?.data?.brands ?? "—"} برند</span>
-          <span>{overview.data?.data?.models ?? "—"} مدل</span>
+          <span>{overview.data?.active_listings?.toLocaleString("en-US") ?? "—"} آگهی</span>
+          <span>{overview.data?.brands ?? "—"} برند</span>
+          <span>{overview.data?.models ?? "—"} مدل</span>
         </div>
       </section>
 

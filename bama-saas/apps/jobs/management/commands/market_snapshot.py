@@ -48,7 +48,7 @@ class Command(BaseCommand):
 
         if date == today:
             active_count, prices, brands = self._from_live_ads()
-            new_count = Ad.objects.filter(first_seen_at__date=date).count()
+            new_count = verified(Ad.objects).filter(first_seen_at__date=date).count()
         else:
             # `Ad` is a *current*-snapshot table: its status column says what is
             # live now, not what was live on a past date. Reading it while
@@ -65,7 +65,7 @@ class Command(BaseCommand):
                 )
             new_count = 0  # not reconstructable per past day; see backfill_snapshots
 
-        removed_count = Ad.objects.filter(removed_at__date=date).count()
+        removed_count = verified(Ad.objects).filter(removed_at__date=date).count()
 
         snapshot, _ = MarketSnapshot.objects.update_or_create(
             date=date,
