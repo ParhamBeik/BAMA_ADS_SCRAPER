@@ -9,9 +9,9 @@
  *
  * Inspecting individual records is Django admin's job, not this page's.
  */
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
-import { Async, Card } from "../ui";
+import { Async, Card, Stat } from "../ui";
 
 type Check = { name: string; ok: boolean; detail: string };
 
@@ -54,12 +54,20 @@ function n(value: number | undefined) {
   return (value ?? 0).toLocaleString("en-US");
 }
 
+function bytes(value: number) {
+  if (value < 1_024) return `${value} B`;
+  if (value < 1_024 ** 2) return `${(value / 1_024).toFixed(1)} KB`;
+  if (value < 1_024 ** 3) return `${(value / 1_024 ** 2).toFixed(1)} MB`;
+  return `${(value / 1_024 ** 3).toFixed(1)} GB`;
+}
+
 function statusBadge(status: string) {
   const tone = status === "ok" ? "ok" : status === "failed" ? "fail" : "";
   return <span className={`badge ${tone}`}>{status}</span>;
 }
 
 export function Control() {
+  const client = useQueryClient();
   const health = useQuery({
     queryKey: ["admin-health"],
     queryFn: ({ signal }) => api.get<Health>("/api/admin/health/", signal),
@@ -70,12 +78,15 @@ export function Control() {
     queryFn: ({ signal }) => api.get<Jobs>("/api/admin/jobs/overview/", signal),
     refetchInterval: 15_000,
   });
-
-  async function trigger(path: string) {
-    if (!confirm("Run this job?")) return;
-    await api.post(path);
-    await jobs.refetch();
-  }
+  const trigger = useMutation({
+    mutationFn: (path: string) => api.post(path),
+    onSuccess: async () => {
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["jobs-overview"] }),
+        client.invalidateQueries({ queryKey: ["admin-health"] }),
+      ]);
+    },
+  });
 
   return (
     <div className="stack" dir="ltr">
@@ -83,6 +94,32 @@ export function Control() {
         Crawl checks from FetchRun / PageCoverage / IngestReject; counts from
         Postgres. Individual records live in <a href="/admin/">Django admin</a>.
       </p>
+
+      <Async query={health}>
+        {(data) => {
+          const failed = data.crawl.filter((check) => !check.ok);
+          return (
+            <div className="grid cols-3">
+              <Stat
+                label="Crawl health"
+                value={failed.length ? `${failed.length} failing` : "Healthy"}
+                tone={failed.length ? "warn" : "up"}
+                sub={`${data.crawl.length} checks`}
+              />
+              <Stat
+                label="Active listings"
+                value={n(data.catalog.active_ads)}
+                sub={`${n(data.catalog.removed_ads)} removed`}
+              />
+              <Stat
+                label="Database"
+                value={bytes(data.database.size_bytes)}
+                sub={`${n(data.database.connections)} connections`}
+              />
+            </div>
+          );
+        }}
+      </Async>
 
       <Card title="Crawl checks">
         <Async query={health}>
@@ -112,11 +149,28 @@ export function Control() {
       <Card title="Run a job">
         <div className="row">
           {TRIGGERS.map((t) => (
-            <button key={t.path} className="btn" onClick={() => trigger(t.path)}>
-              {t.label}
+            <button
+              key={t.path}
+              className="btn"
+              disabled={trigger.isPending}
+              onClick={() => {
+                if (confirm(`Run ${t.label}?`)) trigger.mutate(t.path);
+              }}
+            >
+              {trigger.isPending ? "starting…" : t.label}
             </button>
           ))}
         </div>
+        {trigger.isSuccess && (
+          <p className="stat-sub">
+            Job accepted. Its final status will appear below after the next refresh.
+          </p>
+        )}
+        {trigger.isError && (
+          <p className="warn">
+            {(trigger.error as Error).message || "The job could not be started."}
+          </p>
+        )}
       </Card>
 
       <Card title="Latest run per job">
@@ -182,7 +236,7 @@ export function Control() {
                   <tr><th>unconfirmed_brands</th><td>{n(data.catalog.unconfirmed_brands)}</td></tr>
                   <tr><th>unconfirmed_models</th><td>{n(data.catalog.unconfirmed_models)}</td></tr>
                   <tr><th>rejects_24h</th><td>{n(data.catalog.rejects_24h)}</td></tr>
-                  <tr><th>db_size_bytes</th><td>{n(data.database.size_bytes)}</td></tr>
+                  <tr><th>database size</th><td>{bytes(data.database.size_bytes)}</td></tr>
                   <tr><th>db_connections</th><td>{n(data.database.connections)}</td></tr>
                   <tr><th>migrations_applied</th><td>{n(data.database.migrations_applied)}</td></tr>
                 </tbody>

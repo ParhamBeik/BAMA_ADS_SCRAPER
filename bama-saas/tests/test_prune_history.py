@@ -59,8 +59,36 @@ def test_prune_history_deletes_old_rows_and_keeps_recent_and_sweep_coverage():
     assert result["observations"] == 1
     assert AdObservation.objects.count() == 1
     assert AdObservation.objects.get().fetch_run_id == keep_run.id
-    # old_run is one of the last two completed sweeps — its coverage is kept.
-    assert PageCoverage.objects.count() == 2
+    # 120-day-old coverage is past the retention window and proves nothing: the
+    # depth ratchet only looks back FEED_DEPTH_WINDOW_DAYS. Coverage used to be
+    # kept because its run had reached_end, a rule that no longer exists.
+    assert PageCoverage.objects.count() == 1
+    assert PageCoverage.objects.get().fetch_run_id == keep_run.id
     assert JobRun.objects.filter(started_at__lt=now - timedelta(days=1)).count() == 0
     assert Ad.objects.filter(code="p1").exists()
     assert AdVersion.objects.filter(ad=ad).exists()
+
+
+@pytest.mark.django_db
+def test_prune_never_deletes_coverage_inside_the_depth_window():
+    """Coverage is the proof the ceiling and removal rule stand on.
+
+    Pruning inside the ratchet window would lower the known feed depth, hiding
+    the tail below the ceiling and silently stalling removal detection — so a
+    short ``--days`` must not reach it.
+    """
+    now = timezone.now()
+    recent = now - timedelta(days=10)
+    run = FetchRun.objects.create(
+        source=FetchRun.Source.LIVE_FETCH,
+        status=FetchRun.Status.SUCCEEDED,
+        started_at=recent, finished_at=recent, mode=FetchRun.Mode.FULL,
+    )
+    PageCoverage.objects.create(
+        fetch_run=run, page_index=0, rank_lo=1, rank_hi=30,
+        ad_count=30, fetched_at=recent,
+    )
+
+    prune_history(days=1)
+
+    assert PageCoverage.objects.count() == 1

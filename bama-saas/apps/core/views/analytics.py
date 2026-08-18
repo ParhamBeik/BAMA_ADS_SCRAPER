@@ -17,6 +17,8 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
 from apps.core.models import DealScoreCache, MarketIndex
+from apps.core.services.fair_price import _TIERS
+from apps.core.services.listing_kind import condition_discounted
 from apps.core.services.index import read_index
 from apps.core.services.quality import verified_by_ad
 from apps.core.views.research import envelope
@@ -57,18 +59,30 @@ def _clamp_limit(params, default, lo, hi):
 # Deal scores (DealScoreCache joined to Ad)
 # ---------------------------------------------------------------------------
 
+# Confidence label -> the peer-count range that produces it, derived from
+# fair_price's own tiers rather than restated, so raising MIN_PEERS or retuning a
+# tier cannot leave this filter selecting a band the badge no longer means.
+_CONFIDENCE_PEERS = {
+    label: (threshold, _TIERS[i - 1][0] if i else None)
+    for i, (threshold, label) in enumerate(_TIERS)
+}
+
+
 def _deal_score_qs():
     # Gated on the read side as well as at build time. The cache is rebuilt
     # periodically, so between an ad going bad and the next rebuild its stale
     # score is still served — and a deal score is the single most acted-upon
     # number on the site.
     return (
-        verified_by_ad(DealScoreCache.objects.select_related("ad"))
+        verified_by_ad(DealScoreCache.objects.select_related("ad", "ad__city"))
         .annotate(
             model_name=F("ad__model__name_fa"),
             brand_name=F("ad__brand__name_fa"),
         )
-        .order_by("-score")
+        # Tie-break on ad_id. Hundreds of rows share a score to one decimal, and
+        # an unstable sort under LIMIT/OFFSET drops and repeats listings as the
+        # reader pages through.
+        .order_by("-score", "ad_id")
     )
 
 
@@ -83,12 +97,24 @@ def _deal_score_row(obj):
         "confidence": components.get("confidence"),
         "age_days": components.get("age_days"),
         "price": obj.ad.current_price,
+        # year_jalali, never Ad.year: the raw column mixes 1399 and 2025 in one
+        # field (see apps/core/filters.py) and rendering it produced a column
+        # with both calendars in it.
         "year": obj.ad.year_jalali,
         "mileage": obj.ad.mileage,
         "url": obj.ad.url,
         "title": obj.ad.title,
         "model_name": getattr(obj, "model_name", None),
         "brand_name": getattr(obj, "brand_name", None),
+        "primary_image_url": obj.ad.primary_image_url,
+        "city_name": obj.ad.city.name_fa if obj.ad.city_id else "",
+        # The listing's own explanation for being cheap. Not a reason to hide it
+        # — a تصادفی car is really for sale at really that price — but the cohort
+        # key has no condition dimension, so without this the gap looks like free
+        # money instead of accident damage.
+        "condition_flagged": condition_discounted(
+            title=obj.ad.title, description=obj.ad.description
+        ),
         "components": components,
     }
 
@@ -102,18 +128,38 @@ def _deal_score_row(obj):
         OpenApiParameter("brand", str, OpenApiParameter.QUERY, required=False),
         OpenApiParameter("year", int, OpenApiParameter.QUERY, required=False),
         OpenApiParameter("min_score", float, OpenApiParameter.QUERY, required=False),
+        OpenApiParameter("max_score", float, OpenApiParameter.QUERY, required=False,
+                         description=(
+                             "Upper bound on discount %. The UI defaults to 30 — "
+                             "above that the gap is dominated by attributes the "
+                             "cohort cannot see (damage, pre-sale, bait)."
+                         )),
+        OpenApiParameter("confidence", str, OpenApiParameter.QUERY, required=False,
+                         enum=["high", "medium", "low"]),
+        OpenApiParameter("price_min", int, OpenApiParameter.QUERY, required=False),
+        OpenApiParameter("price_max", int, OpenApiParameter.QUERY, required=False),
         OpenApiParameter("limit", int, OpenApiParameter.QUERY, required=False),
+        OpenApiParameter("offset", int, OpenApiParameter.QUERY, required=False),
     ],
 )
 @api_view(["GET"])
 def deal_scores(request):
-    """Top deal scores, joined to ad. Filters: model/brand/year/min_score/limit."""
+    """Deal scores, joined to ad. Filtered, ordered by discount, paginated.
+
+    Returns ``count`` alongside ``results`` so the board can page: the cache
+    holds ~9,800 rows and the screen used to show a hard-coded top 50 with no
+    way forward, which put every genuine 5–20% deal out of reach.
+    """
     params = request.query_params
     try:
         model = _opt_int(params, "model")
         year = _opt_int(params, "year")
         min_score = _opt_float(params, "min_score")
+        max_score = _opt_float(params, "max_score")
+        price_min = _opt_int(params, "price_min")
+        price_max = _opt_int(params, "price_max")
         limit = _clamp_limit(params, default=50, lo=1, hi=200)
+        offset = max(0, _opt_int(params, "offset") or 0)
     except ValueError as exc:
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -127,8 +173,30 @@ def deal_scores(request):
         qs = qs.filter(ad__year_jalali=year)
     if min_score is not None:
         qs = qs.filter(score__gte=min_score)
-    qs = qs[:limit]
-    return envelope({"results": [_deal_score_row(o) for o in qs]})
+    if max_score is not None:
+        qs = qs.filter(score__lte=max_score)
+    if price_min is not None:
+        qs = qs.filter(ad__current_price__gte=price_min)
+    if price_max is not None:
+        qs = qs.filter(ad__current_price__lte=price_max)
+    # peer_count and confidence live in the components JSON. Filtering
+    # confidence by its peer-count threshold instead keeps it in SQL, and the
+    # thresholds are fair_price's own so the two cannot drift.
+    confidence = params.get("confidence")
+    if confidence in _CONFIDENCE_PEERS:
+        lo, hi = _CONFIDENCE_PEERS[confidence]
+        qs = qs.filter(components__peer_count__gte=lo)
+        if hi is not None:
+            qs = qs.filter(components__peer_count__lt=hi)
+
+    count = qs.count()
+    rows = qs[offset:offset + limit]
+    return envelope({
+        "count": count,
+        "limit": limit,
+        "offset": offset,
+        "results": [_deal_score_row(o) for o in rows],
+    })
 
 
 @extend_schema(

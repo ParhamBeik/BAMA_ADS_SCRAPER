@@ -149,29 +149,79 @@ class MarketIndex(models.Model):
         return f"{self.scope}:{self.scope_id or '*'}@{self.date} = {self.index_value:.2f}"
 
 
-class MarketSnapshot(models.Model):
-    """One row per date — the whole-market daily rollup.
+class NotifierSettings(models.Model):
+    """The one row that decides which deals are worth interrupting you for.
 
-    Where ``DailyInventorySnapshot`` slices per (model, variant, year), this is
-    the single global inventory + price-distribution series that powers the
-    market-overview chart (total stock, new/removed today, overall median).
-    Refreshed daily (idempotently) by the ``market_snapshot`` command.
+    A singleton, not a per-user rule table. This is a single-operator tool, and
+    the last generation of this app carried Alert/Subscription/Notification
+    models plus throttles and a digest scheduler to serve four users, one saved
+    favourite and one alert. One row, edited from the deal board, does the job.
+
+    The thresholds are deliberately conservative by default: a notifier that
+    fires on marginal deals gets muted, and a muted notifier is worth nothing.
     """
 
-    date = models.DateField(unique=True)
-    active_count = models.IntegerField(default=0)
-    new_count = models.IntegerField(default=0)      # ads first seen on `date`
-    removed_count = models.IntegerField(default=0)  # ads removed on `date`
-    median_price = models.BigIntegerField(null=True, blank=True)
-    mean_price = models.BigIntegerField(null=True, blank=True)
-    min_price = models.BigIntegerField(null=True, blank=True)
-    max_price = models.BigIntegerField(null=True, blank=True)
-    brand_breakdown = models.JSONField(default=dict, blank=True)
-    calculated_at = models.DateTimeField(auto_now=True)
+    # Enforced by ``load()``; a singleton with a stable pk is far simpler than
+    # a settings table nobody can find the current row of.
+    SINGLETON_PK = 1
+
+    id = models.PositiveSmallIntegerField(primary_key=True, default=SINGLETON_PK)
+    enabled = models.BooleanField(default=False)
+
+    # A deal must beat its cohort's fair value by this much.
+    min_discount_pct = models.FloatField(default=20.0)
+    # ...and the cohort must be big enough for that median to mean something.
+    # Above fair_price.MIN_PEERS (8), because a ping is an interruption.
+    min_peers = models.PositiveIntegerField(default=15)
+
+    # Optional scope. Empty = the whole market.
+    price_min = models.BigIntegerField(null=True, blank=True)
+    price_max = models.BigIntegerField(null=True, blank=True)
+    model_ids = models.JSONField(default=list, blank=True)
+
+    telegram_chat_id = models.CharField(max_length=64, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = "analytics_marketsnapshot"
-        ordering = ("-date",)
+        db_table = "analytics_notifiersettings"
+        verbose_name_plural = "notifier settings"
 
     def __str__(self) -> str:
-        return f"{self.date} ({self.active_count} active)"
+        state = "on" if self.enabled else "off"
+        return f"notifier {state} (>={self.min_discount_pct}%, >={self.min_peers} peers)"
+
+    def save(self, *args, **kwargs):
+        self.pk = self.SINGLETON_PK
+        # Django force-inserts any unsaved instance whose pk has a default, so
+        # constructing one directly would collide with row 1 rather than update
+        # it. Clearing `adding` selects the update-then-insert path, which is
+        # correct whether or not the row exists yet.
+        self._state.adding = False
+        return super().save(*args, **kwargs)
+
+    @classmethod
+    def load(cls) -> "NotifierSettings":
+        return cls.objects.get_or_create(pk=cls.SINGLETON_PK)[0]
+
+
+class NotifiedAd(models.Model):
+    """One row per listing already sent, so nothing is announced twice.
+
+    Deliberately keyed on the ad rather than on (ad, run): a car that qualifies
+    on twenty consecutive ticks is one piece of news, not twenty. Kept when the
+    deal-score cache is rebuilt — that table is dropped and recreated wholesale
+    every refresh, so it can never be the memory of what was sent.
+    """
+
+    ad = models.OneToOneField(
+        "core.Ad", on_delete=models.CASCADE, related_name="notified"
+    )
+    sent_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    discount_pct = models.FloatField(null=True, blank=True)
+
+    class Meta:
+        db_table = "analytics_notifiedad"
+        ordering = ("-sent_at",)
+
+    def __str__(self) -> str:
+        return f"{self.ad_id} notified {self.sent_at:%Y-%m-%d %H:%M}"

@@ -50,7 +50,7 @@ def test_clean_payload_has_no_rejections():
 
 
 def test_every_rule_is_registered():
-    assert len(V.RULES) == 14
+    assert len(V.RULES) == 13
 
 
 def test_hard_flag_agrees_with_hard_rule_ids():
@@ -140,15 +140,14 @@ def test_price_too_low_is_hard():
     assert "price_too_low" in V.HARD_RULE_IDS
 
 
-def test_price_too_high_is_hard():
-    """Above 20bn toman is a typo or unit switch, not a supercar, so HARD."""
+def test_high_price_is_not_quarantined_globally():
+    """Only model-relative outlier detection may reject a high asking price."""
     payload = clean_payload()
-    payload["price"]["price"] = "21,000,000,000"
+    payload["price"]["price"] = "5,800,000,000,000"
     extracted = extract_ad(payload, OBSERVED_AT)
     rejections = V.verify_extracted(extracted, payload)
-    assert "price_too_high" in [r.rule for r in rejections]
-    assert next(r for r in rejections if r.rule == "price_too_high").hard is True
-    assert "price_too_high" in V.HARD_RULE_IDS
+    assert "price_too_high" not in [r.rule for r in rejections]
+    assert "price_too_high" not in V.HARD_RULE_IDS
 
 
 def test_year_unknown():

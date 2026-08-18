@@ -28,6 +28,7 @@ Feed facts this module encodes (verified against the live API):
 
 from __future__ import annotations
 
+import logging
 import math
 import random
 import signal
@@ -43,9 +44,12 @@ from django.db import transaction
 from django.utils import timezone as djtz
 
 from apps.core.models import FetchRun, PageCoverage
+from apps.jobs.services import crawl_gate
 from apps.jobs.services.dimensions import reset_cache
-from apps.jobs.services.ingest import ingest_ad
+from apps.jobs.services.ingest import ingest_ad, reset_price_cache
 from apps.parsing import extract_ad, parse_publish_time
+
+logger = logging.getLogger("bama.worker")
 
 # Constants and headers matching what bama.ir's own frontend sends.
 SEARCH_URL = "https://bama.ir/cad/api/search"
@@ -71,9 +75,16 @@ PAGE_SIZE = 30
 FIRST_PAGE = 0
 
 # Adaptive backoff on 429 / 5xx.
-MAX_RETRIES = 3
+#
+# Measured over 39 days: 55 runs died on a 503 and 54 on connection-retry
+# exhaustion. At 3 retries capped at 30s a page gave up after roughly a minute
+# of degradation, which is shorter than bama.ir's outages actually last, so a
+# transient wobble killed a whole sweep. Five retries capped at 120s rides out
+# the common case; anything longer is better handled by ending the run and
+# letting crawl_gaps refetch the missed ranks on the next tick.
+MAX_RETRIES = 5
 BACKOFF_BASE = 1.0
-BACKOFF_CAP = 30.0
+BACKOFF_CAP = 120.0
 
 # Jitter as a fraction of the computed delay. Without it every retry after a
 # shared outage fires at the same instant, which is how a struggling server gets
@@ -120,9 +131,13 @@ def create_session(cookie: str | None = None) -> requests.Session:
 def warmup(session: requests.Session, request_timeout: int) -> None:
     """Prime cookies before the first API call; ignore network errors."""
     try:
-        session.get(WARMUP_URL, timeout=request_timeout)
-    except requests.RequestException:
-        pass
+        response = session.get(WARMUP_URL, timeout=request_timeout)
+        logger.info(
+            "event=bama_warmup status=%s",
+            getattr(response, "status_code", "unknown"),
+        )
+    except requests.RequestException as exc:
+        logger.warning("event=bama_warmup_failed error=%s", exc)
 
 
 def fetch_page(
@@ -132,7 +147,16 @@ def fetch_page(
     response = session.get(
         f"{SEARCH_URL}?pageIndex={page}", timeout=request_timeout
     )
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        logger.warning(
+            "event=bama_http_error page=%d status=%s retryable=%s",
+            page,
+            getattr(response, "status_code", "unknown"),
+            _retryable(exc),
+        )
+        raise
     ads = response.json().get("data", {}).get("ads", [])
     return [ad for ad in ads if isinstance(ad, dict) and ad.get("type") != "banner"]
 
@@ -199,8 +223,25 @@ def fetch_page_with_backoff(
             return fetch_page(session, page, request_timeout)
         except Exception as exc:  # noqa: BLE001
             if attempt >= MAX_RETRIES or not _retryable(exc):
+                logger.warning(
+                    "event=bama_fetch_failed page=%d attempt=%d status=%s "
+                    "retryable=%s error=%s",
+                    page,
+                    attempt + 1,
+                    getattr(getattr(exc, "response", None), "status_code", "n/a"),
+                    _retryable(exc),
+                    exc,
+                )
                 raise
-            time.sleep(_backoff_delay(exc, delay))
+            sleep_for = _backoff_delay(exc, delay)
+            logger.warning(
+                "event=bama_fetch_retry page=%d attempt=%d delay_s=%.1f error=%s",
+                page,
+                attempt + 1,
+                sleep_for,
+                exc,
+            )
+            time.sleep(sleep_for)
             delay = min(delay * 2, BACKOFF_CAP)
     raise AssertionError("unreachable")  # pragma: no cover
 
@@ -377,7 +418,14 @@ def fetch_live(**kwargs) -> FetchRun:
 
     A thin wrapper purely so the signal handler brackets the whole run without
     adding an indentation level to the page loop below.
+
+    The gate is checked *here* rather than in each caller, because both the
+    pipeline's delta fetch and ``crawl_gaps``'s coverage chunks reach the network
+    through this one function — and during the 2026-08-16 block they each kept
+    probing on their own schedule, unaware of the other. Raises
+    :class:`crawl_gate.CrawlBlocked`, which callers treat as a skip.
     """
+    crawl_gate.check()
     with _checkpoint_on_sigterm():
         return _fetch_live(**kwargs)
 
@@ -415,6 +463,11 @@ def _fetch_live(
         raise ValueError(f"unknown fetch mode {mode!r}")
     if mode == FetchRun.Mode.BACKFILL and start_page is None:
         raise ValueError("backfill mode requires start_page")
+
+    # Both ingest caches are module-global, so they outlive a run. Anything they
+    # hold from a previous run in this process refers to rows a rollback may
+    # have discarded; start every run from a cold cache.
+    reset_price_cache()
 
     max_ads = int(max_ads if max_ads is not None else settings.BAMA_MAX_ADS)
     page_pause = float(
@@ -462,6 +515,17 @@ def _fetch_live(
         mode=mode,
         start_page=start_page,
     )
+    started = time.monotonic()
+    logger.info(
+        "event=bama_fetch_started run_id=%s mode=%s start_page=%d end_page=%s "
+        "max_ads=%d cookie_configured=%s",
+        run.pk,
+        mode,
+        start_page,
+        end_page,
+        max_ads,
+        bool(settings.BAMA_COOKIE),
+    )
 
     reset_cache()
     affected_model_ids: set[int] = set()
@@ -508,8 +572,10 @@ def _fetch_live(
 
                 resume_page = page
                 page_new = 0
+                page_updated = 0
                 page_changed = 0
                 page_content_changed = 0
+                page_skipped_before = run.skipped_count
                 ranks: list[int] = []
 
                 # One page, one transaction. A crash between the last ad and the
@@ -548,6 +614,7 @@ def _fetch_live(
                             page_new += 1
                         else:
                             run.updated_count += 1
+                            page_updated += 1
                         if result.price_changed:
                             run.price_change_count += 1
                             page_changed += 1
@@ -575,6 +642,18 @@ def _fetch_live(
                         fetched_at=djtz.now(),
                     )
                 resume_page = page + 1
+                logger.info(
+                    "event=bama_fetch_page run_id=%s page=%d ads=%d created=%d "
+                    "updated=%d price_changes=%d content_changes=%d rejected=%d",
+                    run.pk,
+                    page,
+                    len(rows),
+                    page_new,
+                    page_updated,
+                    page_changed,
+                    page_content_changed,
+                    run.skipped_count - page_skipped_before,
+                )
 
                 if mode == FetchRun.Mode.DELTA:
                     # Stale = the page carried nothing new at all. Content counts:
@@ -621,10 +700,27 @@ def _fetch_live(
     except Exception as exc:  # noqa: BLE001
         run.status = FetchRun.Status.FAILED
         run.error = str(exc)[:4000]
-        run.stop_reason = FetchRun.StopReason.ERROR
+        # BLOCKED, not ERROR, when the CDN refused us: `crawl_gate` reads this
+        # field to decide the cooldown, and a 403 recorded as a generic error is
+        # indistinguishable from a parser bug that should be retried at once.
+        run.stop_reason = (
+            FetchRun.StopReason.BLOCKED
+            if crawl_gate.is_waf_block(exc)
+            else FetchRun.StopReason.ERROR
+        )
         run.resume_from_page = resume_page
         run.finished_at = djtz.now()
         run.save()
+        logger.error(
+            "event=bama_fetch_failed run_id=%s mode=%s page=%d error_type=%s "
+            "error=%s duration_s=%.1f",
+            run.pk,
+            mode,
+            resume_page,
+            type(exc).__name__,
+            exc,
+            time.monotonic() - started,
+        )
         reset_cache()
         raise
     finally:
@@ -633,4 +729,20 @@ def _fetch_live(
         reset_cache()
 
     run.affected_model_ids = affected_model_ids  # type: ignore[attr-defined]
+    logger.info(
+        "event=bama_fetch_complete run_id=%s mode=%s status=%s stop_reason=%s "
+        "pages=%d fetched=%d created=%d updated=%d rejected=%d price_changes=%d "
+        "duration_s=%.1f",
+        run.pk,
+        mode,
+        run.status,
+        run.stop_reason,
+        run.pages_fetched,
+        run.fetched_count,
+        run.created_count,
+        run.updated_count,
+        run.skipped_count,
+        run.price_change_count,
+        time.monotonic() - started,
+    )
     return run

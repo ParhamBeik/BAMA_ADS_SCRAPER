@@ -48,10 +48,10 @@ function windowLabel(w: MarketIndex["window"]): string {
   const span =
     w.first_date && w.last_date
       ? `${w.first_date} → ${w.last_date}`
-      : "no dates yet";
-  const asked = `${w.days} of ${w.requested_days} days`;
+      : "هنوز تاریخی ثبت نشده";
+  const asked = `${w.days} روز از ${w.requested_days} روز درخواستی`;
   return w.clamped
-    ? `${span} · ${asked} (history is shorter than requested)`
+    ? `${span} · ${asked} (تاریخچه کوتاه‌تر از بازهٔ درخواستی است)`
     : `${span} · ${asked}`;
 }
 
@@ -72,28 +72,36 @@ export function Overview() {
       <Async query={overview}>
         {(data) => (
           <>
-            <div className="grid cols-4">
+            {/* Three tiles, not four. The fourth repeated `priced_listings`,
+                which is already the subtitle of the first. */}
+            <div className="grid cols-3">
               <Stat
                 label="آگهی فعال"
                 value={data.active_listings.toLocaleString("en-US")}
                 sub={`${data.priced_listings.toLocaleString("en-US")} با قیمت`}
               />
-              <Stat label="برند" value={data.brands} />
-              <Stat label="مدل" value={data.models} />
-              <Stat
-                label="با قیمت"
-                value={data.priced_listings.toLocaleString("en-US")}
-                sub="از آگهی‌های فعال"
-              />
+              <Stat label="برند" value={data.brands.toLocaleString("en-US")} />
+              <Stat label="مدل" value={data.models.toLocaleString("en-US")} />
             </div>
             <Card title="بزرگ‌ترین برندها">
-              <Table head={["برند", "آگهی"]}>
+              {/* A bar next to each count. The share is the question being asked
+                  of this table, and a column of numbers makes the reader do the
+                  division. */}
+              <Table head={["برند", "آگهی", "سهم"]}>
                 {data.top_brands.map((b) => (
                   <tr key={b.brand__name_fa}>
                     <td>
                       <Fa>{b.brand__name_fa}</Fa>
                     </td>
                     <td className="num">{b.n.toLocaleString("en-US")}</td>
+                    <td style={{ width: "45%" }}>
+                      <span
+                        className="bar"
+                        style={{
+                          width: `${(b.n / data.top_brands[0].n) * 100}%`,
+                        }}
+                      />
+                    </td>
                   </tr>
                 ))}
               </Table>
@@ -108,12 +116,23 @@ export function Overview() {
           هر گروه فقط با خودش مقایسه می‌شود تا تغییر ترکیب آگهی‌ها شبیه تغییر
           قیمت به نظر نرسد.
         </p>
-        <Async query={index} empty="هنوز تاریخچهٔ شاخصی نیست.">
+        <Async query={index} empty="هنوز تاریخچهٔ شاخصی نیست." shape="chart">
           {(data) => {
             const points = data.series ?? [];
+            const last = points[points.length - 1];
             return (
               <>
                 <p className="stat-sub">بازهٔ واقعی: {windowLabel(data.window)}</p>
+                {/* The index's own sample size. The Provenance strip below
+                    reports the *sweep's* coverage (~33k ads), which is a much
+                    larger and unrelated number — sitting next to the index it
+                    read as if the index were built on all of it. */}
+                {last && (
+                  <p className="stat-sub">
+                    ساخته‌شده از {last.cohort_count.toLocaleString("en-US")} گروه و{" "}
+                    {last.ad_count.toLocaleString("en-US")} آگهی در آخرین روز
+                  </p>
+                )}
                 <div className="grid cols-2" style={{ marginBottom: 10 }}>
                   <Stat
                     label="شاخص"
@@ -140,7 +159,7 @@ export function Overview() {
                       x={points.map((p) => p.date)}
                       series={[
                         {
-                          name: "Index",
+                          name: "شاخص",
                           data: points.map((p) => p.index_value),
                           area: true,
                         },

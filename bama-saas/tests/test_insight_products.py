@@ -22,6 +22,18 @@ from apps.core.services import retention as R
 NOW = datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc)
 
 
+@pytest.fixture(autouse=True)
+def _episodes_are_trustworthy(settings):
+    """Pin the clean-start cutoff behind these fixtures' episode dates.
+
+    Survival only counts episodes started after removal detection became
+    reliable (``BAMA_EPISODE_CLEAN_START``). These tests are about the
+    Kaplan-Meier arithmetic, not that cutoff, so they opt out of it — the cutoff
+    itself is covered by ``test_survival_excludes_episodes_from_the_dirty_era``.
+    """
+    settings.BAMA_EPISODE_CLEAN_START = "2000-01-01"
+
+
 @pytest.fixture
 def catalog(db):
     brand = Brand.objects.create(slug="peugeot", name_fa="پژو", is_confirmed=True)
@@ -230,3 +242,32 @@ def test_a_thin_year_is_dropped_not_guessed(catalog):
     curve = R.depreciation_curve(catalog["model"].pk)
 
     assert curve["available"] is False, "one year with data is not a curve"
+
+
+@pytest.mark.django_db
+def test_survival_excludes_episodes_from_the_dirty_era(catalog, settings):
+    """Episodes predating reliable removal detection are not evidence.
+
+    Their end dates record when a sweep happened to finish, not when the car
+    left the feed: endings landed on 17 of 39 days in lumps of up to 6,873, and
+    every cohort of every model then returned a median of exactly 21.02 days.
+    Excluded rather than deleted — they stay for provenance.
+    """
+    settings.BAMA_EPISODE_CLEAN_START = "2026-08-01"
+
+    # Plenty of episodes, all from before the cutoff.
+    for i in range(40):
+        ad = make_ad(catalog, f"dirty{i:03d}", status=Ad.Status.REMOVED)
+        make_episode(
+            ad,
+            started=datetime(2026, 7, 1, tzinfo=timezone.utc),
+            ended=datetime(2026, 7, 22, tzinfo=timezone.utc),
+        )
+
+    result = L.survival(model_id=catalog["model"].pk)
+
+    assert result["available"] is False
+    assert result["reason"] == "insufficient_clean_history"
+    assert result["n"] == 0
+    assert result["excluded_episodes"] == 40
+    assert result["clean_start"] == "2026-08-01"

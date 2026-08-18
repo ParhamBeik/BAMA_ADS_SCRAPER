@@ -16,7 +16,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import type { Envelope, Paginated } from "../api/client";
 import { Chart } from "../Chart";
-import { Async, Card, Provenance, Table } from "../ui";
+import { Async, Card, Provenance, Table, toman } from "../ui";
 
 /** Shape of /api/markets/ — one row per model that actually has listings. */
 interface ModelRow {
@@ -42,6 +42,40 @@ interface Retention extends Envelope {
   retained_over_span_pct: number;
   avg_annual_decline_pct: number | null;
   points: { year_jalali: number; n: number; median_price: number; pct_of_newest: number }[];
+}
+
+function ModelPicker({
+  models,
+  value,
+  onChange,
+}: {
+  models: ModelRow[];
+  value?: string;
+  onChange: (id: string) => void;
+}) {
+  const brands = new Map<string, ModelRow[]>();
+  for (const model of models) {
+    brands.set(model.brand_name, [...(brands.get(model.brand_name) ?? []), model]);
+  }
+
+  return (
+    <select
+      value={value ?? ""}
+      onChange={(e) => e.target.value && onChange(e.target.value)}
+      aria-label="مدل خودرو"
+    >
+      {!value && <option value="">انتخاب مدل…</option>}
+      {[...brands].map(([brand, rows]) => (
+        <optgroup key={brand} label={brand}>
+          {rows.map((model) => (
+            <option key={model.model_id} value={model.model_id}>
+              {model.model_name} ({model.ad_count.toLocaleString("en-US")} آگهی)
+            </option>
+          ))}
+        </optgroup>
+      ))}
+    </select>
+  );
 }
 
 export function Research() {
@@ -72,22 +106,12 @@ export function Research() {
 
   if (!modelId) {
     return (
-      <Card title="Pick a model to research">
+      <Card title="تحقیق مدل">
         {modelList.length === 0 ? (
-          <div className="state">No models available.</div>
+          <div className="state">هنوز مدلی برای بررسی در دسترس نیست.</div>
         ) : (
           <div className="filters">
-            <select
-              defaultValue=""
-              onChange={(e) => e.target.value && navigate(`/research/${e.target.value}`)}
-            >
-              <option value="">Choose…</option>
-              {modelList.map((m) => (
-                <option key={m.model_id} value={m.model_id}>
-                  {m.brand_name} {m.model_name} ({m.ad_count} listings)
-                </option>
-              ))}
-            </select>
+            <ModelPicker models={modelList} onChange={(id) => navigate(`/research/${id}`)} />
           </div>
         )}
       </Card>
@@ -95,31 +119,25 @@ export function Research() {
   }
 
   return (
-    <>
+    <div className="stack" dir="rtl">
       <div className="filters">
-        <select
+        <ModelPicker
+          models={modelList}
           value={modelId}
-          onChange={(e) => navigate(`/research/${e.target.value}`)}
-          aria-label="Model"
-        >
-          {modelList.map((m) => (
-            <option key={m.model_id} value={m.model_id}>
-              {m.brand_name} {m.model_name} ({m.ad_count})
-            </option>
-          ))}
-        </select>
-        <button onClick={() => navigate("/research")}>Change model</button>
+          onChange={(id) => navigate(`/research/${id}`)}
+        />
+        <button onClick={() => navigate("/research")}>تغییر مدل</button>
       </div>
 
-      <Card title="How long listings last">
-        <Async query={survival}>
+      <Card title="مدت ماندن آگهی در بازار">
+        <Async query={survival} shape="chart">
           {(data) => (
             <>
               <Chart
                 x={data.curve.map((p) => p.day)}
                 series={[
                   {
-                    name: "Still listed",
+                    name: "هنوز فعال",
                     data: data.curve.map((p) => Math.round(p.still_listed * 1000) / 10),
                     area: true,
                   },
@@ -129,22 +147,25 @@ export function Research() {
               />
               <div className="grid cols-2" style={{ marginTop: 10 }}>
                 <div>
-                  <div className="card-title">Median (censored)</div>
+                  <div className="card-title">میانه با احتساب آگهی‌های باز</div>
                   <div className="stat">
-                    {data.median_days != null ? `${data.median_days.toFixed(0)}d` : "—"}
+                    {data.median_days != null ? `${data.median_days.toFixed(0)} روز` : "—"}
                   </div>
-                  <div className="stat-sub">across {data.n} listings</div>
+                  <div className="stat-sub">
+                    از {data.n.toLocaleString("en-US")} آگهی
+                  </div>
                 </div>
                 <div>
-                  <div className="card-title">Naive average</div>
+                  <div className="card-title">میانگین ساده</div>
                   <div className="stat warn">
                     {data.naive_mean_days_finished_only != null
-                      ? `${data.naive_mean_days_finished_only.toFixed(0)}d`
+                      ? `${data.naive_mean_days_finished_only.toFixed(0)} روز`
                       : "—"}
                   </div>
                   <div className="stat-sub">
-                    counts only the {data.delisted} that finished, ignoring{" "}
-                    {data.censored} still listed
+                    فقط {data.delisted.toLocaleString("en-US")} آگهیِ تمام‌شده را
+                    می‌شمارد و {data.censored.toLocaleString("en-US")} آگهی باز را
+                    نادیده می‌گیرد
                   </div>
                 </div>
               </div>
@@ -154,17 +175,15 @@ export function Research() {
         </Async>
       </Card>
 
-      <div style={{ height: 14 }} />
-
-      <Card title="Value by model year">
-        <Async query={retention}>
+      <Card title="ارزش بر پایهٔ سال مدل">
+        <Async query={retention} shape="chart">
           {(data) => (
             <>
               <Chart
                 x={data.points.map((p) => p.year_jalali)}
                 series={[
                   {
-                    name: "% of newest year",
+                    name: "درصد ارزش سال جدیدتر",
                     data: data.points.map((p) => p.pct_of_newest),
                     area: true,
                   },
@@ -172,28 +191,29 @@ export function Research() {
                 yFormatter={(v) => `${v}%`}
                 height={220}
               />
-              <Table head={["Model year", "Listings", "Median price", "% of newest"]}>
+              <Table head={["سال مدل", "آگهی‌ها", "میانهٔ قیمت", "درصد سال جدیدتر"]}>
                 {data.points.map((p) => (
                   <tr key={p.year_jalali}>
                     <td>{p.year_jalali}</td>
-                    <td className="num">{p.n}</td>
-                    <td className="num">{p.median_price.toLocaleString("en-US")}</td>
+                    <td className="num">{p.n.toLocaleString("en-US")}</td>
+                    <td className="num">{toman(p.median_price)}</td>
                     <td className="num">{p.pct_of_newest}%</td>
                   </tr>
                 ))}
               </Table>
               <p className="stat-sub">
-                Retained {data.retained_over_span_pct}% across {data.span_years} years
+                در {data.span_years.toLocaleString("en-US")} سال،{" "}
+                {data.retained_over_span_pct}% ارزش حفظ شده است
                 {data.avg_annual_decline_pct != null &&
-                  ` (~${data.avg_annual_decline_pct}% a year)`}
-                . Measured against {data.reference_year}, the newest year with enough
-                listings — not against an original sale price, which is never observed.
+                  ` (حدود ${data.avg_annual_decline_pct}% در سال)`}
+                . مبنا، سال {data.reference_year} است: جدیدترین سالی که آگهی کافی
+                دارد، نه قیمت کارخانه‌ای که در داده‌ها وجود ندارد.
               </p>
               <Provenance envelope={data} />
             </>
           )}
         </Async>
       </Card>
-    </>
+    </div>
   );
 }

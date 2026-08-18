@@ -27,11 +27,11 @@ from django.db.models import Count, Sum
 from django.utils import timezone
 
 from apps.core.models import FetchRun, IngestReject
-from apps.jobs.services.coverage import find_gaps, known_feed_depth
-
-# A sweep runs every 6 h (see deploy/worker). Two missed cycles is a problem,
-# not a blip — one late sweep can be a slow feed or a restart.
-SWEEP_MAX_AGE_HOURS = 13.0
+from apps.jobs.services.coverage import (
+    COVERAGE_WINDOW_HOURS,
+    find_gaps,
+    known_feed_depth,
+)
 
 # Window for "recent" run failures and reject-rate comparison.
 RECENT_HOURS = 24.0
@@ -54,43 +54,54 @@ class Check:
 
 
 def check_sweep_freshness(now=None) -> Check:
-    """A completed sweep is the only proof of full-feed coverage."""
+    """Was the whole feed covered in the last window?
+
+    This used to ask "did a single run set ``reached_end`` recently". Coverage
+    now accumulates across runs, so a feed can be fully covered by a handful of
+    partial sweeps and no run sets that flag at all — the old check would have
+    reported permanent failure while the crawler was working correctly.
+    """
     now = now or timezone.now()
-    last = (
-        FetchRun.objects.filter(reached_end=True, status=FetchRun.Status.SUCCEEDED)
-        .order_by("-started_at")
-        .values_list("started_at", "deepest_rank")
-        .first()
-    )
-    if last is None:
+    window_start = now - timedelta(hours=COVERAGE_WINDOW_HOURS)
+    depth = known_feed_depth()
+    if not depth:
         return Check(
             "sweep_freshness", False,
-            "No sweep has ever reached the end of the feed. Nothing can be "
-            "proven about coverage, and ad removal detection stays disabled.",
+            "No pages fetched in the depth window, so feed depth is unknown. "
+            "Nothing can be proven about coverage and removal detection stays "
+            "disabled.",
         )
-    started_at, deepest = last
-    age_h = (now - started_at).total_seconds() / 3600.0
-    ok = age_h <= SWEEP_MAX_AGE_HOURS
+    gaps = find_gaps(since=window_start, max_rank=depth)
+    missing = sum(hi - lo + 1 for lo, hi in gaps)
+    ok = not gaps
+    detail = (
+        f"Feed fully covered in the last {COVERAGE_WINDOW_HOURS:.0f}h "
+        f"(ceiling {depth})."
+        if ok else
+        f"{len(gaps)} uncovered rank range(s) (~{missing} ad slots) in the last "
+        f"{COVERAGE_WINDOW_HOURS:.0f}h; removal detection is paused until closed."
+    )
     return Check(
-        "sweep_freshness", ok,
-        f"Last completed sweep {age_h:.1f}h ago (limit {SWEEP_MAX_AGE_HOURS}h), "
-        f"deepest rank {deepest}.",
-        {"age_hours": round(age_h, 2), "deepest_rank": deepest},
+        "sweep_freshness", ok, detail,
+        {"feed_depth": depth, "gap_count": len(gaps), "missing_ranks": missing},
     )
 
 
 def check_failed_runs(now=None) -> Check:
-    """Any FAILED fetch in the window is worth a look."""
+    """Any FAILED fetch in the window is worth a look — except a WAF block.
+
+    Blocked runs are excluded and reported by :func:`check_source_block` instead.
+    They used to land here, and during the 2026-08-16 block this check read
+    "245 failed run(s)" for a situation with exactly one cause, which buried
+    every other signal on the page.
+    """
     now = now or timezone.now()
     since = now - timedelta(hours=RECENT_HOURS)
-    rows = list(
-        FetchRun.objects.filter(started_at__gte=since, status=FetchRun.Status.FAILED)
-        .order_by("-started_at")
-        .values_list("mode", "error")[:5]
-    )
-    total = FetchRun.objects.filter(
+    failed = FetchRun.objects.filter(
         started_at__gte=since, status=FetchRun.Status.FAILED
-    ).count()
+    ).exclude(stop_reason=FetchRun.StopReason.BLOCKED)
+    rows = list(failed.order_by("-started_at").values_list("mode", "error")[:5])
+    total = failed.count()
     if not total:
         return Check("failed_runs", True, f"No failed runs in {RECENT_HOURS:.0f}h.")
     sample = "; ".join(f"{mode}: {(err or '')[:120]}" for mode, err in rows)
@@ -98,6 +109,34 @@ def check_failed_runs(now=None) -> Check:
         "failed_runs", False,
         f"{total} failed run(s) in {RECENT_HOURS:.0f}h. {sample}",
         {"count": total},
+    )
+
+
+def check_source_block(now=None) -> Check:
+    """Is bama.ir currently refusing us, and how long until the next attempt?
+
+    Its own check because the operator response is completely different from a
+    normal failure: nothing in this codebase can fix a 403 from the source's CDN,
+    so the only useful facts are the streak, when we next probe, and how stale
+    the catalog has grown meanwhile.
+    """
+    from apps.jobs.services import crawl_gate
+
+    now = now or timezone.now()
+    streak = crawl_gate.consecutive_blocks()
+    until = crawl_gate.cooldown_until()
+    if not streak:
+        return Check("source_block", True, "bama.ir is answering; no active block.")
+    mins = max(0.0, ((until - now).total_seconds() / 60) if until else 0.0)
+    return Check(
+        "source_block", False,
+        f"bama.ir returned 403 on {streak} consecutive run(s). "
+        f"Next attempt in {mins:.0f} min. The catalog is frozen until it clears; "
+        "removal detection stays paused.",
+        {
+            "consecutive_blocks": streak,
+            "next_attempt_at": until.isoformat() if until else None,
+        },
     )
 
 
@@ -153,28 +192,6 @@ def check_reject_spike(now=None) -> Check:
     )
 
 
-def check_coverage_gaps(now=None) -> Check:
-    """Rank ranges nobody read recently — the deletion-driven loss case."""
-    now = now or timezone.now()
-    since = now - timedelta(hours=RECENT_HOURS)
-    depth = known_feed_depth()
-    gaps = find_gaps(since=since, max_rank=depth)
-    if not gaps:
-        return Check(
-            "coverage_gaps", True,
-            f"No uncovered rank ranges in {RECENT_HOURS:.0f}h "
-            f"(ceiling {depth or 'unknown'}).",
-        )
-    missing = sum(hi - lo + 1 for lo, hi in gaps)
-    preview = ", ".join(f"{lo}-{hi}" for lo, hi in gaps[:5])
-    return Check(
-        "coverage_gaps", False,
-        f"{len(gaps)} uncovered rank range(s), ~{missing} ad slots: {preview}. "
-        f"Run crawl_gaps.",
-        {"gap_count": len(gaps), "missing_ranks": missing},
-    )
-
-
 def check_ingest_progress(now=None) -> Check:
     """A crawler that runs but stores nothing is worse than one that crashes.
 
@@ -216,10 +233,12 @@ def check_ingest_progress(now=None) -> Check:
 
 
 CHECKS = (
+    # First: when the source is blocking us it is the cause of everything below,
+    # and reading the consequences before the cause wastes the operator's time.
+    check_source_block,
     check_sweep_freshness,
     check_failed_runs,
     check_reject_spike,
-    check_coverage_gaps,
     check_ingest_progress,
 )
 

@@ -77,6 +77,10 @@ export interface Envelope {
     stale?: boolean;
     age_hours?: number;
     reason?: string;
+    /** bama.ir is refusing our requests, so nothing below is being refreshed. */
+    source_blocked?: boolean;
+    /** Coverage has holes, so a listing shown as active may already be sold. */
+    removal_detection_paused?: boolean;
   };
   available?: boolean;
   reason?: string;

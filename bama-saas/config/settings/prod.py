@@ -31,4 +31,12 @@ REST_FRAMEWORK = {
         "anon": os.environ.get("THROTTLE_ANON", "60/min"),
         "user": os.environ.get("THROTTLE_USER", "600/min"),
     },
+    # base.py defaults to AllowAny, which is fine for the local-first single-operator
+    # use case (no network exposure). A deployed instance IS reachable, so it must
+    # require a logged-in Django session rather than serving the whole catalog/API
+    # to anyone who finds the URL. Session auth only (no JWT, no registration) —
+    # this stays a single-operator tool even when deployed.
+    "DEFAULT_PERMISSION_CLASSES": (
+        "rest_framework.permissions.IsAuthenticated",
+    ),
 }

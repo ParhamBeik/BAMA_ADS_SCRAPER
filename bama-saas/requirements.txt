@@ -11,6 +11,5 @@ psycopg[binary]>=3.2
 jdatetime>=4.1
 requests>=2.31
 gunicorn>=22.0
-numpy>=1.26
 pytest>=8.2
 pytest-django>=4.8

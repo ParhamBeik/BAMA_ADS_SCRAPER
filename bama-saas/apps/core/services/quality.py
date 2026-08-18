@@ -17,11 +17,10 @@ from django.db.models import Q
 
 from apps.jobs.services.verify import HARD_RULE_IDS
 
-# Cohort-pass verdicts. The detector that wrote them (verify_cohort.py) is gone,
-# so these are now frozen historical data: no new row will ever carry one. The
-# filter stays because the flags already on 66k rows are still correct about
-# those rows, and fair_price's baselines — which the deal score is now built on —
-# must not be defined by a listing priced nothing like its peers.
+# Cohort-pass verdicts. ``flag_high_outliers`` refreshes the high side after
+# every score pass; the low-side flag is retained only for historical rows.
+# Fair-price baselines must not be defined by a listing priced nothing like
+# its peers.
 FLAG_OUTLIER_HIGH = "price_outlier_high"
 FLAG_OUTLIER_LOW = "price_outlier_low"
 COHORT_FLAGS = frozenset({FLAG_OUTLIER_HIGH, FLAG_OUTLIER_LOW})
@@ -54,6 +53,20 @@ def without_cohort_outliers(qs):
     for flag in sorted(COHORT_FLAGS):
         disqualifying |= Q(cohort_flags__contains=[flag])
     return qs.exclude(disqualifying)
+
+
+def without_high_outliers(qs):
+    """Drop rows priced far *above* their peers — and only those.
+
+    The browse-list filter. ``without_cohort_outliers`` is the wrong tool there
+    because it also drops ``price_outlier_low``, and a listing priced far below
+    its peers is the single most valuable thing this product can surface. An
+    absurd asking price is noise; an absurdly cheap one is the point.
+
+    The high-side cohort pass is refreshed with deal scores. New or thin cohorts
+    remain visible until there are enough peers to judge them fairly.
+    """
+    return qs.exclude(cohort_flags__contains=[FLAG_OUTLIER_HIGH])
 
 
 def verified_by_ad(qs, field: str = "ad"):

@@ -9,7 +9,7 @@ from django.urls import path
 from rest_framework.routers import DefaultRouter
 
 from apps.core import views
-from apps.core.views import research
+from apps.core.views import notifier, research
 
 app_name = "core"
 
@@ -34,7 +34,9 @@ urlpatterns = [
     # --- research (see views/research.py) ---
     path("analytics/overview/", research.overview_view, name="market-overview-public"),
     path("research/liquidity/<int:model_id>/", research.liquidity_view, name="liquidity"),
-    path("research/price-position/<int:model_id>/", research.price_position_view, name="price-position"),
     path("research/depreciation/<int:model_id>/", research.depreciation_view, name="depreciation"),
     path("ads/<str:code>/fair-price/", research.fair_price_view, name="fair-price"),
+
+    # --- notifier rules (edited from the deal board) ---
+    path("notifier-settings/", notifier.notifier_settings, name="notifier-settings"),
 ] + router.urls

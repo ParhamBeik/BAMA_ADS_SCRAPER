@@ -1,8 +1,9 @@
 # Bama — personal deal finder
 
 Local Docker Compose tool for bama.ir listings. Not a public SaaS: no login,
-JWT, subscriptions, alerts, notifications, or digests. Django admin inspects
-records; `/control` is crawl health + jobs only.
+JWT, subscriptions, or multi-user alerts. One optional local Telegram deal
+notifier is disabled by default and configured from the deal board; Django admin
+inspects records, while `/control` is crawl health + jobs only.
 
 Analytics that remain: **fair price**, the **deal board** (min 8 peers; asking
 price at least 50% of the peer median), the **matched-cohort market index**,
@@ -107,8 +108,8 @@ All via `python manage.py <command>`.
 | `sync_episodes` | Open/close `ListingEpisode` rows. |
 | `daily_snapshot` | Today's `DailyInventorySnapshot`. |
 | `build_market_index` | Rebuild the matched-cohort price index. |
-| `market_snapshot [--date]` | Market-wide rollup for a day. |
 | `compute_deal_scores [--model]` | Rebuild the deal board (fair-price discount, min 8 peers). |
+| `notify_deals [--dry-run]` | Send eligible, previously unseen deals through the optional local notifier. |
 | `crawl_health [--json]` | Sweep freshness / failed runs / reject spikes / gaps. Exit 1 when unhealthy. |
 | `prune_history` | Drop old observations / coverage / job runs. |
 | `reap_orphan_runs` | Clear leftover `RUNNING` FetchRun / JobRun rows. |
@@ -121,8 +122,8 @@ Do not also install host cron: two fetchers against one database.
 
 | Cadence | Job |
 | --- | --- |
-| every 5 min | delta fetch → mark_inactive → incremental deal scores |
-| every 30 min | episodes → daily_snapshot → market_index → market_snapshot |
+| every 5 min | delta fetch → mark_inactive → incremental deal scores → optional notifier |
+| every 30 min | episodes → daily_snapshot → market_index |
 | every 6 h | full fetch → crawl_gaps → warm pipeline → full deal scores → prune_history → crawl_health |
 
 The 5-minute tick only proves the newest pages are unchanged. The 6-hourly
@@ -153,6 +154,10 @@ public field).
 
 **Saved cars** — `GET/POST /api/favorites/`, `DELETE /api/favorites/<code>/`.
 No auth; one local list.
+
+**Optional notifier** — `GET/PATCH /api/notifier-settings/`. The singleton is
+disabled by default; the worker evaluates it after each deal-score refresh and
+sends at most ten qualifying, previously unseen listings per run.
 
 **Control** — `POST /api/admin/jobs/{fetch,refresh-analytics,deal-scores}/`
 (202, runs in a thread). `GET /api/admin/jobs/overview/`,

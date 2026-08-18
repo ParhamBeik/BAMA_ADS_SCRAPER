@@ -1,23 +1,25 @@
 # Implementation status
 
 Local Docker Compose deal finder. Django 5.2 + DRF + drf-spectacular +
-PostgreSQL (Python ≥ 3.11). No JWT, login, subscriptions, alerts, or public
-SaaS. OpenAPI schema is warning-free.
+PostgreSQL (Python ≥ 3.11). No JWT, login, subscriptions, multi-user alerts,
+or public SaaS. One optional local Telegram deal notifier is disabled by
+default. OpenAPI schema is warning-free.
 
 ## What exists
 
 | Area | State |
 | --- | --- |
 | Catalog | `Brand→Model→Variant→City→Dealer→Ad`; `Ad` pk is `code` + `raw_payload` JSONB. |
-| Provenance | Append-only `FetchRun`, `AdVersion`, `AdObservation`, `AdChangeEvent`, `PageCoverage`, `IngestReject`. |
+| Provenance | Append-only `FetchRun`, `AdVersion`, `AdObservation`, `PageCoverage`, `IngestReject`. |
 | Price history | Change-only `PriceObservation` + `PriceDropEvent`. |
 | Crawler | `fetch_live` delta/full/backfill, `PageCoverage`, `crawl_gaps`. |
 | Verification | Row rules in `verify.py`. Hard failures → `IngestReject` + drop `Ad`. Reads through `quality.verified`. |
 | Analytics | Fair price, deal board (min 8 peers, ask ≥ 50% of peer median), matched-cohort market index, Kaplan–Meier time-to-sell, year retention. |
 | Saved cars | `Favorite` — one local list, no user accounts. |
+| Notifier | Optional singleton Telegram deal notifier; disabled by default, one send per ad, capped at ten per run. |
 | Job visibility | `JobRun`; `/control` + `GET /api/admin/jobs/overview/`. |
 | Frontend | Seven screens: `/`, `/explore`, `/listing/:code`, `/market`, `/research/:modelId`, `/saved`, `/control`. Record inspection is Django admin. |
-| Worker | HOT/WARM/COLD via `run_worker.sh`. No alerts/digest. No Celery. |
+| Worker | HOT/WARM/COLD via `run_worker.sh`; HOT evaluates the optional notifier after deal-score refresh. No Celery. |
 
 ## Market index
 
@@ -50,4 +52,4 @@ python manage.py crawl_health
 curl -s 'localhost:8001/api/analytics/market-index/?days=90' | jq
 ```
 
-**Last updated:** 2026-08-13
+**Last updated:** 2026-08-16

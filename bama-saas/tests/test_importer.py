@@ -300,3 +300,88 @@ def test_source_timestamps_are_read_as_tehran_local():
 
     assert parsed.tzinfo is not None
     assert parsed.hour != 12, "a bare local time must not be taken for UTC"
+
+
+# ---------------------------------------------------------------------------
+# One bad ad must not take its page — or its run — down with it
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_integrity_error_on_one_ad_does_not_lose_the_rest_of_the_page(
+    known_catalog, monkeypatch
+):
+    """The failure that ended whole sweeps in production.
+
+    The fetcher ingests a page inside one transaction, so before per-ad
+    savepoints a single ad that violated a DB constraint rolled back every
+    other ad on the page and failed the run. Observed live as a NOT NULL
+    violation on ``description`` and an FK violation on
+    ``AdObservation.version_id``.
+    """
+    from django.db import IntegrityError, transaction
+
+    from apps.core.models import IngestReject
+    from apps.jobs.services import ingest as ingest_mod
+
+    real_get_or_create = ingest_mod.AdVersion.objects.get_or_create
+
+    def explode_for_bad_ad(*args, **kwargs):
+        if kwargs.get("ad") is not None and kwargs["ad"].code == "bad00002":
+            raise IntegrityError('null value in column "description"')
+        return real_get_or_create(*args, **kwargs)
+
+    monkeypatch.setattr(
+        ingest_mod.AdVersion.objects, "get_or_create", explode_for_bad_ad
+    )
+
+    run = FetchRun.objects.create(source=FetchRun.Source.LIVE_FETCH)
+    observed = datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc)
+    codes = ["good0001", "bad00002", "good0003"]
+
+    # One transaction for the whole "page", exactly as the fetcher does it.
+    with transaction.atomic():
+        results = [
+            ingest_ad(
+                extract_ad(make_payload(code, 15_000_000_000), observed),
+                run=run,
+                observed_at=observed,
+                publish_at=observed,
+            )
+            for code in codes
+        ]
+
+    assert [r.rejected for r in results] == [False, True, False]
+    assert set(Ad.objects.values_list("code", flat=True)) == {"good0001", "good0003"}
+    assert IngestReject.objects.filter(
+        code="bad00002", rule="integrity_error"
+    ).exists(), "the bad payload must be quarantined, not silently dropped"
+
+
+@pytest.mark.django_db
+def test_rolled_back_version_is_dropped_from_the_cache(known_catalog, monkeypatch):
+    """The FK violation's actual root cause.
+
+    ``_VERSION_CACHE`` holds ``AdVersion`` objects that outlive the transaction
+    that made them. When a write rolled back, the cache still handed out a
+    version whose row was gone, and the next sighting of that ad inserted an
+    observation pointing at a nonexistent id — taking the next run down too.
+    """
+    from django.db import IntegrityError
+
+    from apps.jobs.services import ingest as ingest_mod
+
+    observed = datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc)
+    run = FetchRun.objects.create(source=FetchRun.Source.LIVE_FETCH)
+
+    def explode(*args, **kwargs):
+        raise IntegrityError("boom")
+
+    monkeypatch.setattr(ingest_mod.AdObservation.objects, "get_or_create", explode)
+    ingest_ad(
+        extract_ad(make_payload("cached01", 15_000_000_000), observed),
+        run=run, observed_at=observed, publish_at=observed,
+    )
+
+    assert not [k for k in ingest_mod._VERSION_CACHE if k[0] == "cached01"], (
+        "a version created inside a rolled-back savepoint must not stay cached"
+    )

@@ -22,6 +22,12 @@ Rows with a non-positive fair value, an asking price at or above it, or an
 asking price below half the peer median, are not written at all: a board of
 typos and non-deals is worse than a short board.
 
+Neither is an ad whose price is not one car's cash price — see
+``listing_kind.exclude_unclear_price``. That filter replaced a
+``title__startswith("حواله")`` special case which caught one vocabulary of one
+artifact: an audit of the top 200 rows found 74% of them were installment ads
+advertising their down payment, and the ``حواله`` rule had caught none of them.
+
 Refresh is idempotent: a full refresh drops every ``DealScoreCache`` row and
 rebuilds, a per-model refresh drops only that model's ads' rows.
 """
@@ -34,6 +40,7 @@ from django.utils import timezone
 
 from apps.core.models import Ad, DealScoreCache
 from apps.core.services.fair_price import MIN_PEERS, cohort_baseline, dispersion
+from apps.core.services.listing_kind import exclude_unclear_price
 from apps.core.services.quality import COHORT_FLAGS, verified
 from apps.jobs.services.verify import MIN_PLAUSIBLE_PRICE
 
@@ -51,13 +58,17 @@ def compute_deal_scores(*, model_id: int | None = None) -> dict:
     ``MIN_PEERS``. One query, grouped in Python: the median has no ORM aggregate
     and the whole eligible set is a narrow scan.
     """
-    base = verified(Ad.objects).filter(
-        status=Ad.Status.ACTIVE,
-        # The 10M floor is the unit-switch sentinel, not a car. حواله listings
-        # sit on or just above it and would otherwise own the board at 99% "off".
-        current_price__gt=MIN_PLAUSIBLE_PRICE,
-        publish_at__isnull=False,
-    ).exclude(title__startswith="حواله")
+    from apps.core.services.outliers import flag_high_outliers
+
+    outliers = flag_high_outliers(model_id=model_id)
+    base = exclude_unclear_price(
+        verified(Ad.objects).filter(
+            status=Ad.Status.ACTIVE,
+            # The 10M floor is the unit-switch sentinel, not a car.
+            current_price__gt=MIN_PLAUSIBLE_PRICE,
+            publish_at__isnull=False,
+        )
+    )
     if model_id is not None:
         base = base.filter(model_id=model_id)
 
@@ -140,7 +151,13 @@ def compute_deal_scores(*, model_id: int | None = None) -> dict:
     if objs:
         DealScoreCache.objects.bulk_create(objs, batch_size=500)
 
-    return {"scored": len(objs), "min_peers": MIN_PEERS, "model_id": model_id}
+    return {
+        "scored": len(objs),
+        "min_peers": MIN_PEERS,
+        "model_id": model_id,
+        "outliers_flagged": outliers["flagged"],
+        "outliers_cleared": outliers["cleared"],
+    }
 
 
 def refresh_cohort_deal_scores(model_ids: set[int] | list[int]) -> dict:

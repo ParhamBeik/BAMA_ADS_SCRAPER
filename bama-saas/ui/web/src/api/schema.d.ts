@@ -134,7 +134,9 @@ export interface paths {
          * @description GET /api/ads/ and GET /api/ads/<code>/.
          *
          *     The default list queryset is restricted to publish-complete ads (those with
-         *     a `publish_at` and a strictly positive `current_price`).
+         *     a `publish_at` and a strictly positive `current_price`) and drops rows the
+         *     cohort pass flagged as priced far ABOVE their peers — ?include_outliers=true
+         *     restores them. Suspiciously cheap listings are never hidden.
          */
         get: operations["ads_list"];
         put?: never;
@@ -156,7 +158,9 @@ export interface paths {
          * @description GET /api/ads/ and GET /api/ads/<code>/.
          *
          *     The default list queryset is restricted to publish-complete ads (those with
-         *     a `publish_at` and a strictly positive `current_price`).
+         *     a `publish_at` and a strictly positive `current_price`) and drops rows the
+         *     cohort pass flagged as priced far ABOVE their peers — ?include_outliers=true
+         *     restores them. Suspiciously cheap listings are never hidden.
          */
         get: operations["ads_retrieve"];
         put?: never;
@@ -208,7 +212,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description Top deal scores, joined to ad. Filters: model/brand/year/min_score/limit. */
+        /**
+         * @description Deal scores, joined to ad. Filtered, ordered by discount, paginated.
+         *
+         *     Returns ``count`` alongside ``results`` so the board can page: the cache
+         *     holds ~9,800 rows and the screen used to show a hard-coded top 50 with no
+         *     way forward, which put every genuine 5–20% deal out of reach.
+         */
         get: operations["analytics_deal_scores_list"];
         put?: never;
         post?: never;
@@ -405,6 +415,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/notifier-settings/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Get or update the deal-notifier thresholds and scope. */
+        get: operations["notifier_settings_retrieve"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** @description Get or update the deal-notifier thresholds and scope. */
+        patch: operations["notifier_settings_partial_update"];
+        trace?: never;
+    };
     "/api/research/depreciation/{model_id}/": {
         parameters: {
             query?: never;
@@ -431,23 +459,6 @@ export interface paths {
         };
         /** @description Time-to-delist for a cohort, using Kaplan-Meier so listings that are still live are censored rather than dropped. Never described as 'sold': the feed cannot distinguish a sale from an expiry or a withdrawal. */
         get: operations["research_liquidity_retrieve"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/research/price-position/{model_id}/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Time-to-delist split by where a listing's price sits within its own cohort. Association, not causation — an overpriced car and a slow car may share a cause rather than one producing the other. */
-        get: operations["research_price_position_retrieve"];
         put?: never;
         post?: never;
         delete?: never;
@@ -499,9 +510,13 @@ export interface components {
             image_urls?: unknown;
             image_count?: number | null;
             seller_authenticated?: boolean | null;
+            readonly dealer_name: string;
+            readonly seller_type: string;
             year_jalali?: number | null;
             status?: components["schemas"]["StatusEnum"];
             readonly cohort_flags: unknown;
+            readonly price_basis_unclear: boolean;
+            readonly condition_flagged: boolean;
         };
         Brand: {
             slug: string;
@@ -513,8 +528,9 @@ export interface components {
             code: string;
             readonly ad_title: string;
             readonly ad_price: number;
-            readonly previous_price: string;
-            readonly price_changed_at: string;
+            readonly previous_price: number | null;
+            /** Format: date-time */
+            readonly price_changed_at: string | null;
             /** Format: date-time */
             readonly created_at: string;
         };
@@ -531,6 +547,20 @@ export interface components {
             readonly id: number;
             readonly brand_slug: string;
             name_fa: string;
+        };
+        NotifierSettings: {
+            enabled?: boolean;
+            /** Format: double */
+            min_discount_pct?: number;
+            min_peers?: number;
+            /** Format: int64 */
+            price_min?: number | null;
+            /** Format: int64 */
+            price_max?: number | null;
+            model_ids?: unknown;
+            telegram_chat_id?: string;
+            /** Format: date-time */
+            readonly updated_at: string;
         };
         PaginatedAdList: {
             /** @example 123 */
@@ -561,6 +591,18 @@ export interface components {
              */
             previous?: string | null;
             results: components["schemas"]["Favorite"][];
+        };
+        PatchedNotifierSettingsRequest: {
+            enabled?: boolean;
+            /** Format: double */
+            min_discount_pct?: number;
+            min_peers?: number;
+            /** Format: int64 */
+            price_min?: number | null;
+            /** Format: int64 */
+            price_max?: number | null;
+            model_ids?: unknown;
+            telegram_chat_id?: string;
         };
         /**
          * @description * `active` - Active
@@ -757,6 +799,11 @@ export interface operations {
                 publish_from?: string;
                 q?: string;
                 seller_authenticated?: boolean;
+                /**
+                 * @description * `dealer` - dealer
+                 *     * `private` - private
+                 */
+                seller_type?: "dealer" | "private";
                 status?: string;
                 transmission?: string;
                 variant?: number;
@@ -851,9 +898,15 @@ export interface operations {
         parameters: {
             query?: {
                 brand?: string;
+                confidence?: "high" | "low" | "medium";
                 limit?: number;
+                /** @description Upper bound on discount %. The UI defaults to 30 — above that the gap is dominated by attributes the cohort cannot see (damage, pre-sale, bait). */
+                max_score?: number;
                 min_score?: number;
                 model?: number;
+                offset?: number;
+                price_max?: number;
+                price_min?: number;
                 year?: number;
             };
             header?: never;
@@ -1151,6 +1204,50 @@ export interface operations {
             };
         };
     };
+    notifier_settings_retrieve: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotifierSettings"];
+                };
+            };
+        };
+    };
+    notifier_settings_partial_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["PatchedNotifierSettingsRequest"];
+                "application/x-www-form-urlencoded": components["schemas"]["PatchedNotifierSettingsRequest"];
+                "multipart/form-data": components["schemas"]["PatchedNotifierSettingsRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotifierSettings"];
+                };
+            };
+        };
+    };
     research_depreciation_retrieve: {
         parameters: {
             query?: never;
@@ -1175,29 +1272,6 @@ export interface operations {
         };
     };
     research_liquidity_retrieve: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                model_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    research_price_position_retrieve: {
         parameters: {
             query?: never;
             header?: never;

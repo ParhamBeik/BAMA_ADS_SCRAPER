@@ -32,6 +32,11 @@
   --warn: #b54708;
   --warn-soft: #fef0c7;
   --shadow: 0 1px 2px rgb(16 24 40 / 6%), 0 1px 3px rgb(16 24 40 / 10%);
+  /* A later block styles .listing-card/.btn/.brand-chip with var(--card), which
+     was never defined — those surfaces rendered transparent in both themes.
+     Aliased rather than rewritten at each use so the two :root blocks stay the
+     only place a colour is chosen. */
+  --card: var(--panel);
 }
 
 :root[data-theme="dark"] {
@@ -48,6 +53,7 @@
   --warn: #d29922;
   --warn-soft: #2b2412;
   --shadow: none;
+  --card: var(--panel);
 }
 
 * { box-sizing: border-box; }
@@ -169,11 +175,24 @@ button:hover { background: var(--panel-2); }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 button.primary:hover { filter: brightness(1.05); }
 
-.segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+/* `width: fit-content` because `inline-flex` still stretches when the parent is
+   a grid track — the band toggle on the deal board spanned the whole page. */
+.segmented {
+  display: inline-flex;
+  width: fit-content;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
 .segmented button { border: 0; border-radius: 0; padding: 6px 10px; background: var(--panel); }
 .segmented button.on { background: var(--accent-soft); color: var(--accent); }
 
 .filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
+
+.filters-adv { margin-bottom: 14px; }
+.filters-adv summary { cursor: pointer; color: var(--muted); margin-bottom: 8px; }
+.filters-adv .filters { margin-bottom: 0; }
+.filters-adv select, .filters-adv input { max-width: 160px; }
 
 /* --- table ---------------------------------------------------------------- */
 
@@ -231,12 +250,6 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 @keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
 @media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }
 
-@media (max-width: 900px) {
-  .app { grid-template-columns: 1fr; }
-  .sidebar { position: static; height: auto; flex-direction: row; overflow-x: auto; }
-  .cols-2, .cols-3, .cols-4 { grid-template-columns: 1fr; }
-}
-
 
 /* Rebuild: RTL consumer + discovery */
 .app[dir="rtl"] .sidebar { border-right: none; border-left: 1px solid var(--border); }
@@ -266,6 +279,12 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .price { font-size: 1.4rem; font-weight: 700; }
 .stack { display: grid; gap: 1rem; }
 .row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+/* Used by the JSX since the rebuild but never defined, so `row between` pushed
+   nothing apart and `ghost` de-emphasised nothing. Same failure as var(--card). */
+.row.between { justify-content: space-between; }
+.row.wrap { flex-wrap: wrap; }
+button.ghost { background: none; border-color: transparent; color: var(--muted); }
+button.ghost:hover { background: var(--panel-2); color: var(--text); }
 .code-block { overflow: auto; font-size: 0.8rem; }
 .inspect-table { font-variant-numeric: tabular-nums; }
 .inspect-table tr.clickable { cursor: pointer; }
@@ -275,8 +294,84 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .sidebar-foot { margin-top: auto; display: grid; gap: 0.25rem; padding-top: 1rem; }
 .nav-item.linkish { background: none; border: none; width: 100%; text-align: inherit; font: inherit; }
 .warn { color: var(--warn); }
+/* --- deal cards ----------------------------------------------------------- */
+
+/* Extends .listing-card rather than replacing it: the Explorer grid and the deal
+   board are the same object at two levels of detail, and two card systems would
+   drift apart the first time either changed. */
+.listing-card { transition: border-color .12s, box-shadow .12s; }
+.listing-card:hover { border-color: var(--accent); box-shadow: var(--shadow); text-decoration: none; }
+.listing-card .thumb { position: relative; }
+
+/* The one number the page exists to show, at the size that says so. */
+.ribbon {
+  position: absolute;
+  inset-block-start: 8px;
+  inset-inline-start: 8px;
+  background: var(--up);
+  color: #fff;
+  font-weight: 700;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  padding: 3px 9px;
+  border-radius: 999px;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 25%);
+}
+/* Amber, not green, once the gap is large enough to be an unmodelled attribute
+   rather than a bargain. Colour carries the warning before any label is read. */
+.ribbon.suspect { background: var(--warn); }
+
+.card-badges {
+  position: absolute;
+  inset-block-end: 6px;
+  inset-inline-start: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.listing-meta { font-size: 13px; }
+.listing-meta strong { font-size: 13.5px; line-height: 1.35; }
+.listing-meta .row { gap: 0.4rem; font-size: 12px; color: var(--muted); }
+.deal-price { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.deal-median { color: var(--muted); text-decoration: line-through; font-size: 12.5px; }
+
+/* Sample size as three dots. A "medium" badge needs reading; ●●○ is grasped at
+   a glance, which is the point of putting it on a card at all. */
+.dots { letter-spacing: 1px; font-size: 10px; }
+.dots.high { color: var(--up); }
+.dots.medium { color: var(--accent); }
+.dots.low { color: var(--warn); }
+
+.empty-hint { color: var(--muted); font-size: 12.5px; margin: 6px 0 0; }
+
+/* Share-of-total inside a table cell. Width is the datum. */
+.bar {
+  display: block;
+  height: 8px;
+  min-width: 2px;
+  border-radius: 999px;
+  background: var(--accent);
+  opacity: 0.75;
+}
+
+/* One mobile block. There were two, and the second silently overrode the
+   first's `position: static` with `sticky` — the layout you got was the union of
+   two rules nobody was reading together. */
 @media (max-width: 900px) {
-  .detail-layout { grid-template-columns: 1fr; }
   .app { grid-template-columns: 1fr; }
-  .sidebar { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 0.25rem; }
+  .sidebar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    height: auto;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 0.25rem;
+  }
+  .brand { display: none; }
+  .cols-2, .cols-3, .cols-4 { grid-template-columns: 1fr; }
+  .detail-layout { grid-template-columns: 1fr; }
+  .main { padding: 14px 14px 48px; }
 }

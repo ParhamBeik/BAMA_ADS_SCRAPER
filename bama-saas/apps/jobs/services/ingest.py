@@ -14,13 +14,13 @@ from datetime import datetime, timezone as dt_timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from django.db import IntegrityError, transaction
+
 from apps.core.models import Ad
-from apps.core.models import AdChangeEvent, AdObservation, AdVersion, FetchRun
+from apps.core.models import AdObservation, AdVersion, FetchRun
 from apps.core.models import IngestReject, PriceDropEvent, PriceObservation
 from apps.parsing import (
     SEMANTIC_HASH_VERSION,
-    categories_for,
-    diff_payloads,
     fingerprint,
     normalize_model_year,
     parse_int,
@@ -92,6 +92,22 @@ class IngestResult:
 def reset_price_cache() -> None:
     _PRICE_FP_CACHE.clear()
     _VERSION_CACHE.clear()
+
+
+def forget_cached(code: str) -> None:
+    """Drop one ad's cached version/price state.
+
+    Both caches hold Python objects that outlive the transaction that created
+    them. When a write is rolled back, ``_VERSION_CACHE`` still holds an
+    ``AdVersion`` whose row no longer exists, and the next sighting of that
+    ``(code, semantic_hash)`` reuses it — inserting an ``AdObservation``
+    pointing at a version id Postgres never kept. That is the observed
+    ``history_adobservation … version_id`` foreign-key violation, and it takes
+    a whole run down with it.
+    """
+    _PRICE_FP_CACHE.pop(code, None)
+    for key in [k for k in _VERSION_CACHE if k[0] == code]:
+        del _VERSION_CACHE[key]
 
 
 # Bama sends modified_date as a bare local timestamp ("2026-05-13T12:30:58.32")
@@ -231,6 +247,55 @@ def _ad_defaults(
 
 
 def ingest_ad(
+    extracted: dict,
+    *,
+    run: FetchRun,
+    observed_at: datetime,
+    publish_at,
+    dealer: dict | None = None,
+    rank: int | None = None,
+) -> IngestResult:
+    """Persist one ad in its own savepoint, quarantining it if the DB rejects it.
+
+    Callers ingest a whole page inside one transaction, so without this an ad
+    that violates a database constraint rolled back every other ad on its page
+    *and* failed the entire run — one bad payload out of ~30 discarding the
+    page and ending a 20-minute sweep. Observed in production as a NOT NULL
+    violation on ``description`` and a foreign-key violation on
+    ``AdObservation.version_id``.
+
+    A nested ``atomic()`` is a savepoint: rolling back to it discards only this
+    ad's writes and leaves the surrounding page transaction usable, so the
+    other ads still commit. The quarantine row is written *after* the rollback,
+    for the same reason the hard-rule path writes one — evidence survives and a
+    wrong rule stays replayable.
+    """
+    code = (extracted.get("code") or "")[:16]
+    try:
+        with transaction.atomic():
+            return _ingest_ad(
+                extracted,
+                run=run,
+                observed_at=observed_at,
+                publish_at=publish_at,
+                dealer=dealer,
+                rank=rank,
+            )
+    except IntegrityError as exc:
+        # The savepoint is gone, so anything cached from inside it is a lie.
+        forget_cached(code)
+        IngestReject.objects.create(
+            code=code,
+            rule="integrity_error",
+            detail=str(exc)[:1000],
+            raw_payload=pure_ad(extracted.get("raw_payload") or {}),
+            fetch_run=run,
+            observed_at=observed_at,
+        )
+        return IngestResult(ad=None, rejected=True, flags=("integrity_error",))
+
+
+def _ingest_ad(
     extracted: dict,
     *,
     run: FetchRun,
@@ -431,33 +496,11 @@ def ingest_ad(
                 observed_at=observed_at,
             )
 
-    # 5) Content change events: only for genuinely new versions vs the previous
-    # observation (drives the history timeline for re-imports / live fetch).
-    # diff_payloads returns a list of {"path","before","after"} entries.
-    if v_created:
-        prev_obs = (
-            AdObservation.objects.filter(ad=ad)
-            .exclude(fetch_run=run)
-            .order_by("-observed_at")
-            .first()
-        )
-        if prev_obs and prev_obs.version_id != version.pk:
-            changes = diff_payloads(prev_obs.version.payload or {}, pure_ad(payload))
-            if changes:
-                changed_paths = [c["path"] for c in changes]
-                AdChangeEvent.objects.get_or_create(
-                    observation=this_obs,
-                    event_type=AdChangeEvent.EventType.CONTENT_CHANGED,
-                    defaults={
-                        "ad": ad,
-                        "previous_version": prev_obs.version,
-                        "new_version": version,
-                        "categories": categories_for(changed_paths),
-                        "changed_paths": changed_paths,
-                        "changes": changes,
-                        "origin": run.source,
-                    },
-                )
+    # Content change events used to be written here — one AdChangeEvent per new
+    # version, with a full field-level diff. 122,496 rows accumulated and no
+    # view, serializer or service ever read one; the content history that *is*
+    # read lives in AdVersion, which this still writes. Removed rather than
+    # kept "for later": the diff cost a payload comparison on every changed ad.
 
     return IngestResult(
         ad=ad,

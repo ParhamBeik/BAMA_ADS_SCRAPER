@@ -6,7 +6,7 @@ from rest_framework.generics import ListAPIView
 
 from apps.core.filters import AdFilter
 from apps.core.models import Ad, Brand, Model, Variant
-from apps.core.services.quality import verified
+from apps.core.services.quality import verified, without_high_outliers
 from apps.core.serializers import (
     AdSerializer,
     BrandSerializer,
@@ -54,7 +54,9 @@ class AdViewSet(viewsets.ReadOnlyModelViewSet):
     """GET /api/ads/ and GET /api/ads/<code>/.
 
     The default list queryset is restricted to publish-complete ads (those with
-    a `publish_at` and a strictly positive `current_price`).
+    a `publish_at` and a strictly positive `current_price`) and drops rows the
+    cohort pass flagged as priced far ABOVE their peers — ?include_outliers=true
+    restores them. Suspiciously cheap listings are never hidden.
     """
 
     serializer_class = AdSerializer
@@ -78,14 +80,27 @@ class AdViewSet(viewsets.ReadOnlyModelViewSet):
         # and the statistics have to describe the same population or a user can
         # find an ad the market summary says does not exist.
         #
-        # Cohort outliers are NOT excluded — that flag says "not believable as a
-        # market price", and hiding the listing would delete the suspiciously
-        # cheap car a buyer came to find. It is serialized instead.
+        # Only *high* outliers are excluded from the browse list. A price far
+        # above its peers is noise (a 206 was listed at 5.8 trillion toman); a
+        # price far below them is the underpriced car this product exists to
+        # find, so `without_cohort_outliers` — which drops both — must not be
+        # used here. ?include_outliers=true restores the hidden ones.
         qs = verified(Ad.objects).select_related(
             "brand", "model", "variant", "city", "dealer",
         )
         # Detail view should be able to fetch any ad by code; only the list
         # view applies the publish-complete restriction.
         if self.action == "list":
-            qs = qs.filter(publish_at__isnull=False, current_price__gt=0)
+            # ACTIVE only. Without this the browse feed carried every REMOVED ad
+            # too: 57,864 rows against the market summary's 35,309 active, so the
+            # two screens contradicted each other and a buyer could open a car
+            # that had already left the market with nothing saying so. The detail
+            # route below stays unrestricted on purpose — a saved ad that gets
+            # delisted must still open, and it renders its own inactive notice.
+            qs = qs.filter(
+                status=Ad.Status.ACTIVE, publish_at__isnull=False, current_price__gt=0
+            )
+            include_outliers = self.request.query_params.get("include_outliers", "").lower() == "true"
+            if not include_outliers:
+                qs = without_high_outliers(qs)
         return qs
