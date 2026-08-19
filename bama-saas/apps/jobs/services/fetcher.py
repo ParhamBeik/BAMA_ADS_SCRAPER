@@ -711,7 +711,7 @@ def _fetch_live(
         run.resume_from_page = resume_page
         run.finished_at = djtz.now()
         run.save()
-        logger.error(
+        logger.exception(
             "event=bama_fetch_failed run_id=%s mode=%s page=%d error_type=%s "
             "error=%s duration_s=%.1f",
             run.pk,

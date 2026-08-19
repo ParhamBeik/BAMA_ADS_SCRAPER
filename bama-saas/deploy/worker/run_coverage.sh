@@ -51,9 +51,12 @@ LOCK="${BAMA_COVERAGE_LOCK:-/tmp/bama-saas-coverage.lock}"
 # `set -eu` is not inherited by `sh -c`, which runs a fresh shell. Without it
 # the exit status would be that of the last command and a chunk that died on a
 # network timeout would still report success — that happened on 2026-08-08.
+# Routed through `manage.py run_coverage` (not crawl_gaps directly) so this
+# chunk gets a JobRun row -- previously coverage sweeps were invisible to
+# /api/admin/jobs/overview, only visible in raw container logs.
 RUN='set -eu
      PY="$1"; shift
-     "$PY" manage.py crawl_gaps --since-hours 24 "$@"'
+     "$PY" manage.py run_coverage --since-hours 24 "$@"'
 
 if command -v flock >/dev/null 2>&1; then
     exec flock -n "$LOCK" sh -c "$RUN" _ "$PYTHON_BIN" "$@"

@@ -11,7 +11,7 @@
  * `Async` makes "we do not have enough clean data for this" a first-class result
  * rather than an error or, worse, an empty chart that looks like zero.
  */
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { AlertTriangle, Database } from "lucide-react";
 import type { Envelope } from "./api/client";
 
@@ -272,6 +272,63 @@ function humanReason(reason?: string): string {
     default:
       return reason ?? "این گروه برای گزارش‌دادن کوچک است.";
   }
+}
+
+/**
+ * Prev/next plus a typed page number.
+ *
+ * The deal board and the explorer both run into the hundreds of pages, and
+ * prev/next alone made "page 40" a forty-click walk. Shared here rather than
+ * duplicated because both screens define "last page" the same way
+ * (`ceil(total / pageSize)`) and drifted the moment that math was ever written
+ * twice.
+ */
+export function Pager({
+  page,
+  lastPage,
+  total,
+  label = "آگهی",
+  onChange,
+}: {
+  page: number;
+  lastPage: number;
+  total: number;
+  label?: string;
+  onChange: (page: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(page));
+  useEffect(() => setDraft(String(page)), [page]);
+
+  const commit = () => {
+    const parsed = Math.round(Number(draft));
+    const next = Number.isFinite(parsed) ? Math.min(lastPage, Math.max(1, parsed)) : page;
+    setDraft(String(next));
+    if (next !== page) onChange(next);
+  };
+
+  return (
+    <div className="pager">
+      <button disabled={page <= 1} onClick={() => onChange(page - 1)}>
+        قبلی
+      </button>
+      <span className="stat-sub pager-mid">
+        صفحهٔ
+        <input
+          className="pager-input"
+          value={draft}
+          inputMode="numeric"
+          aria-label="شماره صفحه"
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => e.key === "Enter" && commit()}
+        />
+        از {lastPage.toLocaleString("en-US")} · {total.toLocaleString("en-US")} {label}
+      </span>
+      <button disabled={page >= lastPage} onClick={() => onChange(page + 1)}>
+        بعدی
+      </button>
+    </div>
+  );
 }
 
 export function Table({

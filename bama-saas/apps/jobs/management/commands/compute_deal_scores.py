@@ -28,5 +28,7 @@ class Command(BaseCommand):
         result = compute_deal_scores(model_id=options["model"])
         self.stdout.write(self.style.SUCCESS(
             f"Scored {result['scored']} ad(s) "
-            f"(min_peers={result['min_peers']}, model_id={result['model_id']})."
+            f"(min_peers={result['min_peers']}, model_id={result['model_id']}, "
+            f"outliers_flagged={result['outliers_flagged']}, "
+            f"outliers_cleared={result['outliers_cleared']})."
         ))

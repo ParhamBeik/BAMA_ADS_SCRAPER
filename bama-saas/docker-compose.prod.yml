@@ -1,0 +1,127 @@
+# Production stack for bama-saas: Postgres, Django (gunicorn), the built
+# React/Vite SPA behind nginx, and the worker loop. Standalone file (not an
+# overlay on docker-compose.yml) because the frontend service is structurally
+# different in prod (built static bundle behind nginx, not the Vite dev
+# server) and the edge network / static-file wiring are easier to read as one
+# explicit definition than as a diff against the dev compose.
+#
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+#
+# Only frontend joins the shared `vps-edge` network (Caddy terminates TLS
+# there); postgres/django/worker stay on the internal network.
+x-json-logging: &json-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+x-django-env: &django-env
+  DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-bama_saas}
+  DJANGO_SETTINGS_MODULE: config.settings.prod
+  SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY}
+  ALLOWED_HOSTS: ${ALLOWED_HOSTS:?set ALLOWED_HOSTS}
+  CORS_ORIGINS: ${CORS_ORIGINS:?set CORS_ORIGINS}
+  ADMIN_API_KEY: ${ADMIN_API_KEY:-}
+  BAMA_MAX_ADS: ${BAMA_MAX_ADS:-50000}
+  BAMA_PAGE_PAUSE: ${BAMA_PAGE_PAUSE:-0.8}
+  BAMA_REQUEST_TIMEOUT: ${BAMA_REQUEST_TIMEOUT:-20}
+  BAMA_COOKIE: ${BAMA_COOKIE:-}
+  BAMA_SCRAPED_DATA_ROOT: /data
+  BAMA_HISTORY_DB_PATH: /data/bama.db
+  DJANGO_SUPERUSER_EMAIL: ${DEV_ADMIN_EMAIL:-admin@bama.local}
+  DJANGO_SUPERUSER_PASSWORD: ${DEV_ADMIN_PASSWORD:?set DEV_ADMIN_PASSWORD}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: bama-postgres
+    restart: unless-stopped
+    logging: *json-logging
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-bama_saas}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-bama_saas}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - internal
+
+  django:
+    build: .
+    container_name: bama-django
+    restart: unless-stopped
+    logging: *json-logging
+    environment: *django-env
+    volumes:
+      - staticfiles:/app/staticfiles
+      - ./data:/data:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # createsuperuser --noinput reads DJANGO_SUPERUSER_PASSWORD from the
+    # environment; `|| true` so a restart on an already-provisioned DB doesn't
+    # crash the startup chain (it exits non-zero when the user already exists).
+    # ensure_dev_admin is DEBUG-only by design (raises under prod settings) so
+    # it cannot be reused here.
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py collectstatic --noinput &&
+             (python manage.py createsuperuser --noinput --email \"$$DJANGO_SUPERUSER_EMAIL\" || true) &&
+             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health/"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks:
+      internal:
+        aliases: [backend]   # ui/web/nginx.conf proxies /api/ and /admin/ to "backend"
+
+  frontend:
+    build:
+      context: ./ui/web
+      dockerfile: Dockerfile.prod
+    container_name: bama-frontend
+    restart: unless-stopped
+    logging: *json-logging
+    depends_on:
+      django:
+        condition: service_healthy
+    volumes:
+      - staticfiles:/static:ro
+    expose: ["80"]
+    networks:
+      internal:
+      edge:
+        aliases: [bama-frontend]
+
+  worker:
+    build: .
+    container_name: bama-worker
+    restart: unless-stopped
+    logging: *json-logging
+    environment: *django-env
+    volumes:
+      - ./data:/data:ro
+    depends_on:
+      django:
+        condition: service_healthy
+    command: sh deploy/worker/run_worker.sh
+    networks:
+      - internal
+
+volumes:
+  postgres_data:
+  staticfiles:
+
+networks:
+  internal:
+  edge:
+    external: true
+    name: vps-edge

@@ -164,9 +164,19 @@ def refresh_cohort_deal_scores(model_ids: set[int] | list[int]) -> dict:
     """Refresh deal scores incrementally for a set of model IDs."""
     total_scored = 0
     refreshed_models = 0
+    total_outliers_flagged = 0
+    total_outliers_cleared = 0
     for mid in set(model_ids):
         if mid is None:
             continue
-        total_scored += compute_deal_scores(model_id=mid).get("scored", 0)
+        result = compute_deal_scores(model_id=mid)
+        total_scored += result.get("scored", 0)
+        total_outliers_flagged += result.get("outliers_flagged", 0)
+        total_outliers_cleared += result.get("outliers_cleared", 0)
         refreshed_models += 1
-    return {"refreshed_models": refreshed_models, "total_scored": total_scored}
+    return {
+        "refreshed_models": refreshed_models,
+        "total_scored": total_scored,
+        "total_outliers_flagged": total_outliers_flagged,
+        "total_outliers_cleared": total_outliers_cleared,
+    }

@@ -267,7 +267,7 @@ def _exec_cmd_step(
         return StepResult(name, True, f"skipped: {exc}"[:500], dur)
     except Exception as exc:  # noqa: BLE001
         dur = time.monotonic() - start
-        logger.error(
+        logger.exception(
             "event=pipeline_step_failed step=%s duration_s=%.1f error_type=%s error=%s",
             name,
             dur,
@@ -321,7 +321,9 @@ def _deal_scores_step(*, incremental: bool, triggered_by: str = "scheduler") -> 
             res = refresh_cohort_deal_scores(model_ids)
             detail = (
                 f"incremental models={res['refreshed_models']} "
-                f"scored={res['total_scored']}"
+                f"scored={res['total_scored']} "
+                f"outliers_flagged={res['total_outliers_flagged']} "
+                f"outliers_cleared={res['total_outliers_cleared']}"
             )
             job.detail = detail[:4000]
             dur = time.monotonic() - start

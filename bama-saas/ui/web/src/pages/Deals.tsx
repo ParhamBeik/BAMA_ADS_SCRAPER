@@ -31,7 +31,7 @@ import { api } from "../api/client";
 import type { Envelope } from "../api/client";
 import { qs, useFilters } from "../filters";
 import {
-  Async, Card, ConfidenceDots, Fa, Provenance, Table, Thumb, km, pct, toman,
+  Async, Card, ConfidenceDots, Fa, Pager, Provenance, Table, Thumb, km, pct, toman,
 } from "../ui";
 import { ListingActions } from "../engagement";
 
@@ -459,24 +459,13 @@ export function Deals() {
                   </Table>
                 )}
 
-                <div className="filters" style={{ marginTop: 14, marginBottom: 0 }}>
-                  <button
-                    disabled={page <= 1}
-                    onClick={() => filters.set({ page: page - 1 })}
-                  >
-                    قبلی
-                  </button>
-                  <span className="stat-sub">
-                    صفحهٔ {page.toLocaleString("en-US")} از{" "}
-                    {lastPage.toLocaleString("en-US")} ·{" "}
-                    {total.toLocaleString("en-US")} آگهی
-                  </span>
-                  <button
-                    disabled={page >= lastPage}
-                    onClick={() => filters.set({ page: page + 1 })}
-                  >
-                    بعدی
-                  </button>
+                <div style={{ marginTop: 14 }}>
+                  <Pager
+                    page={page}
+                    lastPage={lastPage}
+                    total={total}
+                    onChange={(next) => filters.set({ page: next })}
+                  />
                 </div>
                 <Provenance envelope={board} />
               </>

@@ -2,7 +2,10 @@ FROM node:24-alpine AS build
 
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+# --legacy-peer-deps: openapi-typescript@7.13.0 peer-requires typescript@^5.x,
+# but the lockfile pins typescript@6.0.3 (dev-only codegen tool, doesn't affect
+# the built bundle) -- npm ci is strict about peer conflicts, this isn't.
+RUN npm ci --legacy-peer-deps
 COPY . .
 RUN npm run build
 

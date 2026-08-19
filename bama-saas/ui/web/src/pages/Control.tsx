@@ -9,9 +9,12 @@
  *
  * Inspecting individual records is Django admin's job, not this page's.
  */
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { Async, Card, Stat } from "../ui";
+
+const RECENT_RUNS_COLLAPSED = 15;
 
 type Check = { name: string; ok: boolean; detail: string };
 
@@ -68,6 +71,7 @@ function statusBadge(status: string) {
 
 export function Control() {
   const client = useQueryClient();
+  const [showAllRuns, setShowAllRuns] = useState(false);
   const health = useQuery({
     queryKey: ["admin-health"],
     queryFn: ({ signal }) => api.get<Health>("/api/admin/health/", signal),
@@ -124,24 +128,19 @@ export function Control() {
       <Card title="Crawl checks">
         <Async query={health}>
           {(data) => (
-            <table className="table inspect-table">
-              <thead>
-                <tr><th>name</th><th>ok</th><th>detail</th></tr>
-              </thead>
-              <tbody>
-                {data.crawl.map((c) => (
-                  <tr key={c.name}>
-                    <td><code>{c.name}</code></td>
-                    <td>
-                      <span className={`badge ${c.ok ? "ok" : "fail"}`}>
-                        {c.ok ? "OK" : "FAIL"}
-                      </span>
-                    </td>
-                    <td>{c.detail}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div className="check-grid">
+              {data.crawl.map((c) => (
+                <div key={c.name} className={`check-item${c.ok ? "" : " fail"}`}>
+                  <div className="row between">
+                    <code>{c.name}</code>
+                    <span className={`badge ${c.ok ? "ok" : "fail"}`}>
+                      {c.ok ? "OK" : "FAIL"}
+                    </span>
+                  </div>
+                  <p className="stat-sub">{c.detail}</p>
+                </div>
+              ))}
+            </div>
           )}
         </Async>
       </Card>
@@ -200,25 +199,42 @@ export function Control() {
         </Async>
       </Card>
 
-      <Card title="Recent runs">
+      <Card
+        title="Recent runs"
+        action={
+          <button className="ghost" onClick={() => setShowAllRuns((v) => !v)}>
+            {showAllRuns ? "show fewer" : "show all"}
+          </button>
+        }
+      >
         <Async query={jobs}>
-          {(data) => (
-            <table className="table inspect-table">
-              <thead>
-                <tr><th>started_at</th><th>name</th><th>status</th><th>detail</th></tr>
-              </thead>
-              <tbody>
-                {data.recent.map((r, i) => (
-                  <tr key={`${r.name}-${r.started_at}-${i}`}>
-                    <td>{r.started_at}</td>
-                    <td><code>{r.name}</code></td>
-                    <td>{r.status}</td>
-                    <td>{(r.detail || r.error || "—").slice(0, 160)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+          {(data) => {
+            const rows = showAllRuns ? data.recent : data.recent.slice(0, RECENT_RUNS_COLLAPSED);
+            return (
+              <>
+                <table className="table inspect-table">
+                  <thead>
+                    <tr><th>started_at</th><th>name</th><th>status</th><th>detail</th></tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r, i) => (
+                      <tr key={`${r.name}-${r.started_at}-${i}`}>
+                        <td>{r.started_at}</td>
+                        <td><code>{r.name}</code></td>
+                        <td>{r.status}</td>
+                        <td>{(r.detail || r.error || "—").slice(0, 160)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {!showAllRuns && data.recent.length > RECENT_RUNS_COLLAPSED && (
+                  <p className="stat-sub" style={{ marginTop: 8 }}>
+                    {data.recent.length - RECENT_RUNS_COLLAPSED} more run(s) hidden.
+                  </p>
+                )}
+              </>
+            );
+          }}
         </Async>
       </Card>
 

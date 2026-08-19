@@ -16,7 +16,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import type { Envelope, Paginated } from "../api/client";
 import { Chart } from "../Chart";
-import { Async, Card, Provenance, Table, toman } from "../ui";
+import { Async, Card, Fa, Provenance, Table, toman } from "../ui";
 
 /** Shape of /api/markets/ — one row per model that actually has listings. */
 interface ModelRow {
@@ -78,6 +78,50 @@ function ModelPicker({
   );
 }
 
+/**
+ * The picker plus a gallery of the most-listed models.
+ *
+ * A dropdown with nothing selected is a dead end — the model with the deepest
+ * listing history is also the one most likely to have a clean survival curve
+ * and enough retention years to plot, so it goes straight in front of the user
+ * instead of waiting to be found in a long `<select>`.
+ */
+function ModelPickerSection({
+  models,
+  navigate,
+}: {
+  models: ModelRow[];
+  navigate: (path: string) => void;
+}) {
+  if (models.length === 0) {
+    return <div className="state">هنوز مدلی برای بررسی در دسترس نیست.</div>;
+  }
+  const featured = [...models].sort((a, b) => b.ad_count - a.ad_count).slice(0, 12);
+  return (
+    <div className="stack">
+      <div className="filters">
+        <ModelPicker models={models} onChange={(id) => navigate(`/research/${id}`)} />
+      </div>
+      <div className="chip-grid">
+        {featured.map((m) => (
+          <button
+            key={m.model_id}
+            className="model-chip"
+            onClick={() => navigate(`/research/${m.model_id}`)}
+          >
+            <strong>
+              <Fa>{m.model_name}</Fa>
+            </strong>
+            <span className="stat-sub">
+              <Fa>{m.brand_name}</Fa> · {m.ad_count.toLocaleString("en-US")} آگهی
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function Research() {
   const navigate = useNavigate();
   const { modelId } = useParams();
@@ -106,15 +150,13 @@ export function Research() {
 
   if (!modelId) {
     return (
-      <Card title="تحقیق مدل">
-        {modelList.length === 0 ? (
-          <div className="state">هنوز مدلی برای بررسی در دسترس نیست.</div>
-        ) : (
-          <div className="filters">
-            <ModelPicker models={modelList} onChange={(id) => navigate(`/research/${id}`)} />
-          </div>
-        )}
-      </Card>
+      <div className="stack" dir="rtl">
+        <Card title="تحقیق مدل">
+          <Async query={models} empty="هنوز مدلی برای بررسی در دسترس نیست.">
+            {() => <ModelPickerSection models={modelList} navigate={navigate} />}
+          </Async>
+        </Card>
+      </div>
     );
   }
 

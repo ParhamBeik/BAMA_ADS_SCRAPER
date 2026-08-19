@@ -11,6 +11,7 @@ Design (see project plan, "Normalized model schema"):
 
 from django.contrib.postgres.indexes import GinIndex
 from django.db import models
+from django.db.models import Q
 
 
 class Brand(models.Model):
@@ -254,6 +255,18 @@ class Ad(models.Model):
                 fields=["raw_payload"],
                 opclasses=["jsonb_path_ops"],
                 name="ad_raw_gin",
+            ),
+            # The browse-list predicate (AdViewSet.get_queryset / verified()).
+            # GIN indexes only accelerate positive `@>` containment, not the
+            # `NOT (quality_flags @> ...)` / `NOT (cohort_flags @> ...)` exclusions
+            # verified()/without_high_outliers() apply on top, so pagination's
+            # .count() was sequential-scanning the full table on every request.
+            # This narrows that scan to the publish-complete active rows before
+            # the jsonb checks run.
+            models.Index(
+                fields=("status", "publish_at"),
+                name="ad_list_active_idx",
+                condition=Q(current_price__gt=0),
             ),
         ]
 

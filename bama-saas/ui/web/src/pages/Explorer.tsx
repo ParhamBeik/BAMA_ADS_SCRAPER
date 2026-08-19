@@ -25,7 +25,7 @@ import { AlertTriangle, Wallet } from "lucide-react";
 import { api } from "../api/client";
 import type { Envelope, Paginated } from "../api/client";
 import { qs, useFilters } from "../filters";
-import { Async, Card, FLAG_LABEL, Fa, Provenance, Table, Thumb, km, toman } from "../ui";
+import { Async, Card, FLAG_LABEL, Fa, Pager, Provenance, Table, Thumb, km, toman } from "../ui";
 import { ListingActions } from "../engagement";
 
 interface AdRow {
@@ -61,6 +61,11 @@ interface Model {
 const TRANSMISSIONS = ["اتوماتیک", "دنده ای"];
 const FUELS = ["بنزینی", "هیبریدی", "برقی", "دوگانه سوز", "پلاگین هیبرید", "بردافزا", "هیبرید ملایم", "دیزلی"];
 const BODY_TYPES = ["سدان", "کراس اور", "هاچبک", "وانت", "شاسی بلند‌", "ون", "کوپه", "کروک"];
+
+// Must match REST_FRAMEWORK.PAGE_SIZE in config/settings/base.py — the API
+// gives back a count and a next/previous link, never a page size, so the
+// pager has to know it independently to compute the last page.
+const PAGE_SIZE = 50;
 
 const FILTER_KEYS = [
   "brand", "model", "q", "price_min", "price_max", "year_min", "year_max",
@@ -379,16 +384,14 @@ export function Explorer() {
                     ))}
                   </Table>
                 )}
-                <div className="filters" style={{ marginTop: 10, marginBottom: 0 }}>
-                  <button disabled={page <= 1} onClick={() => filters.set({ page: page - 1 })}>
-                    قبلی
-                  </button>
-                  <span className="stat-sub">
-                    {data.count.toLocaleString("en-US")} آگهی فعالِ قیمت‌دار
-                  </span>
-                  <button disabled={!data.next} onClick={() => filters.set({ page: page + 1 })}>
-                    بعدی
-                  </button>
+                <div style={{ marginTop: 10 }}>
+                  <Pager
+                    page={page}
+                    lastPage={Math.max(1, Math.ceil(data.count / PAGE_SIZE))}
+                    total={data.count}
+                    label="آگهی فعالِ قیمت‌دار"
+                    onChange={(next) => filters.set({ page: next })}
+                  />
                 </div>
               </>
             )}

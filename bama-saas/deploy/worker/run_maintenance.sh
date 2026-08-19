@@ -36,15 +36,15 @@ export DJANGO_SETTINGS_MODULE="${DJANGO_SETTINGS_MODULE:-config.settings.dev}"
 
 LOCK="${BAMA_MAINTENANCE_LOCK:-/tmp/bama-saas-maintenance.lock}"
 
-# crawl_health stays last and its exit status stays deliberately swallowed: it
-# is a report, not a step, and a red crawler must not make maintenance look as
-# though it failed to run. The findings go to the log.
+# Routed through `manage.py run_maintenance` (not the three bare commands
+# directly) so each step gets a JobRun row -- previously these were invisible
+# to /api/admin/jobs/overview, only visible in raw container logs. The command
+# itself preserves the old independent-steps behavior: a failed deal_scores
+# rebuild doesn't stop prune_history/crawl_health from running, and
+# crawl_health's exit code never fails the overall run (it's a report).
 RUN='set -eu
      PY="$1"; shift
-     "$PY" manage.py compute_deal_scores
-     "$PY" manage.py prune_history --days 30 || echo "bama.maint: prune_history failed (see above)" >&2
-     echo "--- crawl health ---"
-     "$PY" manage.py crawl_health || echo "bama.maint: CRAWL HEALTH DEGRADED (see above)" >&2'
+     "$PY" manage.py run_maintenance --prune-days 30'
 
 if command -v flock >/dev/null 2>&1; then
     exec flock -n "$LOCK" sh -c "$RUN" _ "$PYTHON_BIN" "$@"
