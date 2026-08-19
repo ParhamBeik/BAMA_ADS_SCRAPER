@@ -22,8 +22,8 @@ import type { Envelope } from "./api/client";
  * detail page used to print the raw `price_outlier_low` string.
  */
 export const FLAG_LABEL: Record<string, string> = {
-  price_outlier_low: "خیلی زیر هم‌گروه — دلیلش را بررسی کنید",
-  price_outlier_high: "خیلی بالاتر از هم‌گروه",
+  price_outlier_low: "Far below peer group — check why",
+  price_outlier_high: "Far above peer group",
 };
 
 /**
@@ -41,7 +41,7 @@ export function Thumb({ src, children }: { src?: string; children?: ReactNode })
       {src && !failed ? (
         <img src={src} alt="" loading="lazy" onError={() => setFailed(true)} />
       ) : (
-        <div className="thumb-fallback">بدون تصویر</div>
+        <div className="thumb-fallback">No photo</div>
       )}
       {children}
     </div>
@@ -71,20 +71,19 @@ export function pct(value: number | null | undefined, digits = 1): string {
 /**
  * Odometer, at card density.
  *
- * Rounding to thousands rendered every new car as "۰ هزار کیلومتر", which reads
- * as missing data rather than as a zero-kilometre car — so the two are now
- * distinct strings.
+ * Rounding to thousands rendered every new car as "0k km", which read as
+ * missing data rather than as a zero-kilometre car — so the two stay distinct
+ * strings ("0 km" vs "—").
  *
- * Western digits, like `toman` and `pct`. Numbers on this site are mixed into
- * lines with Latin magnitude suffixes ("3.90B") and sit in `tabular-nums`
- * columns that only align Latin figures, so Persian digits here produced lines
- * like "1404 · ۱۳۰ هزار کیلومتر" — two numeral systems in one sentence.
+ * Western digits throughout, like `toman` and `pct`: numbers on this site sit
+ * in `tabular-nums` columns and mix with Latin magnitude suffixes ("3.90B"),
+ * so digits stay Latin rather than switching numeral systems mid-line.
  */
 export function km(value: number | null | undefined): string {
   if (value == null) return "—";
-  if (value === 0) return "صفر کیلومتر";
-  if (value < 1000) return `${value.toLocaleString("en-US")} کیلومتر`;
-  return `${Math.round(value / 1000).toLocaleString("en-US")} هزار کیلومتر`;
+  if (value === 0) return "0 km";
+  if (value < 1000) return `${value.toLocaleString("en-US")} km`;
+  return `${Math.round(value / 1000).toLocaleString("en-US")}k km`;
 }
 
 export function Card({
@@ -141,35 +140,35 @@ export function Provenance({ envelope }: { envelope?: Partial<Envelope> }) {
           cheerful listing count. */}
       {coverage.source_blocked && (
         <span className="badge warn">
-          <AlertTriangle size={11} /> باما فعلاً به ما پاسخ نمی‌دهد — این اعداد
-          تازه نمی‌شوند
+          <AlertTriangle size={11} /> Bama isn't responding right now — these
+          numbers aren't refreshing
         </span>
       )}
       {coverage.removal_detection_paused && (
         <span className="badge warn">
-          <AlertTriangle size={11} /> تشخیص حذف آگهی متوقف است — ممکن است آگهیِ
-          فروخته‌شده هنوز فعال نشان داده شود
+          <AlertTriangle size={11} /> Removal detection is paused — a sold
+          listing may still show as active
         </span>
       )}
       <Database size={13} />
       {coverage.complete_sweep ? (
         <span>
-          {coverage.ads_covered?.toLocaleString("en-US")} آگهی، آخرین پویش{" "}
-          {coverage.age_hours} ساعت پیش
+          {coverage.ads_covered?.toLocaleString("en-US")} listings, last swept{" "}
+          {coverage.age_hours}h ago
         </span>
       ) : (
         <span className="warn">
-          هیچ پویش کاملی ثبت نشده — این اعداد ممکن است فقط بخشی از بازار را
-          پوشش دهند
+          No complete sweep recorded — these numbers may cover only part of
+          the market
         </span>
       )}
       {coverage.stale && (
         <span className="badge warn">
-          <AlertTriangle size={11} /> کهنه
+          <AlertTriangle size={11} /> Stale
         </span>
       )}
-      {as_of && <span>· تا {new Date(as_of).toLocaleString("fa-IR")}</span>}
-      {methodology_version != null && <span>· روش نسخهٔ {methodology_version}</span>}
+      {as_of && <span>· as of {new Date(as_of).toLocaleString("en-US")}</span>}
+      {methodology_version != null && <span>· methodology v{methodology_version}</span>}
     </div>
   );
 }
@@ -184,7 +183,7 @@ export function Provenance({ envelope }: { envelope?: Partial<Envelope> }) {
 export function ConfidenceDots({ tier }: { tier?: string | null }) {
   const filled = tier === "high" ? 3 : tier === "medium" ? 2 : tier === "low" ? 1 : 0;
   if (!filled) return <span className="dots">—</span>;
-  const label = { high: "اعتماد بالا", medium: "اعتماد متوسط", low: "اعتماد کم" }[
+  const label = { high: "High confidence", medium: "Medium confidence", low: "Low confidence" }[
     tier as "high" | "medium" | "low"
   ];
   return (
@@ -242,7 +241,7 @@ export function Async<T>({
     return (
       <div className="state">
         <AlertTriangle size={16} />{" "}
-        <strong>هنوز دادهٔ کافی و تمیز برای این محاسبه نیست.</strong>
+        <strong>Not enough clean data yet for this calculation.</strong>
         <div style={{ marginTop: 4 }}>{humanReason(data.reason)}</div>
       </div>
     );
@@ -253,24 +252,24 @@ export function Async<T>({
 function humanReason(reason?: string): string {
   switch (reason) {
     case "insufficient_episodes":
-      return "آگهی‌های تمام‌شدهٔ این گروه برای برآورد مدت فروش کم است.";
+      return "Too few completed listings in this cohort to estimate time-to-sell.";
     case "insufficient_clean_history":
       // Not an error and not an empty cohort: removal dates recorded before the
       // crawl was reliable measured the sweep schedule rather than the market,
       // so they are excluded until enough trustworthy history accumulates.
-      return "تاریخچهٔ قابل اتکا هنوز کافی نیست — مدت ماندن در بازار فقط از آگهی‌هایی شمرده می‌شود که پس از اصلاح خزشگر دیده شده‌اند.";
+      return "Not enough reliable history yet — time-on-market only counts listings seen after the crawler fix.";
     case "insufficient_peers":
-      return "آگهی‌های هم‌گروه برای قیمت‌گذاری این خودرو کم است.";
+      return "Too few peer listings to price this car.";
     case "insufficient_years":
-      return "سال‌های مدلِ دارای داده برای رسم منحنی افت قیمت کافی نیست.";
+      return "Not enough model years with data to plot a depreciation curve.";
     case "insufficient_listings":
-      return "تعداد آگهی‌های این گروه کم است.";
+      return "Too few listings in this cohort.";
     case "unknown_or_unverified_ad":
-      return "این آگهی ناشناخته است یا از بررسی صحت داده رد نشده.";
+      return "This listing is unknown or hasn't passed data verification.";
     case "no_price_baseline":
-      return "مبنای قیمتی قابل استفاده‌ای برای این گروه وجود ندارد.";
+      return "No usable price baseline exists for this cohort.";
     default:
-      return reason ?? "این گروه برای گزارش‌دادن کوچک است.";
+      return reason ?? "This cohort is too small to report on.";
   }
 }
 
@@ -287,7 +286,7 @@ export function Pager({
   page,
   lastPage,
   total,
-  label = "آگهی",
+  label = "listings",
   onChange,
 }: {
   page: number;
@@ -309,23 +308,23 @@ export function Pager({
   return (
     <div className="pager">
       <button disabled={page <= 1} onClick={() => onChange(page - 1)}>
-        قبلی
+        Prev
       </button>
       <span className="stat-sub pager-mid">
-        صفحهٔ
+        Page
         <input
           className="pager-input"
           value={draft}
           inputMode="numeric"
-          aria-label="شماره صفحه"
+          aria-label="Page number"
           onChange={(e) => setDraft(e.target.value)}
           onBlur={commit}
           onKeyDown={(e) => e.key === "Enter" && commit()}
         />
-        از {lastPage.toLocaleString("en-US")} · {total.toLocaleString("en-US")} {label}
+        of {lastPage.toLocaleString("en-US")} · {total.toLocaleString("en-US")} {label}
       </span>
       <button disabled={page >= lastPage} onClick={() => onChange(page + 1)}>
-        بعدی
+        Next
       </button>
     </div>
   );

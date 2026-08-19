@@ -68,25 +68,25 @@ export function ListingDetail() {
         {(data) => (
           <>
             <div className="breadcrumb">
-              <Link to="/">خانه</Link> / <Link to="/explore">کاوش</Link> / <Fa>{data.title}</Fa>
+              <Link to="/">Home</Link> / <Link to="/explore">Explore</Link> / <Fa>{data.title}</Fa>
             </div>
             <div className="detail-layout">
               <div className="gallery card">
                 {(data.image_urls?.length ? data.image_urls : data.primary_image_url ? [data.primary_image_url] : []).map((src) => (
                   <img key={src} src={src} alt="" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.opacity = "0.3"; }} />
                 ))}
-                {!data.primary_image_url && <div className="thumb-fallback">بدون تصویر</div>}
+                {!data.primary_image_url && <div className="thumb-fallback">No photo</div>}
               </div>
               <div className="stack">
                 <div className="card">
                   <h1><Fa>{data.title}</Fa></h1>
                   {data.status && data.status !== "active" && (
                     <p className="badge warn">
-                      این آگهی دیگر در باما فعال نیست
+                      This listing is no longer active on Bama
                       {data.last_seen_at && (
                         <>
-                          {" "}— آخرین بازدید{" "}
-                          {new Date(data.last_seen_at).toLocaleDateString("fa-IR")}
+                          {" "}— last seen{" "}
+                          {new Date(data.last_seen_at).toLocaleDateString("en-US")}
                         </>
                       )}
                     </p>
@@ -94,29 +94,31 @@ export function ListingDetail() {
                   <p className="price">{data.current_price != null ? toman(data.current_price) : "—"}</p>
                   {data.price_basis_unclear && (
                     <p className="badge warn">
-                      این عدد احتمالاً پیش‌پرداخت یا قسط است، نه قیمت کامل خودرو —
-                      به همین دلیل از تابلوی پیشنهادها کنار گذاشته شده.
+                      This number is likely a down payment or installment, not
+                      the full car price — that's why it's excluded from the
+                      deal board.
                     </p>
                   )}
                   {data.condition_flagged && (
                     <p className="badge warn">
-                      توضیحات آگهی به وضعیت خودرو (تصادف، پلاک منطقهٔ آزاد یا
-                      مشابه) اشاره دارد — پیش از مقایسهٔ قیمت آن را بخوانید.
+                      The listing description mentions the car's condition
+                      (accident, free-zone plate, or similar) — read it before
+                      comparing price.
                     </p>
                   )}
                   <ul className="spec-list">
-                    <li>سال: {data.year_jalali ?? "—"}</li>
-                    <li>کارکرد: {data.mileage?.toLocaleString("en-US") ?? "—"}</li>
-                    <li>گیربکس: {data.transmission || "—"}</li>
-                    <li>بدنه: {data.body_type || "—"}</li>
-                    <li>سوخت: {data.fuel || "—"}</li>
-                    <li>شهر: <Fa>{data.city_name || "—"}</Fa></li>
-                    <li>فروشنده تأییدشده: {data.seller_authenticated == null ? "—" : data.seller_authenticated ? "بله" : "خیر"}</li>
+                    <li>Year: {data.year_jalali ?? "—"}</li>
+                    <li>Mileage: {data.mileage?.toLocaleString("en-US") ?? "—"}</li>
+                    <li>Transmission: {data.transmission || "—"}</li>
+                    <li>Body: {data.body_type || "—"}</li>
+                    <li>Fuel: {data.fuel || "—"}</li>
+                    <li>City: <Fa>{data.city_name || "—"}</Fa></li>
+                    <li>Verified seller: {data.seller_authenticated == null ? "—" : data.seller_authenticated ? "Yes" : "No"}</li>
                     {data.seller_type && (
                       <li>
                         {data.seller_type === "dealer"
-                          ? `نمایشگاه: ${data.dealer_name || "—"}`
-                          : "فروشنده شخصی"}
+                          ? `Dealership: ${data.dealer_name || "—"}`
+                          : "Private seller"}
                       </li>
                     )}
                   </ul>
@@ -126,13 +128,13 @@ export function ListingDetail() {
                     </p>
                   ))}
                   {data.url && (
-                    <a className="btn" href={data.url} target="_blank" rel="noreferrer">مشاهده در باما</a>
+                    <a className="btn" href={data.url} target="_blank" rel="noreferrer">View on Bama</a>
                   )}
                   <ListingActions code={data.code} />
                 </div>
                 <div className="card">
-                  <h2>توضیحات</h2>
-                  <p><Fa>{data.description || "توضیحی ثبت نشده."}</Fa></p>
+                  <h2>Description</h2>
+                  <p><Fa>{data.description || "No description provided."}</Fa></p>
                 </div>
               </div>
             </div>
@@ -141,13 +143,13 @@ export function ListingDetail() {
       </Async>
 
       <div className="card">
-        <h2>ارزیابی قیمت</h2>
+        <h2>Price assessment</h2>
         <Async query={fair}>
           {(fp) => fp.available === false ? (
-            <p className="muted">داده کافی نیست: {fp.reason}</p>
+            <p className="muted">Not enough data: {fp.reason}</p>
           ) : (
             <>
-              <p>قیمت منصفانه: {fp.fair_value != null ? toman(fp.fair_value) : "—"}</p>
+              <p>Fair price: {fp.fair_value != null ? toman(fp.fair_value) : "—"}</p>
               {fp.as_of && <Provenance envelope={fp as never} />}
             </>
           )}
@@ -155,14 +157,14 @@ export function ListingDetail() {
       </div>
 
       <div className="card">
-        <h2>تاریخچه قیمت</h2>
+        <h2>Price history</h2>
         <Async query={history}>
           {(rows) => {
             const list = Array.isArray(rows) ? rows : rows.results ?? [];
-            if (!list.length) return <p className="muted">تغییر قیمتی ثبت نشده.</p>;
+            if (!list.length) return <p className="muted">No price changes recorded.</p>;
             return (
               <table className="table">
-                <thead><tr><th>زمان</th><th>قیمت</th></tr></thead>
+                <thead><tr><th>Time</th><th>Price</th></tr></thead>
                 <tbody>
                   {list.slice(0, 20).map((r, i) => (
                     <tr key={i}><td>{r.observed_at}</td><td>{toman(r.price)}</td></tr>

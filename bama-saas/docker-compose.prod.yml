@@ -28,8 +28,13 @@ x-django-env: &django-env
   BAMA_COOKIE: ${BAMA_COOKIE:-}
   BAMA_SCRAPED_DATA_ROOT: /data
   BAMA_HISTORY_DB_PATH: /data/bama.db
-  DJANGO_SUPERUSER_EMAIL: ${DEV_ADMIN_EMAIL:-admin@bama.local}
-  DJANGO_SUPERUSER_PASSWORD: ${DEV_ADMIN_PASSWORD:?set DEV_ADMIN_PASSWORD}
+  # Read by ensure_seed_users (config/settings/prod.py), which creates/updates
+  # both logins on every startup — not just DJANGO_SUPERUSER_* consumed by
+  # createsuperuser, which only creates and never updates a changed password.
+  DEV_ADMIN_EMAIL: ${DEV_ADMIN_EMAIL:-admin@bama.local}
+  DEV_ADMIN_PASSWORD: ${DEV_ADMIN_PASSWORD:?set DEV_ADMIN_PASSWORD}
+  DEMO_USER_EMAIL: ${DEMO_USER_EMAIL:-demo@bama.local}
+  DEMO_USER_PASSWORD: ${DEMO_USER_PASSWORD:?set DEMO_USER_PASSWORD}
 
 services:
   postgres:
@@ -63,15 +68,13 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    # createsuperuser --noinput reads DJANGO_SUPERUSER_PASSWORD from the
-    # environment; `|| true` so a restart on an already-provisioned DB doesn't
-    # crash the startup chain (it exits non-zero when the user already exists).
-    # ensure_dev_admin is DEBUG-only by design (raises under prod settings) so
-    # it cannot be reused here.
+    # ensure_seed_users (not createsuperuser) so a redeploy with a changed
+    # DEV_ADMIN_PASSWORD/DEMO_USER_PASSWORD actually takes effect instead of
+    # silently no-opping on an already-provisioned DB.
     command: >
       sh -c "python manage.py migrate --noinput &&
              python manage.py collectstatic --noinput &&
-             (python manage.py createsuperuser --noinput --email \"$$DJANGO_SUPERUSER_EMAIL\" || true) &&
+             python manage.py ensure_seed_users &&
              gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health/"]

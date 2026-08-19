@@ -48,10 +48,10 @@ function windowLabel(w: MarketIndex["window"]): string {
   const span =
     w.first_date && w.last_date
       ? `${w.first_date} → ${w.last_date}`
-      : "هنوز تاریخی ثبت نشده";
-  const asked = `${w.days} روز از ${w.requested_days} روز درخواستی`;
+      : "No history recorded yet";
+  const asked = `${w.days}d of ${w.requested_days}d requested`;
   return w.clamped
-    ? `${span} · ${asked} (تاریخچه کوتاه‌تر از بازهٔ درخواستی است)`
+    ? `${span} · ${asked} (history is shorter than the requested window)`
     : `${span} · ${asked}`;
 }
 
@@ -76,18 +76,18 @@ export function Overview() {
                 which is already the subtitle of the first. */}
             <div className="grid cols-3">
               <Stat
-                label="آگهی فعال"
+                label="Active listings"
                 value={data.active_listings.toLocaleString("en-US")}
-                sub={`${data.priced_listings.toLocaleString("en-US")} با قیمت`}
+                sub={`${data.priced_listings.toLocaleString("en-US")} priced`}
               />
-              <Stat label="برند" value={data.brands.toLocaleString("en-US")} />
-              <Stat label="مدل" value={data.models.toLocaleString("en-US")} />
+              <Stat label="Brands" value={data.brands.toLocaleString("en-US")} />
+              <Stat label="Models" value={data.models.toLocaleString("en-US")} />
             </div>
-            <Card title="بزرگ‌ترین برندها">
+            <Card title="Top brands">
               {/* A bar next to each count. The share is the question being asked
                   of this table, and a column of numbers makes the reader do the
                   division. */}
-              <Table head={["برند", "آگهی", "سهم"]}>
+              <Table head={["Brand", "Listings", "Share"]}>
                 {data.top_brands.map((b) => (
                   <tr key={b.brand__name_fa}>
                     <td>
@@ -111,38 +111,39 @@ export function Overview() {
         )}
       </Async>
 
-      <Card title="شاخص قیمت کنترل‌شده">
+      <Card title="Composition-controlled price index">
         <p className="stat-sub" style={{ marginTop: 0 }}>
-          هر گروه فقط با خودش مقایسه می‌شود تا تغییر ترکیب آگهی‌ها شبیه تغییر
-          قیمت به نظر نرسد.
+          Each cohort is only compared with itself, so a change in listing
+          mix doesn't look like a price move.
         </p>
-        <Async query={index} empty="هنوز تاریخچهٔ شاخصی نیست." shape="chart">
+        <Async query={index} empty="No index history yet." shape="chart">
           {(data) => {
             const points = data.series ?? [];
             const last = points[points.length - 1];
             return (
               <>
-                <p className="stat-sub">بازهٔ واقعی: {windowLabel(data.window)}</p>
+                <p className="stat-sub">Actual window: {windowLabel(data.window)}</p>
                 {/* The index's own sample size. The Provenance strip below
                     reports the *sweep's* coverage (~33k ads), which is a much
                     larger and unrelated number — sitting next to the index it
                     read as if the index were built on all of it. */}
                 {last && (
                   <p className="stat-sub">
-                    ساخته‌شده از {last.cohort_count.toLocaleString("en-US")} گروه و{" "}
-                    {last.ad_count.toLocaleString("en-US")} آگهی در آخرین روز
+                    Built from {last.cohort_count.toLocaleString("en-US")} cohorts
+                    and {last.ad_count.toLocaleString("en-US")} listings on the
+                    latest day
                   </p>
                 )}
                 <div className="grid cols-2" style={{ marginBottom: 10 }}>
                   <Stat
-                    label="شاخص"
+                    label="Index"
                     value={
                       data.latest_index != null ? data.latest_index.toFixed(1) : "—"
                     }
-                    sub={`پایه ${data.base_value}`}
+                    sub={`Base ${data.base_value}`}
                   />
                   <Stat
-                    label="تغییر بازه"
+                    label="Window change"
                     value={pct(data.change_pct)}
                     tone={
                       data.change_pct == null
@@ -159,7 +160,7 @@ export function Overview() {
                       x={points.map((p) => p.date)}
                       series={[
                         {
-                          name: "شاخص",
+                          name: "Index",
                           data: points.map((p) => p.index_value),
                           area: true,
                         },
@@ -168,7 +169,7 @@ export function Overview() {
                     />
                   </Suspense>
                 ) : (
-                  <div className="state">هنوز تاریخچهٔ شاخصی نیست.</div>
+                  <div className="state">No index history yet.</div>
                 )}
                 <Provenance envelope={data} />
               </>

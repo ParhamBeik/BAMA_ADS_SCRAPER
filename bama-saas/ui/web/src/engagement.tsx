@@ -31,7 +31,7 @@ export function ListingActions({ code }: { code: string }) {
       disabled={toggle.isPending}
       aria-pressed={saved}
     >
-      <Heart size={14} /> {saved ? "ذخیره شده" : "ذخیره"}
+      <Heart size={14} /> {saved ? "Saved" : "Save"}
     </button>
   );
 }

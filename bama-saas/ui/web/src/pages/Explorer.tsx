@@ -84,8 +84,8 @@ interface FairPrice extends Envelope {
 }
 
 const COMPONENT_LABEL: Record<string, string> = {
-  cohort_median: "میانهٔ هم‌گروه",
-  mileage: "تعدیل کارکرد",
+  cohort_median: "Peer median",
+  mileage: "Mileage adjustment",
 };
 
 /**
@@ -100,18 +100,18 @@ function AdWarnings({ ad }: { ad: AdRow }) {
   return (
     <>
       {ad.price_basis_unclear && (
-        <span className="badge warn" title="این عدد احتمالاً پیش‌پرداخت یا قسط است، نه قیمت کامل خودرو">
-          <Wallet size={11} /> پیش‌پرداخت؟
+        <span className="badge warn" title="This number is likely a down payment or installment, not the full car price">
+          <Wallet size={11} /> Down payment?
         </span>
       )}
       {ad.condition_flagged && (
-        <span className="badge warn" title="توضیحات آگهی به تصادف، پلاک منطقهٔ آزاد یا وضعیت بدنه اشاره دارد">
-          <AlertTriangle size={11} /> وضعیت
+        <span className="badge warn" title="Listing description mentions an accident, free-zone plate, or body condition">
+          <AlertTriangle size={11} /> Condition
         </span>
       )}
       {flag && (
         <span className="badge warn" title={FLAG_LABEL[flag] ?? flag}>
-          <AlertTriangle size={11} /> {flag === "price_outlier_high" ? "گران" : "خیلی ارزان"}
+          <AlertTriangle size={11} /> {flag === "price_outlier_high" ? "Overpriced" : "Underpriced"}
         </span>
       )}
     </>
@@ -176,60 +176,60 @@ export function Explorer() {
       <div className="filters">
         <input
           key={q}
-          placeholder="جستجو…"
+          placeholder="Search…"
           defaultValue={q}
           onBlur={(e) => filters.set({ q: e.target.value || null, page: 1 })}
         />
         <select
           value={ordering}
           onChange={(e) => filters.set({ ordering: e.target.value, page: 1 })}
-          aria-label="مرتب‌سازی"
+          aria-label="Sort by"
         >
-          <option value="-publish_at">جدیدترین</option>
-          <option value="current_price">ارزان‌ترین</option>
-          <option value="-current_price">گران‌ترین</option>
-          <option value="mileage">کم‌کارکرد</option>
-          <option value="-year_jalali">جدیدترین سال</option>
+          <option value="-publish_at">Newest</option>
+          <option value="current_price">Cheapest</option>
+          <option value="-current_price">Most expensive</option>
+          <option value="mileage">Lowest mileage</option>
+          <option value="-year_jalali">Newest model year</option>
         </select>
         <div className="segmented">
           <button
             className={view === "cards" ? "on" : ""}
             onClick={() => filters.set({ view: null })}
           >
-            کارت
+            Cards
           </button>
           <button
             className={view === "table" ? "on" : ""}
             onClick={() => filters.set({ view: "table" })}
           >
-            جدول
+            Table
           </button>
         </div>
         <select
           value={brand ?? ""}
           onChange={(e) => filters.set({ brand: e.target.value || null, model: null, page: null })}
-          aria-label="برند"
+          aria-label="Brand"
         >
-          <option value="">همهٔ برندها</option>
+          <option value="">All brands</option>
           {brandList.map((b) => (
             <option key={b.slug} value={b.slug}>
               {b.name_fa}
             </option>
           ))}
         </select>
-        {hasActiveFilter && <button onClick={clearFilters}>پاک کردن فیلترها</button>}
+        {hasActiveFilter && <button onClick={clearFilters}>Clear filters</button>}
       </div>
 
       <details className="filters-adv">
-        <summary>فیلترهای پیشرفته</summary>
+        <summary>Advanced filters</summary>
         <div className="filters">
           <select
             value={model ?? ""}
             onChange={(e) => filters.set({ model: e.target.value || null, page: null })}
             disabled={!brand}
-            aria-label="مدل"
+            aria-label="Model"
           >
-            <option value="">همه مدل‌ها</option>
+            <option value="">All models</option>
             {modelList.map((m) => (
               <option key={m.id} value={m.id}>
                 {m.name_fa}
@@ -240,14 +240,14 @@ export function Explorer() {
           <input
             key={`price_min-${priceMin}`}
             type="number"
-            placeholder="حداقل قیمت (تومان)"
+            placeholder="Min price (toman)"
             defaultValue={priceMin ?? ""}
             onBlur={(e) => filters.set({ price_min: e.target.value || null, page: null })}
           />
           <input
             key={`price_max-${priceMax}`}
             type="number"
-            placeholder="حداکثر قیمت (تومان)"
+            placeholder="Max price (toman)"
             defaultValue={priceMax ?? ""}
             onBlur={(e) => filters.set({ price_max: e.target.value || null, page: null })}
           />
@@ -255,14 +255,14 @@ export function Explorer() {
           <input
             key={`year_min-${yearMin}`}
             type="number"
-            placeholder="از سال (شمسی)"
+            placeholder="From year (Jalali)"
             defaultValue={yearMin ?? ""}
             onBlur={(e) => filters.set({ year_min: e.target.value || null, page: null })}
           />
           <input
             key={`year_max-${yearMax}`}
             type="number"
-            placeholder="تا سال (شمسی)"
+            placeholder="To year (Jalali)"
             defaultValue={yearMax ?? ""}
             onBlur={(e) => filters.set({ year_max: e.target.value || null, page: null })}
           />
@@ -270,7 +270,7 @@ export function Explorer() {
           <input
             key={`mileage_max-${mileageMax}`}
             type="number"
-            placeholder="حداکثر کارکرد"
+            placeholder="Max mileage"
             defaultValue={mileageMax ?? ""}
             onBlur={(e) => filters.set({ mileage_max: e.target.value || null, page: null })}
           />
@@ -278,9 +278,9 @@ export function Explorer() {
           <select
             value={transmission ?? ""}
             onChange={(e) => filters.set({ transmission: e.target.value || null, page: null })}
-            aria-label="گیربکس"
+            aria-label="Transmission"
           >
-            <option value="">گیربکس (همه)</option>
+            <option value="">Transmission (all)</option>
             {TRANSMISSIONS.map((t) => (
               <option key={t} value={t}>{t}</option>
             ))}
@@ -289,9 +289,9 @@ export function Explorer() {
           <select
             value={fuel ?? ""}
             onChange={(e) => filters.set({ fuel: e.target.value || null, page: null })}
-            aria-label="سوخت"
+            aria-label="Fuel"
           >
-            <option value="">سوخت (همه)</option>
+            <option value="">Fuel (all)</option>
             {FUELS.map((f) => (
               <option key={f} value={f}>{f}</option>
             ))}
@@ -300,9 +300,9 @@ export function Explorer() {
           <select
             value={bodyType ?? ""}
             onChange={(e) => filters.set({ body_type: e.target.value || null, page: null })}
-            aria-label="بدنه"
+            aria-label="Body type"
           >
-            <option value="">بدنه (همه)</option>
+            <option value="">Body type (all)</option>
             {BODY_TYPES.map((b) => (
               <option key={b} value={b}>{b}</option>
             ))}
@@ -311,10 +311,10 @@ export function Explorer() {
       </details>
 
       <div className="grid cols-2">
-        <Card title="آگهی‌ها">
+        <Card title="Listings">
           <Async
             query={ads}
-            empty="آگهی‌ای با این فیلترها پیدا نشد."
+            empty="No listings match these filters."
             shape={view === "cards" ? "cards" : "table"}
           >
             {(data) => (
@@ -352,7 +352,7 @@ export function Explorer() {
                           <div className="row">
                             <Fa>{ad.city_name || "—"}</Fa>
                             <Link to={`/listing/${ad.code}`} style={{ marginInlineStart: "auto" }}>
-                              جزئیات
+                              Details
                             </Link>
                           </div>
                         </div>
@@ -360,7 +360,7 @@ export function Explorer() {
                     ))}
                   </div>
                 ) : (
-                  <Table head={["خودرو", "سال", "کارکرد", "قیمت"]}>
+                  <Table head={["Car", "Year", "Mileage", "Price"]}>
                     {data.results.map((ad) => (
                       <tr
                         key={ad.code}
@@ -376,7 +376,7 @@ export function Explorer() {
                         <td className="num">{ad.year_jalali ?? ad.year ?? "—"}</td>
                         <td className="num">
                           {ad.mileage != null
-                            ? `${ad.mileage.toLocaleString("en-US")} کیلومتر`
+                            ? `${ad.mileage.toLocaleString("en-US")} km`
                             : "—"}
                         </td>
                         <td className="num">{toman(ad.current_price)}</td>
@@ -389,7 +389,7 @@ export function Explorer() {
                     page={page}
                     lastPage={Math.max(1, Math.ceil(data.count / PAGE_SIZE))}
                     total={data.count}
-                    label="آگهی فعالِ قیمت‌دار"
+                    label="active priced listings"
                     onChange={(next) => filters.set({ page: next })}
                   />
                 </div>
@@ -413,11 +413,11 @@ function FairPricePanel({ code }: { code: string | null }) {
 
   if (!code) {
     return (
-      <Card title="قیمت منصفانه">
+      <Card title="Fair price">
         <div className="state">
-          <strong>یک آگهی را انتخاب کنید.</strong>
+          <strong>Select a listing.</strong>
           <p className="empty-hint">
-            روی هر کارت یا سطر بزنید تا قیمتش با هم‌گروهش سنجیده شود.
+            Click any card or row to compare its price against its peer group.
           </p>
         </div>
       </Card>
@@ -425,30 +425,30 @@ function FairPricePanel({ code }: { code: string | null }) {
   }
 
   return (
-    <Card title="قیمت منصفانه">
+    <Card title="Fair price">
       <Async query={query} shape="table">
         {(data) => (
           <>
             <div className="grid cols-2" style={{ marginBottom: 10 }}>
               <div>
-                <div className="card-title">قیمت پیشنهادی فروشنده</div>
+                <div className="card-title">Seller's asking price</div>
                 <div className="stat">{toman(data.asking)}</div>
               </div>
               <div>
-                <div className="card-title">ارزش منصفانه</div>
+                <div className="card-title">Fair value</div>
                 <div className={`stat ${(data.gap_pct ?? 0) < 0 ? "up" : ""}`}>
                   {toman(data.fair_value)}
                 </div>
                 {data.gap_pct != null && (
                   <div className="stat-sub">
-                    {Math.abs(data.gap_pct)}٪{" "}
-                    {data.gap_pct > 0 ? "بالاتر از" : "پایین‌تر از"} ارزش منصفانه
+                    {Math.abs(data.gap_pct)}%{" "}
+                    {data.gap_pct > 0 ? "above" : "below"} fair value
                   </div>
                 )}
               </div>
             </div>
 
-            <Table head={["جزء", "تومان"]}>
+            <Table head={["Component", "Toman"]}>
               {data.components.map((c) => (
                 <tr key={c.name}>
                   <td>
