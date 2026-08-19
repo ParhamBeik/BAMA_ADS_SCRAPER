@@ -57,6 +57,10 @@ class User(AbstractBaseUser, PermissionsMixin):
     full_name = models.CharField(max_length=255, blank=True)
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
+    # Read-only login: can view everything, blocked from POST/PATCH/DELETE by
+    # ReadOnlyForDemo (see config/settings/prod.py). Lets the operator hand out
+    # a look-but-don't-touch credential without building a real roles system.
+    is_demo = models.BooleanField(default=False)
     date_joined = models.DateTimeField(default=timezone.now)
 
     objects = UserManager()

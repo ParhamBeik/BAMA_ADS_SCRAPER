@@ -50,11 +50,11 @@ export function Saved() {
 
   return (
     <div className="grid cols-2" dir="rtl">
-      <Card title="آگهی‌های ذخیره‌شده">
-        <Async query={saved} empty="هنوز چیزی ذخیره نشده." shape="table">
+      <Card title="Saved listings">
+        <Async query={saved} empty="Nothing saved yet." shape="table">
           {(data) =>
             data.results.length ? (
-              <Table head={["آگهی", "قیمت", ""]}>
+              <Table head={["Listing", "Price", ""]}>
                 {data.results.map((row) => (
                   <tr key={row.code}>
                     <td>
@@ -64,7 +64,7 @@ export function Saved() {
                     </td>
                     <td className="num">{toman(row.ad_price ?? null)}</td>
                     <td className="num">
-                      <button onClick={() => remove.mutate(row.code)} aria-label="حذف">
+                      <button onClick={() => remove.mutate(row.code)} aria-label="Remove">
                         <Trash2 size={13} />
                       </button>
                     </td>
@@ -73,10 +73,10 @@ export function Saved() {
               </Table>
             ) : (
               <div className="state">
-                <strong>هنوز چیزی ذخیره نشده.</strong>
+                <strong>Nothing saved yet.</strong>
                 <p className="empty-hint">
-                  از صفحهٔ پیشنهادها یا کاوش، روی «ذخیره» بزنید تا تغییر قیمت آن
-                  آگهی این‌جا دنبال شود.
+                  Click "Save" on the Deals or Explore page to track that
+                  listing's price changes here.
                 </p>
               </div>
             )
@@ -84,8 +84,8 @@ export function Saved() {
         </Async>
       </Card>
 
-      <Card title="کاهش قیمت">
-        <Async query={saved} empty="کاهش قیمتی ثبت نشده." shape="table">
+      <Card title="Price drops">
+        <Async query={saved} empty="No price drops recorded." shape="table">
           {(data) => {
             const drops = data.results
               .map((row) => ({ row, change: dropPct(row) }))
@@ -94,12 +94,12 @@ export function Saved() {
             if (!drops.length) {
               return (
                 <div className="state">
-                  هیچ‌کدام از آگهی‌های ذخیره‌شده ارزان‌تر نشده‌اند.
+                  None of your saved listings have gotten cheaper.
                 </div>
               );
             }
             return (
-              <Table head={["آگهی", "قیمت پیشین", "قیمت فعلی", "تغییر", "زمان"]}>
+              <Table head={["Listing", "Previous price", "Current price", "Change", "Time"]}>
                 {drops.map(({ row, change }) => (
                   <tr key={row.code}>
                     <td>
@@ -114,7 +114,7 @@ export function Saved() {
                     </td>
                     <td className="num">
                       {row.price_changed_at
-                        ? new Date(row.price_changed_at).toLocaleDateString("fa-IR")
+                        ? new Date(row.price_changed_at).toLocaleDateString("en-US")
                         : "—"}
                     </td>
                   </tr>

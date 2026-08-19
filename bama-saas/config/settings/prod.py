@@ -7,6 +7,14 @@ from .base import *  # noqa: F401,F403
 DEBUG = False
 ALLOWED_HOSTS = [h.strip() for h in os.environ.get("ALLOWED_HOSTS", "").split(",") if h.strip()]
 
+# Consumed by `ensure_seed_users` (see docker-compose.prod.yml's django command).
+# DEV_ADMIN_* names stay as-is for continuity with the existing required env var;
+# DEMO_USER_* is new, for the read-only login.
+DEV_ADMIN_EMAIL = os.environ.get("DEV_ADMIN_EMAIL", "")
+DEV_ADMIN_PASSWORD = os.environ.get("DEV_ADMIN_PASSWORD", "")
+DEMO_USER_EMAIL = os.environ.get("DEMO_USER_EMAIL", "")
+DEMO_USER_PASSWORD = os.environ.get("DEMO_USER_PASSWORD", "")
+
 SECURE_SSL_REDIRECT = True
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SESSION_COOKIE_SECURE = True
@@ -28,6 +36,7 @@ REST_FRAMEWORK = {
         "rest_framework.throttling.UserRateThrottle",
     ),
     "DEFAULT_THROTTLE_RATES": {
+        **REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"],  # noqa: F405 — keeps "login" from base.py
         "anon": os.environ.get("THROTTLE_ANON", "60/min"),
         "user": os.environ.get("THROTTLE_USER", "600/min"),
     },
@@ -35,8 +44,8 @@ REST_FRAMEWORK = {
     # use case (no network exposure). A deployed instance IS reachable, so it must
     # require a logged-in Django session rather than serving the whole catalog/API
     # to anyone who finds the URL. Session auth only (no JWT, no registration) —
-    # this stays a single-operator tool even when deployed.
+    # this stays a two-account tool (admin + read-only demo) even when deployed.
     "DEFAULT_PERMISSION_CLASSES": (
-        "rest_framework.permissions.IsAuthenticated",
+        "apps.accounts.permissions.ReadOnlyForDemo",
     ),
 }

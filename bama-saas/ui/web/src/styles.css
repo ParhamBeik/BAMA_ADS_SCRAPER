@@ -123,7 +123,11 @@ a:hover { text-decoration: underline; }
 .nav-item:hover { background: var(--panel-2); color: var(--text); text-decoration: none; }
 .nav-item.active { background: var(--accent-soft); color: var(--accent); }
 
-.main { padding: 20px 24px 64px; max-width: 1400px; }
+/* margin-inline: auto centers the capped-width column instead of letting it
+   anchor to the grid's inline-start edge — in this RTL layout that's the
+   *right* edge, so without it every screen wider than sidebar+1400px shows a
+   dead strip on the left instead of the content spanning the viewport. */
+.main { padding: 20px 24px 64px; max-width: 1400px; margin-inline: auto; }
 
 .topbar {
   display: flex;
@@ -457,3 +461,24 @@ code { font-size: 0.92em; background: var(--panel-2); padding: 1px 5px; border-r
   .detail-layout { grid-template-columns: 1fr; }
   .main { padding: 14px 14px calc(64px + env(safe-area-inset-bottom)); }
 }
+
+/* --- login --------------------------------------------------------------- */
+
+.login-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--bg);
+}
+.login-box { width: 100%; max-width: 380px; }
+.login-box input {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+}
+.login-box button.primary { width: 100%; margin-top: 4px; }

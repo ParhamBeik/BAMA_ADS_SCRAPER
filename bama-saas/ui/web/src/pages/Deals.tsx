@@ -116,20 +116,20 @@ function NotifierPanel() {
     <Card>
       <div className="row between">
         <strong>
-          اعلان تلگرام{" "}
+          Telegram alerts{" "}
           <span className={`badge ${form.enabled ? "ok" : ""}`}>
-            {form.enabled ? "روشن" : "خاموش"}
+            {form.enabled ? "On" : "Off"}
           </span>
         </strong>
         <button className="ghost" onClick={() => setOpen(!open)}>
-          {open ? "بستن" : "تنظیمات"}
+          {open ? "Close" : "Settings"}
         </button>
       </div>
 
       {!open ? (
         <p className="muted">
-          آگهی‌هایی با حداقل {form.min_discount_pct}٪ تخفیف و {form.min_peers}{" "}
-          هم‌گروه — هر آگهی فقط یک‌بار.
+          Listings with at least {form.min_discount_pct}% off and{" "}
+          {form.min_peers} peers — each listing only once.
         </p>
       ) : (
         <div className="stack">
@@ -139,25 +139,25 @@ function NotifierPanel() {
               checked={form.enabled}
               onChange={(e) => set({ enabled: e.target.checked })}
             />
-            <span>ارسال اعلان</span>
+            <span>Send alerts</span>
           </label>
           <div className="row wrap">
             <label>
-              حداقل تخفیف (٪)
+              Min discount (%)
               <input
                 type="number" min={1} max={99} value={form.min_discount_pct}
                 onChange={(e) => set({ min_discount_pct: Number(e.target.value) })}
               />
             </label>
             <label>
-              حداقل هم‌گروه
+              Min peers
               <input
                 type="number" min={8} value={form.min_peers}
                 onChange={(e) => set({ min_peers: Number(e.target.value) })}
               />
             </label>
             <label>
-              حداقل قیمت
+              Min price
               <input
                 type="number" value={form.price_min ?? ""}
                 onChange={(e) =>
@@ -166,7 +166,7 @@ function NotifierPanel() {
               />
             </label>
             <label>
-              حداکثر قیمت
+              Max price
               <input
                 type="number" value={form.price_max ?? ""}
                 onChange={(e) =>
@@ -175,7 +175,7 @@ function NotifierPanel() {
               />
             </label>
             <label>
-              شناسهٔ چت تلگرام
+              Telegram chat ID
               <input
                 value={form.telegram_chat_id}
                 onChange={(e) => set({ telegram_chat_id: e.target.value })}
@@ -184,20 +184,20 @@ function NotifierPanel() {
           </div>
           <div className="row">
             <button onClick={() => save.mutate(form)} disabled={save.isPending}>
-              {save.isPending ? "در حال ذخیره…" : "ذخیره"}
+              {save.isPending ? "Saving…" : "Save"}
             </button>
             {save.isSuccess && !save.isPending && (
-              <span className="badge ok">ذخیره شد</span>
+              <span className="badge ok">Saved</span>
             )}
             {save.isError && (
               <span className="badge warn">
-                {(save.error as Error)?.message ?? "ذخیره نشد"}
+                {(save.error as Error)?.message ?? "Save failed"}
               </span>
             )}
           </div>
           <p className="muted">
-            حداقل هم‌گروه کمتر از ۸ پذیرفته نمی‌شود — میانه‌ای که از آگهی کمتری
-            ساخته شود، مبنای قابل اتکایی برای اعلان نیست.
+            A minimum peer count under 8 isn't accepted — a median built from
+            fewer listings isn't a reliable basis for an alert.
           </p>
         </div>
       )}
@@ -205,11 +205,11 @@ function NotifierPanel() {
   );
 }
 
-/** "0 روز در بازار" is technically right and reads like a bug. */
+/** "0d on market" is technically right and reads like a bug. */
 function ageLabel(days: number | null): string {
   if (days == null) return "—";
-  if (days === 0) return "امروز ثبت شده";
-  return `${days} روز در بازار`;
+  if (days === 0) return "Listed today";
+  return `${days}d on market`;
 }
 
 function DealCard({ deal }: { deal: Deal }) {
@@ -222,8 +222,8 @@ function DealCard({ deal }: { deal: Deal }) {
         </span>
         {deal.condition_flagged && (
           <span className="card-badges">
-            <span className="badge warn" title="توضیحات آگهی به تصادف، پلاک منطقهٔ آزاد یا وضعیت بدنه اشاره دارد">
-              <AlertTriangle size={11} /> وضعیت
+            <span className="badge warn" title="Listing description mentions an accident, free-zone plate, or body condition">
+              <AlertTriangle size={11} /> Condition
             </span>
           </span>
         )}
@@ -238,7 +238,7 @@ function DealCard({ deal }: { deal: Deal }) {
         </div>
         <div className="row">
           <ConfidenceDots tier={deal.confidence} />
-          <span>{deal.peer_count ?? "—"} هم‌گروه</span>
+          <span>{deal.peer_count ?? "—"} peers</span>
           <span>·</span>
           <span>{deal.year ?? "—"}</span>
           <span>·</span>
@@ -303,34 +303,36 @@ export function Deals() {
 
   return (
     <div className="stack" dir="rtl">
-      <div className="segmented" role="group" aria-label="محدودهٔ تخفیف">
+      <div className="segmented" role="group" aria-label="Discount range">
         <button
           className={band === "trusted" ? "on" : ""}
           onClick={() => filters.set({ band: null, page: null })}
         >
-          پیشنهادهای قابل اتکا
+          Trusted deals
         </button>
         <button
           className={band === "review" ? "on" : ""}
           onClick={() => filters.set({ band: "review", page: null })}
         >
-          نیاز به بررسی (بالای {TRUSTED_MAX_DISCOUNT}٪)
+          Needs review (over {TRUSTED_MAX_DISCOUNT}%)
         </button>
       </div>
 
       <p className="muted">
         {band === "trusted" ? (
           <>
-            آگهی‌هایی که زیر میانهٔ هم‌گروه خود قیمت خورده‌اند. تخفیف نسبت به
-            میانهٔ هم‌گروه محاسبه می‌شود؛ «هم‌گروه» و نقطه‌های اعتماد نشان
-            می‌دهند این میانه از چند آگهی ساخته شده است.
+            Listings priced below their peer group's median. The discount is
+            measured against the peer-group median; "peers" and the
+            confidence dots show how many listings that median was built
+            from.
           </>
         ) : (
           <>
-            تخفیف بالای {TRUSTED_MAX_DISCOUNT}٪ تقریباً همیشه دلیلی دارد که
-            مدل آن را نمی‌بیند: هم‌گروه فقط از «مدل، تیپ و سال» ساخته می‌شود و
-            از تصادف، پلاک منطقهٔ آزاد یا پیش‌فروش خبر ندارد. این‌ها پنهان
-            نشده‌اند، اما پیش از تماس باید خودتان بررسی‌شان کنید.
+            A discount above {TRUSTED_MAX_DISCOUNT}% almost always has a
+            reason the model can't see: the peer group is built only from
+            "model, trim, and year," and knows nothing about accidents,
+            free-zone plates, or pre-sales. Nothing is hidden here, but check
+            it yourself before you call.
           </>
         )}
       </p>
@@ -339,9 +341,9 @@ export function Deals() {
         <select
           value={brand ?? ""}
           onChange={(e) => filters.set({ brand: e.target.value || null, page: null })}
-          aria-label="برند"
+          aria-label="Brand"
         >
-          <option value="">همهٔ برندها</option>
+          <option value="">All brands</option>
           {brandList.map((b) => (
             <option key={b.slug} value={b.slug}>{b.name_fa}</option>
           ))}
@@ -349,40 +351,40 @@ export function Deals() {
         <select
           value={confidence ?? ""}
           onChange={(e) => filters.set({ confidence: e.target.value || null, page: null })}
-          aria-label="اعتماد"
+          aria-label="Confidence"
         >
-          <option value="">هر اعتمادی</option>
-          <option value="high">فقط اعتماد بالا</option>
-          <option value="medium">اعتماد متوسط</option>
-          <option value="low">اعتماد کم</option>
+          <option value="">Any confidence</option>
+          <option value="high">High confidence only</option>
+          <option value="medium">Medium confidence</option>
+          <option value="low">Low confidence</option>
         </select>
         <input
           key={`price_min-${priceMin}`}
           type="number"
-          placeholder="حداقل قیمت (تومان)"
+          placeholder="Min price (toman)"
           defaultValue={priceMin ?? ""}
           onBlur={(e) => filters.set({ price_min: e.target.value || null, page: null })}
         />
         <input
           key={`price_max-${priceMax}`}
           type="number"
-          placeholder="حداکثر قیمت (تومان)"
+          placeholder="Max price (toman)"
           defaultValue={priceMax ?? ""}
           onBlur={(e) => filters.set({ price_max: e.target.value || null, page: null })}
         />
-        {hasFilter && <button onClick={clear}>پاک کردن فیلترها</button>}
+        {hasFilter && <button onClick={clear}>Clear filters</button>}
         <div className="segmented" style={{ marginInlineStart: "auto" }}>
           <button
             className={view === "cards" ? "on" : ""}
             onClick={() => filters.set({ view: null })}
-            aria-label="نمای کارت"
+            aria-label="Card view"
           >
             <LayoutGrid size={14} />
           </button>
           <button
             className={view === "table" ? "on" : ""}
             onClick={() => filters.set({ view: "table" })}
-            aria-label="نمای جدول"
+            aria-label="Table view"
           >
             <List size={14} />
           </button>
@@ -390,7 +392,7 @@ export function Deals() {
       </div>
 
       <Card>
-        <Async query={deals} empty="هنوز امتیازی محاسبه نشده." shape="cards">
+        <Async query={deals} empty="No scores computed yet." shape="cards">
           {(board) => {
             const rows = board.results ?? [];
             if (!rows.length) {
@@ -400,15 +402,15 @@ export function Deals() {
               // instead of a dead end.
               return (
                 <div className="state">
-                  <strong>آگهی‌ای با این فیلترها پیدا نشد.</strong>
+                  <strong>No listings match these filters.</strong>
                   <p className="empty-hint">
                     {page > 1
-                      ? "شاید این صفحه دیگر وجود ندارد."
-                      : "فیلترها را ساده‌تر کنید یا برند دیگری را امتحان کنید."}
+                      ? "This page may no longer exist."
+                      : "Try simpler filters or a different brand."}
                   </p>
                   {page > 1 && (
                     <button onClick={() => filters.set({ page: null })}>
-                      بازگشت به صفحهٔ اول
+                      Back to page 1
                     </button>
                   )}
                 </div>
@@ -427,8 +429,8 @@ export function Deals() {
                 ) : (
                   <Table
                     head={[
-                      "آگهی", "تخفیف", "قیمت", "میانهٔ هم‌گروه",
-                      "هم‌گروه", "اعتماد", "عمر آگهی", "",
+                      "Listing", "Discount", "Price", "Peer median",
+                      "Peers", "Confidence", "Age", "",
                     ]}
                   >
                     {rows.map((d) => (
@@ -439,7 +441,7 @@ export function Deals() {
                           </Link>
                           {d.condition_flagged && (
                             <div className="badge warn" style={{ marginTop: 4 }}>
-                              <AlertTriangle size={11} /> وضعیت خودرو را بخوانید
+                              <AlertTriangle size={11} /> Read the condition notes
                             </div>
                           )}
                         </td>

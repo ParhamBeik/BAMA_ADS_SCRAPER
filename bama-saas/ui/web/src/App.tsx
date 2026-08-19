@@ -1,18 +1,20 @@
 /**
- * Seven screens, one shell (Persian RTL).
+ * Seven screens, one shell (Persian RTL for data, English chrome).
  *
- * The app is local and single-user, so there is no session to check and no route
- * to gate — `/control` is an ordinary page, and record inspection lives in Django
- * admin rather than in a bespoke staff UI.
+ * Deployed instances require a session (see config/settings/prod.py); `useAuth`
+ * decides between the login screen and the app shell, and the shell itself never
+ * has to think about it again below this point.
  */
 import { lazy, Suspense, type ReactNode } from "react";
 import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import {
-  Activity, BarChart3, Bookmark, LayoutDashboard, Percent, Search,
+  Activity, BarChart3, Bookmark, LayoutDashboard, LogOut, Percent, Search,
 } from "lucide-react";
+import { useAuth } from "./auth";
 import { useTheme, type ThemeChoice } from "./theme";
 import { Deals } from "./pages/Deals";
 import { Explorer } from "./pages/Explorer";
+import { Login } from "./pages/Login";
 import { Overview } from "./pages/Overview";
 import { Saved } from "./pages/Saved";
 import { ListingDetail } from "./pages/ListingDetail";
@@ -25,24 +27,33 @@ const Research = lazy(() =>
 );
 
 const NAV = [
-  { to: "/", label: "پیشنهادها", icon: Percent, end: true },
-  { to: "/explore", label: "کاوش", icon: Search, end: false },
-  { to: "/market", label: "نمای بازار", icon: LayoutDashboard, end: false },
-  { to: "/research", label: "تحقیق", icon: BarChart3, end: false },
-  { to: "/saved", label: "ذخیره‌شده", icon: Bookmark, end: false },
-  { to: "/control", label: "کنترل", icon: Activity, end: false },
+  { to: "/", label: "Deals", icon: Percent, end: true },
+  { to: "/explore", label: "Explore", icon: Search, end: false },
+  { to: "/market", label: "Market", icon: LayoutDashboard, end: false },
+  { to: "/research", label: "Research", icon: BarChart3, end: false },
+  { to: "/saved", label: "Saved", icon: Bookmark, end: false },
+  { to: "/control", label: "Control", icon: Activity, end: false },
 ];
 
 export function App() {
+  const { user, loading } = useAuth();
+
+  if (loading) return null;
+  if (!user) return <Login />;
+  return <AppShell />;
+}
+
+function AppShell() {
   const location = useLocation();
+  const { logout } = useAuth();
   const current = NAV.find((n) =>
     n.end ? location.pathname === n.to : location.pathname.startsWith(n.to),
   ) ?? NAV[0];
 
   return (
-    <div className="app" dir="rtl" lang="fa">
-      <nav className="sidebar" aria-label="اصلی">
-        <div className="brand">بازار باما</div>
+    <div className="app" dir="rtl">
+      <nav className="sidebar" aria-label="Main">
+        <div className="brand">Bama Market</div>
         {NAV.map(({ to, label, icon: Icon, end }) => (
           <NavLink
             key={to}
@@ -54,6 +65,12 @@ export function App() {
             {label}
           </NavLink>
         ))}
+        <div className="sidebar-foot">
+          <button className="nav-item linkish" onClick={() => logout()}>
+            <LogOut size={16} />
+            Log out
+          </button>
+        </div>
       </nav>
 
       <main className="main">

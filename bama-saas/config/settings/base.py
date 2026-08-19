@@ -125,6 +125,10 @@ REST_FRAMEWORK = {
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 50,
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    # Login gets its own scoped throttle regardless of environment, since it's
+    # the one endpoint reachable without a session — a brute-force guard, not
+    # a capacity control like the anon/user rates below (those are prod-only).
+    "DEFAULT_THROTTLE_RATES": {"login": os.environ.get("THROTTLE_LOGIN", "10/min")},
 }
 
 SPECTACULAR_SETTINGS = {
