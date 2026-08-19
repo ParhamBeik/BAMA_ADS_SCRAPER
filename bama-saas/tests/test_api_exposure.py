@@ -94,15 +94,32 @@ def test_inspect_routes_are_gone(catalog):
 
 
 @pytest.mark.django_db
-def test_a_cohort_outlier_is_still_listed_and_carries_its_flag(catalog):
-    """The opposite decision, deliberately: "not believable as a market price" is
-    a warning to show, not a reason to hide the listing a buyer came to find."""
+def test_an_underpriced_outlier_is_never_hidden_from_browsing(catalog):
+    """The asymmetry the browse filter turns on.
+
+    A listing priced far *below* its peers is the underpriced car this product
+    exists to find; hiding it to tidy the list would delete the product's whole
+    point. It stays, carrying its flag so the reader can judge it.
+    """
     make_ad(catalog, "odd00001", cohort_flags=["price_outlier_low"])
 
     rows = APIClient().get("/api/ads/").json()["results"]
 
     assert [r["code"] for r in rows] == ["odd00001"]
     assert rows[0]["cohort_flags"] == ["price_outlier_low"]
+
+
+@pytest.mark.django_db
+def test_an_absurdly_overpriced_listing_is_hidden_by_default(catalog):
+    """The other half: a 206 was live at 5.8 trillion toman. That is noise in
+    every list it appears in, and nobody browsing is looking for it — but
+    ?include_outliers=true still returns it rather than pretending it is gone."""
+    make_ad(catalog, "odd00002", cohort_flags=["price_outlier_high"])
+
+    assert APIClient().get("/api/ads/").json()["results"] == []
+
+    rows = APIClient().get("/api/ads/?include_outliers=true").json()["results"]
+    assert [r["code"] for r in rows] == ["odd00002"]
 
 
 @pytest.mark.django_db

@@ -3,6 +3,7 @@
 from rest_framework import serializers
 
 from apps.core.models import Ad, Brand, City, Dealer, Model, Variant
+from apps.core.services.listing_kind import condition_discounted, price_basis_unclear
 
 
 class BrandSerializer(serializers.ModelSerializer):
@@ -70,10 +71,32 @@ class AdSerializer(serializers.ModelSerializer):
     )
     city_id = serializers.IntegerField(read_only=True)
     city_name = serializers.CharField(source="city.name_fa", read_only=True, default="")
+    dealer_name = serializers.CharField(source="dealer.name", read_only=True, default=None)
+    seller_type = serializers.SerializerMethodField()
     # Verdicts, not raw data: a listing the cohort pass could not believe should
     # say so to whoever is looking at it rather than quietly leaving the market
     # statistics. See apps/jobs/services/verify_cohort.py.
     cohort_flags = serializers.JSONField(read_only=True)
+    # Why this listing's price may not be comparable to its cohort's. Both are
+    # derived from text already loaded on the row, so neither costs a query.
+    # The deal board *excludes* the first and only *labels* the second — see
+    # apps/core/services/listing_kind.py for why that asymmetry is deliberate.
+    price_basis_unclear = serializers.SerializerMethodField()
+    condition_flagged = serializers.SerializerMethodField()
+
+    def get_seller_type(self, obj) -> str:
+        return "dealer" if obj.dealer_id is not None else "private"
+
+    def get_price_basis_unclear(self, obj) -> bool:
+        return price_basis_unclear(
+            title=obj.title,
+            description=obj.description,
+            price_type=obj.price_type,
+            prepayment=obj.current_prepayment,
+        )
+
+    def get_condition_flagged(self, obj) -> bool:
+        return condition_discounted(title=obj.title, description=obj.description)
 
     class Meta:
         model = Ad
@@ -103,9 +126,13 @@ class AdSerializer(serializers.ModelSerializer):
             "image_urls",
             "image_count",
             "seller_authenticated",
+            "dealer_name",
+            "seller_type",
             "year_jalali",
             "status",
             "cohort_flags",
+            "price_basis_unclear",
+            "condition_flagged",
         )
         # raw_payload is deliberately absent. It is the entire scraped record —
         # dealer contact details, internal identifiers, promotion state, every

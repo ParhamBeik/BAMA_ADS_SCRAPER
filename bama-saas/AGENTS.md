@@ -62,18 +62,20 @@ Crawl invariants (`apps/jobs/services/fetcher.py`) — do not simplify away:
 Settings: `config/settings/base.py` (shared, `AllowAny`), `dev.py` (Django
 admin via `ensure_dev_admin`), `prod.py` (HSTS/secure cookies + anon
 throttle). `manage.py` defaults to `config.settings.dev`. There is no JWT,
-subscription, alert, or inspect surface.
+subscription, or per-user alert surface; the optional local Telegram notifier
+is a singleton edited through `/api/notifier-settings/`.
 
 ## Worker cadences
 
 - **HOT** (~5 min): `fetch_live` delta + `mark_inactive` + incremental
-  `refresh_cohort_deal_scores` for models sighted in that fetch.
-- **WARM** (~30 min): `sync_episodes` + `daily_snapshot` + `build_market_index`
-  + `market_snapshot`.
+  `refresh_cohort_deal_scores` for models sighted in that fetch + optional
+  `notify_deals`.
+- **WARM** (~30 min): `sync_episodes` + `daily_snapshot` + `build_market_index`.
 - **COLD** (~6 h sweep): full fetch + gap repair + full deal-score rebuild +
   `prune_history` (90-day observations / coverage / job runs; last two
   completed sweeps' coverage is kept).
 - No Celery/Redis. One compose `worker` loop (or host cron, never both).
+  `notify_deals` is disabled until its singleton settings row is configured.
 
 ## Layout
 
@@ -86,9 +88,9 @@ subscription, alert, or inspect surface.
   index,liquidity,retention}.py`, `jobs/services/{ingest,fetcher,dimensions,
   pipeline,episodes,verify,health}.py`.
 - `apps/jobs/management/commands/` — `fetch_live`, `crawl_gaps`,
-  `crawl_health`, `compute_deal_scores`, `mark_inactive_ads`,
-  `daily_snapshot`, `market_snapshot`, `build_market_index`, `sync_episodes`,
-  `prune_history`, `run_pipeline`, `reap_orphan_runs`.
+  `crawl_health`, `compute_deal_scores`, `notify_deals`, `mark_inactive_ads`,
+  `daily_snapshot`, `build_market_index`, `sync_episodes`, `prune_history`,
+  `run_pipeline`, `reap_orphan_runs`.
 - `apps/parsing/` — pure-Python, no ORM.
 - `tests/` — pytest-django; `test_parsing.py` has no DB dependency.
 
@@ -103,6 +105,7 @@ subscription, alert, or inspect surface.
 - Saved: `/api/favorites/`.
 - Operator: `/api/admin/jobs/{fetch,refresh-analytics,deal-scores,crawl-health,overview}/`,
   `/api/admin/ads/<code>/provenance/`, `/api/admin/health/`.
+- Notifier: `/api/notifier-settings/` (local singleton; no per-user alert API).
 - Docs: `/api/schema/`, `/api/docs/`, `/api/redoc/`. Health: `/api/health/`,
   `/api/db/health/`.
 

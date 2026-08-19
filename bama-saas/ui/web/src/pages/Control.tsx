@@ -9,9 +9,12 @@
  *
  * Inspecting individual records is Django admin's job, not this page's.
  */
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
-import { Async, Card } from "../ui";
+import { Async, Card, Stat } from "../ui";
+
+const RECENT_RUNS_COLLAPSED = 15;
 
 type Check = { name: string; ok: boolean; detail: string };
 
@@ -54,12 +57,21 @@ function n(value: number | undefined) {
   return (value ?? 0).toLocaleString("en-US");
 }
 
+function bytes(value: number) {
+  if (value < 1_024) return `${value} B`;
+  if (value < 1_024 ** 2) return `${(value / 1_024).toFixed(1)} KB`;
+  if (value < 1_024 ** 3) return `${(value / 1_024 ** 2).toFixed(1)} MB`;
+  return `${(value / 1_024 ** 3).toFixed(1)} GB`;
+}
+
 function statusBadge(status: string) {
   const tone = status === "ok" ? "ok" : status === "failed" ? "fail" : "";
   return <span className={`badge ${tone}`}>{status}</span>;
 }
 
 export function Control() {
+  const client = useQueryClient();
+  const [showAllRuns, setShowAllRuns] = useState(false);
   const health = useQuery({
     queryKey: ["admin-health"],
     queryFn: ({ signal }) => api.get<Health>("/api/admin/health/", signal),
@@ -70,12 +82,15 @@ export function Control() {
     queryFn: ({ signal }) => api.get<Jobs>("/api/admin/jobs/overview/", signal),
     refetchInterval: 15_000,
   });
-
-  async function trigger(path: string) {
-    if (!confirm("Run this job?")) return;
-    await api.post(path);
-    await jobs.refetch();
-  }
+  const trigger = useMutation({
+    mutationFn: (path: string) => api.post(path),
+    onSuccess: async () => {
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["jobs-overview"] }),
+        client.invalidateQueries({ queryKey: ["admin-health"] }),
+      ]);
+    },
+  });
 
   return (
     <div className="stack" dir="ltr">
@@ -84,27 +99,48 @@ export function Control() {
         Postgres. Individual records live in <a href="/admin/">Django admin</a>.
       </p>
 
+      <Async query={health}>
+        {(data) => {
+          const failed = data.crawl.filter((check) => !check.ok);
+          return (
+            <div className="grid cols-3">
+              <Stat
+                label="Crawl health"
+                value={failed.length ? `${failed.length} failing` : "Healthy"}
+                tone={failed.length ? "warn" : "up"}
+                sub={`${data.crawl.length} checks`}
+              />
+              <Stat
+                label="Active listings"
+                value={n(data.catalog.active_ads)}
+                sub={`${n(data.catalog.removed_ads)} removed`}
+              />
+              <Stat
+                label="Database"
+                value={bytes(data.database.size_bytes)}
+                sub={`${n(data.database.connections)} connections`}
+              />
+            </div>
+          );
+        }}
+      </Async>
+
       <Card title="Crawl checks">
         <Async query={health}>
           {(data) => (
-            <table className="table inspect-table">
-              <thead>
-                <tr><th>name</th><th>ok</th><th>detail</th></tr>
-              </thead>
-              <tbody>
-                {data.crawl.map((c) => (
-                  <tr key={c.name}>
-                    <td><code>{c.name}</code></td>
-                    <td>
-                      <span className={`badge ${c.ok ? "ok" : "fail"}`}>
-                        {c.ok ? "OK" : "FAIL"}
-                      </span>
-                    </td>
-                    <td>{c.detail}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div className="check-grid">
+              {data.crawl.map((c) => (
+                <div key={c.name} className={`check-item${c.ok ? "" : " fail"}`}>
+                  <div className="row between">
+                    <code>{c.name}</code>
+                    <span className={`badge ${c.ok ? "ok" : "fail"}`}>
+                      {c.ok ? "OK" : "FAIL"}
+                    </span>
+                  </div>
+                  <p className="stat-sub">{c.detail}</p>
+                </div>
+              ))}
+            </div>
           )}
         </Async>
       </Card>
@@ -112,11 +148,28 @@ export function Control() {
       <Card title="Run a job">
         <div className="row">
           {TRIGGERS.map((t) => (
-            <button key={t.path} className="btn" onClick={() => trigger(t.path)}>
-              {t.label}
+            <button
+              key={t.path}
+              className="btn"
+              disabled={trigger.isPending}
+              onClick={() => {
+                if (confirm(`Run ${t.label}?`)) trigger.mutate(t.path);
+              }}
+            >
+              {trigger.isPending ? "starting…" : t.label}
             </button>
           ))}
         </div>
+        {trigger.isSuccess && (
+          <p className="stat-sub">
+            Job accepted. Its final status will appear below after the next refresh.
+          </p>
+        )}
+        {trigger.isError && (
+          <p className="warn">
+            {(trigger.error as Error).message || "The job could not be started."}
+          </p>
+        )}
       </Card>
 
       <Card title="Latest run per job">
@@ -146,25 +199,42 @@ export function Control() {
         </Async>
       </Card>
 
-      <Card title="Recent runs">
+      <Card
+        title="Recent runs"
+        action={
+          <button className="ghost" onClick={() => setShowAllRuns((v) => !v)}>
+            {showAllRuns ? "show fewer" : "show all"}
+          </button>
+        }
+      >
         <Async query={jobs}>
-          {(data) => (
-            <table className="table inspect-table">
-              <thead>
-                <tr><th>started_at</th><th>name</th><th>status</th><th>detail</th></tr>
-              </thead>
-              <tbody>
-                {data.recent.map((r, i) => (
-                  <tr key={`${r.name}-${r.started_at}-${i}`}>
-                    <td>{r.started_at}</td>
-                    <td><code>{r.name}</code></td>
-                    <td>{r.status}</td>
-                    <td>{(r.detail || r.error || "—").slice(0, 160)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+          {(data) => {
+            const rows = showAllRuns ? data.recent : data.recent.slice(0, RECENT_RUNS_COLLAPSED);
+            return (
+              <>
+                <table className="table inspect-table">
+                  <thead>
+                    <tr><th>started_at</th><th>name</th><th>status</th><th>detail</th></tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r, i) => (
+                      <tr key={`${r.name}-${r.started_at}-${i}`}>
+                        <td>{r.started_at}</td>
+                        <td><code>{r.name}</code></td>
+                        <td>{r.status}</td>
+                        <td>{(r.detail || r.error || "—").slice(0, 160)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {!showAllRuns && data.recent.length > RECENT_RUNS_COLLAPSED && (
+                  <p className="stat-sub" style={{ marginTop: 8 }}>
+                    {data.recent.length - RECENT_RUNS_COLLAPSED} more run(s) hidden.
+                  </p>
+                )}
+              </>
+            );
+          }}
         </Async>
       </Card>
 
@@ -182,7 +252,7 @@ export function Control() {
                   <tr><th>unconfirmed_brands</th><td>{n(data.catalog.unconfirmed_brands)}</td></tr>
                   <tr><th>unconfirmed_models</th><td>{n(data.catalog.unconfirmed_models)}</td></tr>
                   <tr><th>rejects_24h</th><td>{n(data.catalog.rejects_24h)}</td></tr>
-                  <tr><th>db_size_bytes</th><td>{n(data.database.size_bytes)}</td></tr>
+                  <tr><th>database size</th><td>{bytes(data.database.size_bytes)}</td></tr>
                   <tr><th>db_connections</th><td>{n(data.database.connections)}</td></tr>
                   <tr><th>migrations_applied</th><td>{n(data.database.migrations_applied)}</td></tr>
                 </tbody>

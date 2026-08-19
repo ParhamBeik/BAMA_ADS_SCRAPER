@@ -1,23 +1,30 @@
 """Mark ads that have dropped out of the Bama feed as REMOVED.
 
-The rule is **coverage-based, not wall-clock**. A full sweep walks page 0 to the
-end of the feed, so any ad still listed is necessarily seen by it. That makes
-"was not seen by the last two completed sweeps" a *proof* of absence, where
-"has not been seen for 14 days" was only ever a guess — and a badly calibrated
-one: with a 6-hourly sweep it left delisted ads sitting ACTIVE for two weeks,
-inflating live inventory, holding ``MarketSnapshot.removed_count`` at zero, and
-putting a systematic +14 d floor under every time-on-feed statistic.
+The rule is **coverage-based, not wall-clock**. Any ad still listed is seen by a
+pass that walks every rank, so "was not seen across two consecutive complete
+coverage windows" is a *proof* of absence, where "has not been seen for 14 days"
+was only ever a guess.
 
-Two sweeps rather than one, because a single sweep can miss an ad legitimately:
-deletions pull later ads to lower ranks, behind pages the sweep already read
+Coverage is judged over rolling windows from the union of ``PageCoverage``, not
+per fetch run. The previous rule demanded two runs that each set
+``reached_end`` — one uninterrupted walk of ~936 pages against a host that
+answers 503. Measured over 39 days: 11 of 28 full sweeps completed, so removals
+could only be detected on the days one happened to finish. Listing episodes
+ended on 17 of 39 days in lumps of up to 6,873, and every survival curve
+computed from them was reading the sweep schedule rather than the market.
+
+Windows fix that because coverage accumulates: three interrupted sweeps that
+jointly walk the feed prove exactly what one clean sweep proves.
+
+Two windows rather than one, because a single pass can miss an ad legitimately:
+deletions pull later ads to lower ranks, behind pages the pass already read
 (the same asymmetry ``PageCoverage``/``crawl_gaps`` exist for). Requiring two
-consecutive misses costs one sweep interval of latency and removes that whole
-class of false positive.
+consecutive misses costs one window of latency and removes that whole class of
+false positive.
 
-Safety property: if fewer than two completed sweeps exist, this command marks
-**nothing** and says so. A broken or never-run sweep must never be read as "the
-entire inventory disappeared" — that failure mode would wipe the live market in
-one tick, which is exactly what a wall-clock rule does when the crawler stalls.
+Safety property: unless **both** windows are provably complete, this command
+marks **nothing** and says so. A stalled crawler must never be read as "the
+entire inventory disappeared" — the failure mode a wall-clock rule has.
 
 Idempotent: only flips ACTIVE → REMOVED, stamping ``removed_at`` with the ad's
 own ``last_seen_at`` (the best estimate of when it left). Re-seeing a removed ad
@@ -32,37 +39,34 @@ from django.core.management.base import BaseCommand
 from django.db.models import F
 from django.utils import timezone
 
-from apps.core.models import Ad, FetchRun
+from apps.core.models import Ad
+from apps.jobs.services.coverage import COVERAGE_WINDOW_HOURS, coverage_is_complete
 
-# How many completed sweeps an ad must be absent from before it counts as gone.
-REQUIRED_MISSED_SWEEPS = 2
+# How many consecutive complete coverage windows an ad must be absent from.
+REQUIRED_MISSED_WINDOWS = 2
 
 
-def sweep_cutoff() -> tuple[object | None, int]:
-    """Start time of the Nth-most-recent completed sweep, and how many exist.
+def sweep_cutoff(window_hours: int = COVERAGE_WINDOW_HOURS):
+    """Start of the older of two consecutive complete coverage windows.
 
-    "Completed" is ``reached_end=True``: the sweep saw the empty page past the
-    last ad, so its coverage of the feed is total. A sweep that stopped early
-    proves nothing about the ads it never reached and must not be counted.
-
-    Returns ``(cutoff, n_sweeps)``; ``cutoff`` is None when there are too few.
-    An ad whose ``last_seen_at`` predates the cutoff was absent from every
-    completed sweep since, inclusive.
+    Returns ``(cutoff, n_complete_windows)``; ``cutoff`` is None unless both
+    windows are complete. An ad whose ``last_seen_at`` predates the cutoff was
+    absent from two full passes over the feed.
     """
-    starts = list(
-        FetchRun.objects.filter(
-            reached_end=True, status=FetchRun.Status.SUCCEEDED
-        )
-        .order_by("-started_at")
-        .values_list("started_at", flat=True)[:REQUIRED_MISSED_SWEEPS]
-    )
-    if len(starts) < REQUIRED_MISSED_SWEEPS:
-        return None, len(starts)
-    return starts[-1], len(starts)
+    now = timezone.now()
+    window = timedelta(hours=window_hours)
+    recent_start = now - window
+    older_start = now - 2 * window
+
+    if not coverage_is_complete(since=recent_start):
+        return None, 0
+    if not coverage_is_complete(since=older_start, until=recent_start):
+        return None, 1
+    return older_start, REQUIRED_MISSED_WINDOWS
 
 
 class Command(BaseCommand):
-    help = "Mark ads absent from the last two completed sweeps as REMOVED."
+    help = "Mark ads absent from two consecutive complete coverage windows as REMOVED."
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -71,8 +75,14 @@ class Command(BaseCommand):
             default=None,
             help=(
                 "Escape hatch: use the legacy wall-clock rule with this many "
-                "days instead of sweep coverage."
+                "days instead of coverage."
             ),
+        )
+        parser.add_argument(
+            "--window-hours",
+            type=int,
+            default=COVERAGE_WINDOW_HOURS,
+            help="Length of one coverage window (default: %(default)s).",
         )
 
     def handle(self, *args, **options):
@@ -80,18 +90,19 @@ class Command(BaseCommand):
             cutoff = timezone.now() - timedelta(days=options["days"])
             basis = f"wall-clock override, last_seen < {cutoff:%Y-%m-%d %H:%M} UTC"
         else:
-            cutoff, n_sweeps = sweep_cutoff()
+            window = options["window_hours"]
+            cutoff, n_windows = sweep_cutoff(window)
             if cutoff is None:
                 self.stdout.write(self.style.WARNING(
-                    f"Only {n_sweeps} completed sweep(s) on record; "
-                    f"{REQUIRED_MISSED_SWEEPS} are required to prove an ad is "
-                    f"gone. Marked 0 ads REMOVED. Run "
-                    f"`fetch_live --mode full` until it reports reached_end=True."
+                    f"Only {n_windows} of {REQUIRED_MISSED_WINDOWS} consecutive "
+                    f"{window}h windows are fully covered; cannot prove an ad is "
+                    f"gone. Marked 0 ads REMOVED. Run `crawl_gaps` to close the "
+                    f"uncovered rank ranges."
                 ))
                 return
             basis = (
-                f"absent from the last {REQUIRED_MISSED_SWEEPS} completed sweeps "
-                f"(last_seen < {cutoff:%Y-%m-%d %H:%M} UTC)"
+                f"absent from {REQUIRED_MISSED_WINDOWS} consecutive {window}h "
+                f"coverage windows (last_seen < {cutoff:%Y-%m-%d %H:%M} UTC)"
             )
 
         # Per-row removed_at = last_seen_at via F-expression (single UPDATE).

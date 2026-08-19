@@ -20,7 +20,8 @@ import pytest
 from rest_framework.test import APIClient
 
 from apps.accounts.models import User
-from apps.core.models import Ad, Brand, City, DealScoreCache, FetchRun, Model, PriceObservation, Variant
+from apps.core.models import Ad, Brand, City, DealScoreCache, Dealer, FetchRun, Model, PriceObservation, Variant
+from apps.core.services.deal_score import compute_deal_scores
 
 UTC = timezone.utc
 
@@ -219,6 +220,77 @@ def test_ads_list_filters(api_client, catalog):
 
 
 @pytest.mark.django_db
+def test_ads_list_seller_type(api_client, catalog):
+    """dealer_name/seller_type on AdSerializer: "dealer" when dealer_id is set,
+    "private" otherwise. select_related("dealer") is already on the viewset
+    queryset, so this adds no extra query."""
+    dealer = Dealer.objects.create(id=1, name="نمایشگاه تست")
+    dealer_ad = catalog["ads"][0]
+    dealer_ad.dealer = dealer
+    dealer_ad.save(update_fields=["dealer"])
+    private_ad = catalog["ads"][1]
+
+    resp = api_client.get("/api/ads/")
+    assert resp.status_code == 200, resp.content
+    rows = {r["code"]: r for r in resp.json()["results"]}
+    assert rows[dealer_ad.code]["seller_type"] == "dealer"
+    assert rows[dealer_ad.code]["dealer_name"] == "نمایشگاه تست"
+    assert rows[private_ad.code]["seller_type"] == "private"
+    assert rows[private_ad.code]["dealer_name"] is None
+
+    # ?seller_type=dealer / private filter (dealer__isnull under the hood).
+    resp = api_client.get("/api/ads/?seller_type=dealer")
+    assert {r["code"] for r in resp.json()["results"]} == {dealer_ad.code}
+    resp = api_client.get("/api/ads/?seller_type=private")
+    codes = {r["code"] for r in resp.json()["results"]}
+    assert dealer_ad.code not in codes
+    assert private_ad.code in codes
+
+
+@pytest.mark.django_db
+def test_ads_list_hides_overpriced_outliers_by_default(api_client, catalog):
+    """without_high_outliers() gates the default /api/ads/ list; a listing the
+    cohort pass flagged is still a real ad, so ?include_outliers=true must
+    restore it rather than the flag deleting it outright."""
+    outlier = catalog["ads"][0]
+    outlier.cohort_flags = ["price_outlier_high"]
+    outlier.save(update_fields=["cohort_flags"])
+
+    resp = api_client.get("/api/ads/")
+    assert resp.status_code == 200, resp.content
+    assert outlier.code not in {r["code"] for r in resp.json()["results"]}
+
+    resp = api_client.get("/api/ads/?include_outliers=true")
+    assert resp.status_code == 200, resp.content
+    assert outlier.code in {r["code"] for r in resp.json()["results"]}
+
+
+@pytest.mark.django_db
+def test_overview_priced_count_matches_the_explorer_population(api_client, catalog):
+    """Both screens must exclude the same absurd high-price rows."""
+    outlier = catalog["ads"][0]
+    outlier.cohort_flags = ["price_outlier_high"]
+    outlier.save(update_fields=["cohort_flags"])
+
+    explorer = api_client.get("/api/ads/").json()
+    overview = api_client.get("/api/analytics/overview/").json()
+
+    assert overview["priced_listings"] == explorer["count"] == 7
+
+
+@pytest.mark.django_db
+def test_ads_list_hides_removed_ads_but_detail_keeps_saved_history(api_client, catalog):
+    removed = catalog["ads"][0]
+    removed.status = Ad.Status.REMOVED
+    removed.save(update_fields=["status"])
+
+    list_codes = {row["code"] for row in api_client.get("/api/ads/").json()["results"]}
+
+    assert removed.code not in list_codes
+    assert api_client.get(f"/api/ads/{removed.code}/").status_code == 200
+
+
+@pytest.mark.django_db
 def test_ad_detail_existing_and_404(api_client, catalog):
     resp = api_client.get("/api/ads/ad0/")
     assert resp.status_code == 200, resp.content
@@ -363,6 +435,74 @@ def test_deal_scores_return_envelope_with_evidence(api_client, catalog):
     assert row["confidence"] == "low"
     assert row["age_days"] == 3
     assert row["price"] < row["peer_median"]
+
+
+@pytest.mark.django_db
+def test_deal_scores_price_bounds(api_client, catalog):
+    cheap, pricey = catalog["ads"][0], catalog["ads"][7]  # 1.00bn vs 1.14bn
+    for ad, score in ((cheap, 10.0), (pricey, 20.0)):
+        DealScoreCache.objects.create(
+            ad=ad, score=score, discount_pct=score, peer_median=1_200_000_000,
+            components={"peer_count": 11, "confidence": "low", "age_days": 3},
+        )
+
+    resp = api_client.get(
+        f"/api/analytics/deal-scores/?price_min={cheap.current_price}"
+        f"&price_max={cheap.current_price}"
+    )
+    assert resp.status_code == 200, resp.content
+    codes = {r["code"] for r in resp.json()["results"]}
+    assert codes == {cheap.code}
+
+
+@pytest.mark.django_db
+def test_deal_scores_exclude_unclear_price_basis(api_client, catalog):
+    """A deposit is not a discounted car, even when it has a valid numeric price."""
+    deposit = catalog["ads"][0]
+    deposit.description = "مبلغ فوق پیش پرداخت است"
+    deposit.save(update_fields=["description"])
+
+    compute_deal_scores()
+
+    rows = api_client.get("/api/analytics/deal-scores/?limit=200").json()["results"]
+    assert deposit.code not in {row["code"] for row in rows}
+
+
+@pytest.mark.django_db
+def test_deal_score_pagination_is_stable_when_scores_tie(api_client, catalog):
+    for ad in catalog["ads"]:
+        DealScoreCache.objects.create(
+            ad=ad,
+            score=10.0,
+            discount_pct=10.0,
+            peer_median=1_200_000_000,
+            components={"peer_count": 11, "confidence": "low", "age_days": 3},
+        )
+
+    first = api_client.get("/api/analytics/deal-scores/?limit=3&offset=0").json()
+    second = api_client.get("/api/analytics/deal-scores/?limit=3&offset=3").json()
+
+    assert first["count"] == 8
+    assert len(first["results"]) == len(second["results"]) == 3
+    assert not {
+        row["code"] for row in first["results"]
+    } & {row["code"] for row in second["results"]}
+
+
+@pytest.mark.django_db
+def test_favorite_response_matches_saved_screen_contract(api_client, catalog):
+    ad = catalog["ads"][0]
+
+    resp = api_client.post("/api/favorites/", {"code": ad.code}, format="json")
+
+    assert resp.status_code == 201, resp.content
+    body = resp.json()
+    assert set(body) == {
+        "code", "ad_title", "ad_price", "previous_price", "price_changed_at", "created_at",
+    }
+    assert body["code"] == ad.code
+    assert body["ad_title"] == ad.title
+    assert body["ad_price"] == ad.current_price
 
 
 # ---------------------------------------------------------------------------

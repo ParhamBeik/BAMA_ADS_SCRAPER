@@ -19,7 +19,6 @@ dependencies = [
     "jdatetime>=4.1",
     "requests>=2.31",
     "gunicorn>=22.0",
-    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]

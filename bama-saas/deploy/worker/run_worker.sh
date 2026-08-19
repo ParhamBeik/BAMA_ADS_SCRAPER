@@ -6,9 +6,14 @@
 # .env required (compose sets DATABASE_URL on the service).
 #
 # Jobs and cadence:
-#   pipeline  5 min    HOT: delta fetch + mark_inactive + incremental deals
-#   analytics 30 min   WARM: episodes + snapshots + market index
-#   sweep     6 h      full-inventory sweep + gap repair + full deals + prune
+#   pipeline    15 min  HOT: delta fetch + mark_inactive + incremental deals
+#   coverage    10 min  rolling chunk of whatever the feed has not shown lately
+#   analytics   30 min  WARM: episodes + snapshots + market index
+#   maintenance  6 h    full deal rebuild + prune + health report
+#
+# There is no full sweep any more. Coverage accumulates from bounded chunks
+# (see run_coverage.sh), so no job has to survive a ~20-minute uninterrupted
+# walk of the feed to make removal detection work.
 #
 # Logs go to stdout, so `docker compose logs -f worker` is the whole story.
 #
@@ -21,9 +26,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"   # -> bama-saas/
 cd "$PROJECT_DIR"
 
-PIPELINE_EVERY="${BAMA_PIPELINE_EVERY:-300}"
+PIPELINE_EVERY="${BAMA_PIPELINE_EVERY:-900}"
+COVERAGE_EVERY="${BAMA_COVERAGE_EVERY:-600}"
 ANALYTICS_EVERY="${BAMA_ANALYTICS_EVERY:-1800}"
-SWEEP_EVERY="${BAMA_SWEEP_EVERY:-21600}"
+MAINTENANCE_EVERY="${BAMA_MAINTENANCE_EVERY:-21600}"
 HEARTBEAT="${BAMA_HEARTBEAT:-30}"
 HEARTBEAT_FILE="${BAMA_WORKER_HEARTBEAT:-/tmp/bama-worker.ok}"
 
@@ -55,68 +61,44 @@ run() {  # <label> <script>
         fi
     done
     log "$label FAILED rc=$rc" >&2
-}
-
-# A sweep walks ~939 pages (~15-20 min), so running one on every container
-# restart would hammer bama.ir for no gain. Print how long to wait based on the
-# AGE of the last run that actually reached the end of the feed — 0 means due
-# now. Deriving the delay from the last sweep rather than from boot keeps the
-# 6-hourly guarantee real: a restart at 5h59m would otherwise push the next
-# sweep to boot+6h, i.e. ~12h since the last one.
-sweep_delay() {
-    python manage.py shell -c "
-from django.utils import timezone
-from apps.core.models import FetchRun
-last = FetchRun.objects.filter(reached_end=True).order_by('-started_at').first()
-# Never swept (fresh deploy): due immediately — a delta tick only reads the top
-# of the feed, so without a sweep the DB would stay shallow for six hours.
-if last is None:
-    print(0)
-else:
-    age = (timezone.now() - last.started_at).total_seconds()
-    print(max(0, int($SWEEP_EVERY - age)))
-" 2>/dev/null | tail -1
+    return "$rc"
 }
 
 now=$(date +%s)
 next_pipeline=$now                       # first tick immediately: start fetching at once
+next_coverage=$((now + COVERAGE_EVERY))
 next_analytics=$((now + ANALYTICS_EVERY))
+next_maintenance=$((now + MAINTENANCE_EVERY))
 
-# An unreachable DB or a query error yields no number; defer a full sweep to the
-# normal cadence instead of stampeding the feed on every restart loop.
-delay="$(sweep_delay)"
-case "$delay" in
-    ''|*[!0-9]*) log "could not read sweep history — deferring sweep by ${SWEEP_EVERY}s"
-                 delay="$SWEEP_EVERY" ;;
-esac
-next_sweep=$((now + delay))
-if [ "$delay" -eq 0 ]; then
-    log "no recent completed sweep — sweeping at boot"
-else
-    log "last sweep still current — next sweep in ${delay}s"
-fi
-
-log "started (pipeline=${PIPELINE_EVERY}s analytics=${ANALYTICS_EVERY}s sweep=${SWEEP_EVERY}s)"
+# No boot-time sweep scheduling any more. The old loop queried the age of the
+# last `reached_end` run to decide whether to sweep at boot; with coverage
+# accumulating from bounded chunks there is no single run to be current or
+# stale, and a chunk is cheap enough to just run on its normal cadence.
+log "started (pipeline=${PIPELINE_EVERY}s coverage=${COVERAGE_EVERY}s analytics=${ANALYTICS_EVERY}s maintenance=${MAINTENANCE_EVERY}s)"
 
 while true; do
     now=$(date +%s)
 
-    # Sequential, not backgrounded: a sweep starts at page 0, so it already
-    # covers everything a delta tick would have read. Overlapping them would
-    # double the request rate against bama.ir to re-read the same pages.
-    if [ "$now" -ge "$next_sweep" ]; then
-        run sweep "$SCRIPT_DIR/run_sweep.sh"
-        next_sweep=$(($(date +%s) + SWEEP_EVERY))
-    fi
-
+    # Sequential, not backgrounded: every job here talks to bama.ir or the same
+    # tables, and overlapping them would double the request rate.
     if [ "$now" -ge "$next_pipeline" ]; then
         run pipeline "$SCRIPT_DIR/run_pipeline.sh" --cadence hot
         next_pipeline=$(($(date +%s) + PIPELINE_EVERY))
     fi
 
+    if [ "$now" -ge "$next_coverage" ]; then
+        run coverage "$SCRIPT_DIR/run_coverage.sh"
+        next_coverage=$(($(date +%s) + COVERAGE_EVERY))
+    fi
+
     if [ "$now" -ge "$next_analytics" ]; then
         run analytics "$SCRIPT_DIR/run_analytics.sh"
         next_analytics=$(($(date +%s) + ANALYTICS_EVERY))
+    fi
+
+    if [ "$now" -ge "$next_maintenance" ]; then
+        run maintenance "$SCRIPT_DIR/run_maintenance.sh"
+        next_maintenance=$(($(date +%s) + MAINTENANCE_EVERY))
     fi
 
     date +%s > "$HEARTBEAT_FILE" || true

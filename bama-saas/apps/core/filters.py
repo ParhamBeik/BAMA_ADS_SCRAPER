@@ -33,6 +33,10 @@ class AdFilter(django_filters.FilterSet):
     body_type = django_filters.CharFilter(field_name="body_type", lookup_expr="iexact")
     fuel = django_filters.CharFilter(field_name="fuel", lookup_expr="iexact")
     seller_authenticated = django_filters.BooleanFilter(field_name="seller_authenticated")
+    seller_type = django_filters.ChoiceFilter(
+        choices=(("dealer", "dealer"), ("private", "private")),
+        method="filter_seller_type",
+    )
     has_image = django_filters.BooleanFilter(method="filter_has_image")
     q = django_filters.CharFilter(method="filter_q")
     status = django_filters.CharFilter(field_name="status", lookup_expr="exact")
@@ -43,6 +47,9 @@ class AdFilter(django_filters.FilterSet):
     last_seen_from = django_filters.DateTimeFilter(
         field_name="last_seen_at", lookup_expr="gte"
     )
+
+    def filter_seller_type(self, queryset, name, value):
+        return queryset.filter(dealer__isnull=value != "dealer")
 
     def filter_has_image(self, queryset, name, value):
         if value is True:

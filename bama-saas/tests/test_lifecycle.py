@@ -20,14 +20,16 @@ from apps.core.models import (
     DealScoreCache,
     FetchRun,
     Model,
+    PageCoverage,
     Variant,
 )
 from apps.core.services.deal_score import compute_deal_scores
 from apps.jobs.management.commands.mark_inactive_ads import (
-    REQUIRED_MISSED_SWEEPS,
+    REQUIRED_MISSED_WINDOWS,
     sweep_cutoff,
 )
 from django.core.management import call_command
+from django.utils import timezone as djtz
 
 NOW = datetime(2026, 8, 8, 12, 0, tzinfo=tz.utc)
 
@@ -59,13 +61,32 @@ def catalog(db):
     return {"brand": brand, "model": model, "variant": variant, "city": city}
 
 
-def _sweep(started_at, *, reached_end=True, status=FetchRun.Status.SUCCEEDED):
-    return FetchRun.objects.create(
+FEED_DEPTH = 100
+
+
+def _cover(at, lo=1, hi=FEED_DEPTH, run=None):
+    """Record that ranks ``lo..hi`` were fetched at ``at``.
+
+    Coverage, not run status, is what the removal rule reads now, so these
+    tests seed PageCoverage directly. ``run`` is shared between calls when a
+    test needs one run to contribute several disjoint ranges.
+    """
+    run = run or FetchRun.objects.create(
         source=FetchRun.Source.LIVE_FETCH,
-        status=status,
-        started_at=started_at,
-        reached_end=reached_end,
+        status=FetchRun.Status.SUCCEEDED,
+        started_at=at,
     )
+    PageCoverage.objects.create(
+        fetch_run=run,
+        page_index=(lo - 1) // 30,
+        rank_lo=lo,
+        rank_hi=hi,
+        ad_count=hi - lo + 1,
+        new_count=0,
+        changed_count=0,
+        fetched_at=at,
+    )
+    return run
 
 
 def _ad(catalog, code, last_seen, *, price=1_000_000_000, mileage=100_000):
@@ -80,19 +101,24 @@ def _ad(catalog, code, last_seen, *, price=1_000_000_000, mileage=100_000):
 
 
 # ---------------------------------------------------------------------------
-# Sweep-based removal
+# Coverage-based removal
+#
+# The rule reads accumulated PageCoverage over two consecutive windows, not
+# fetch-run status. Windows are relative to wall-clock now, so these seed times
+# are offsets from `timezone.now()` rather than the fixed NOW above.
 # ---------------------------------------------------------------------------
 
 @pytest.mark.django_db
-def test_no_removal_without_enough_completed_sweeps(catalog):
-    """The critical safety case: one sweep must never empty the market.
+def test_no_removal_with_one_covered_window(catalog):
+    """The critical safety case: one window must never empty the market.
 
     A wall-clock rule marks everything REMOVED the moment the crawler stalls
-    long enough. The coverage rule must instead refuse to act, because a single
-    sweep proves nothing about ads it may have missed to rank shift.
+    long enough. The coverage rule must refuse to act, because a single pass
+    proves nothing about ads it may have missed to rank shift.
     """
-    _sweep(NOW - timedelta(hours=6))
-    stale = _ad(catalog, "stale001", NOW - timedelta(days=30))
+    now = djtz.now()
+    _cover(now - timedelta(hours=2))
+    stale = _ad(catalog, "stale001", now - timedelta(days=30))
 
     call_command("mark_inactive_ads")
 
@@ -104,21 +130,20 @@ def test_no_removal_without_enough_completed_sweeps(catalog):
 
 
 @pytest.mark.django_db
-def test_no_removal_with_zero_sweeps(catalog):
-    stale = _ad(catalog, "stale002", NOW - timedelta(days=90))
+def test_no_removal_without_any_coverage(catalog):
+    stale = _ad(catalog, "stale002", djtz.now() - timedelta(days=90))
     call_command("mark_inactive_ads")
     stale.refresh_from_db()
     assert stale.status == Ad.Status.ACTIVE
 
 
 @pytest.mark.django_db
-def test_ad_absent_from_two_sweeps_is_removed(catalog):
-    """Last seen before the older of the two completed sweeps → gone."""
-    older = NOW - timedelta(hours=12)
-    _sweep(older)
-    _sweep(NOW - timedelta(hours=6))
+def test_ad_absent_from_two_covered_windows_is_removed(catalog):
+    now = djtz.now()
+    _cover(now - timedelta(hours=2))    # recent window
+    _cover(now - timedelta(hours=30))   # older window
 
-    gone = _ad(catalog, "gone0001", older - timedelta(hours=1))
+    gone = _ad(catalog, "gone0001", now - timedelta(hours=50))
 
     call_command("mark_inactive_ads")
 
@@ -130,18 +155,12 @@ def test_ad_absent_from_two_sweeps_is_removed(catalog):
 
 
 @pytest.mark.django_db
-def test_ad_seen_after_older_sweep_survives(catalog):
-    """Missed by the newest sweep only → not yet proven gone.
+def test_ad_seen_inside_the_windows_survives(catalog):
+    now = djtz.now()
+    _cover(now - timedelta(hours=2))
+    _cover(now - timedelta(hours=30))
 
-    This is the false-positive that requiring two sweeps exists to prevent: a
-    deletion elsewhere in the feed can pull an ad past a page the sweep already
-    read, so one miss is not evidence.
-    """
-    older = NOW - timedelta(hours=12)
-    _sweep(older)
-    _sweep(NOW - timedelta(hours=6))
-
-    survivor = _ad(catalog, "alive001", older + timedelta(minutes=30))
+    survivor = _ad(catalog, "alive001", now - timedelta(hours=3))
 
     call_command("mark_inactive_ads")
 
@@ -150,48 +169,65 @@ def test_ad_seen_after_older_sweep_survives(catalog):
 
 
 @pytest.mark.django_db
-def test_incomplete_sweeps_do_not_count(catalog):
-    """Only reached_end sweeps prove coverage; a truncated one proves nothing."""
-    _sweep(NOW - timedelta(hours=12), reached_end=False)
-    _sweep(NOW - timedelta(hours=9), reached_end=False)
-    _sweep(NOW - timedelta(hours=6))  # only one genuine sweep
+def test_partial_coverage_does_not_authorise_removal(catalog):
+    """A window that missed part of the feed proves nothing about it.
 
-    stale = _ad(catalog, "stale003", NOW - timedelta(days=30))
+    The older window walked the whole feed, so the depth ratchet knows it is
+    100 deep; the recent window only reached rank 50. Ranks 51-100 were seen by
+    nobody recently, so no ad may be declared gone.
+    """
+    now = djtz.now()
+    _cover(now - timedelta(hours=30), lo=1, hi=FEED_DEPTH)
+    _cover(now - timedelta(hours=2), lo=1, hi=50)
+
+    stale = _ad(catalog, "stale003", now - timedelta(days=30))
     call_command("mark_inactive_ads")
 
     stale.refresh_from_db()
     assert stale.status == Ad.Status.ACTIVE
+    assert sweep_cutoff()[0] is None
 
 
 @pytest.mark.django_db
-def test_failed_sweeps_do_not_count(catalog):
-    _sweep(NOW - timedelta(hours=12), status=FetchRun.Status.FAILED)
-    _sweep(NOW - timedelta(hours=6))
-    stale = _ad(catalog, "stale004", NOW - timedelta(days=30))
+def test_coverage_unions_across_several_partial_runs(catalog):
+    """The property the whole redesign exists for.
 
+    Four interrupted runs that each walked a quarter of the feed prove exactly
+    what one uninterrupted sweep proved. Under the old rule none of these set
+    reached_end, so removal detection stalled and delisted ads stayed ACTIVE
+    for days — which is what batched listing episodes into lumps.
+    """
+    now = djtz.now()
+    for window_hours in (30, 2):
+        at = now - timedelta(hours=window_hours)
+        for lo in (1, 26, 51, 76):
+            _cover(at, lo=lo, hi=lo + 24)   # a separate run each time
+
+    gone = _ad(catalog, "gone0002", now - timedelta(hours=50))
     call_command("mark_inactive_ads")
 
-    stale.refresh_from_db()
-    assert stale.status == Ad.Status.ACTIVE
+    gone.refresh_from_db()
+    assert gone.status == Ad.Status.REMOVED
 
 
 @pytest.mark.django_db
-def test_days_override_bypasses_sweep_rule(catalog):
-    """The escape hatch still works with no sweeps on record at all."""
-    stale = _ad(catalog, "stale005", NOW - timedelta(days=30))
+def test_days_override_bypasses_coverage_rule(catalog):
+    """The escape hatch still works with no coverage on record at all."""
+    stale = _ad(catalog, "stale005", djtz.now() - timedelta(days=30))
     call_command("mark_inactive_ads", days=1)
     stale.refresh_from_db()
     assert stale.status == Ad.Status.REMOVED
 
 
 @pytest.mark.django_db
-def test_removal_uses_the_nth_most_recent_sweep(catalog):
-    """With many sweeps, the cutoff is the 2nd newest — not the oldest ever."""
-    for hours in (48, 36, 24, 12, 6):
-        _sweep(NOW - timedelta(hours=hours))
+def test_cutoff_is_the_start_of_the_older_window(catalog):
+    now = djtz.now()
+    _cover(now - timedelta(hours=2))
+    _cover(now - timedelta(hours=30))
     cutoff, n = sweep_cutoff()
-    assert n == REQUIRED_MISSED_SWEEPS
-    assert cutoff == NOW - timedelta(hours=12)
+    assert n == REQUIRED_MISSED_WINDOWS
+    # Two 24h windows back, give or take the second spent running the test.
+    assert abs((cutoff - (now - timedelta(hours=48))).total_seconds()) < 60
 
 
 # ---------------------------------------------------------------------------

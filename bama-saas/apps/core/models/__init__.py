@@ -10,7 +10,8 @@ from apps.core.models.analytics import (
     DailyInventorySnapshot,
     DealScoreCache,
     MarketIndex,
-    MarketSnapshot,
+    NotifiedAd,
+    NotifierSettings,
 )
 from apps.core.models.catalog import (
     Ad,
@@ -21,7 +22,6 @@ from apps.core.models.catalog import (
     Variant,
 )
 from apps.core.models.history import (
-    AdChangeEvent,
     AdObservation,
     AdVersion,
     FetchRun,
@@ -36,11 +36,12 @@ __all__ = [
     # catalog
     "Brand", "Model", "Variant", "City", "Dealer", "Ad",
     # history / provenance
-    "FetchRun", "AdVersion", "AdObservation", "AdChangeEvent",
+    "FetchRun", "AdVersion", "AdObservation",
     "PageCoverage", "IngestReject", "JobRun", "ListingEpisode",
     # market / price
     "PriceObservation", "PriceDropEvent",
     # analytics
     "DailyInventorySnapshot",
-    "DealScoreCache", "MarketSnapshot", "MarketIndex",
+    "DealScoreCache", "MarketIndex",
+    "NotifierSettings", "NotifiedAd",
 ]

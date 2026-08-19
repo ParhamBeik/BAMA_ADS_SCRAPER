@@ -160,13 +160,39 @@ CSRF_TRUSTED_ORIGINS = [
 # ---------------------------------------------------------------------------
 
 BAMA_MAX_ADS = int(os.environ.get("BAMA_MAX_ADS", "50000"))
-BAMA_PAGE_PAUSE = float(os.environ.get("BAMA_PAGE_PAUSE", "0.8"))
+# 1.5s rather than 0.8s. bama.ir answered 503 to 55 runs and refused the
+# connection to 54 more over 39 days; a slower crawl that completes is worth
+# more than a fast one whose coverage cannot be proven.
+BAMA_PAGE_PAUSE = float(os.environ.get("BAMA_PAGE_PAUSE", "1.5"))
 BAMA_REQUEST_TIMEOUT = int(os.environ.get("BAMA_REQUEST_TIMEOUT", "20"))
 BAMA_COOKIE = os.environ.get("BAMA_COOKIE", "")
 # Per-tick fetch size for the background worker. Intentionally small: the worker
-# runs every ~5 minutes and only needs the newest pages (where new/changed ads
-# land). A full sweep uses `python manage.py fetch_live` (BAMA_MAX_ADS) instead.
+# runs every ~15 minutes and only needs the newest pages (where new/changed ads
+# land). Deep coverage comes from the rolling backfill chunk, not from this.
 BAMA_WORKER_FETCH_ADS = int(os.environ.get("BAMA_WORKER_FETCH_ADS", "500"))
+
+# Deep-coverage chunk. Each rolling tick walks this many pages further down the
+# feed, so full coverage accumulates across many short runs instead of relying
+# on one uninterrupted ~936-page sweep (which succeeded 11 times in 28 attempts).
+BAMA_COVERAGE_CHUNK_PAGES = int(os.environ.get("BAMA_COVERAGE_CHUNK_PAGES", "120"))
+
+# Episodes that started before this date have untrustworthy end dates and are
+# excluded from survival analysis.
+#
+# Removal used to be detectable only on days a full sweep happened to finish
+# (11 of 28 attempts), so listing episodes ended in lumps — 17 distinct days out
+# of 39, up to 6,873 endings on one of them, and nothing at all for a week at a
+# time. A Kaplan-Meier curve fitted to that reads the sweep schedule, not the
+# market: every cohort of every model returned a median of exactly 21.02 days.
+#
+# The rows are kept for provenance; they are simply not evidence about how long
+# cars take to sell. Set this to the date rolling coverage went live.
+BAMA_EPISODE_CLEAN_START = os.environ.get("BAMA_EPISODE_CLEAN_START", "2026-08-14")
+
+# Telegram bot token for the deal notifier. The chat id lives in NotifierSettings
+# (editable from the deal board); the token is a secret and stays in the env.
+# Empty disables sending — the notifier logs and moves on rather than failing.
+BAMA_TELEGRAM_TOKEN = os.environ.get("BAMA_TELEGRAM_TOKEN", "")
 
 # ---------------------------------------------------------------------------
 # Logging — console handler for the bama.* loggers used by the worker pipeline.

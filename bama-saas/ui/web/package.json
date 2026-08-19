@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "api:types": "python ../manage.py spectacular --format openapi-json --urlconf config.urls > openapi.json && openapi-typescript openapi.json -o src/api/schema.d.ts",
+    "api:types": "python ../../manage.py spectacular --format openapi-json --urlconf config.urls > openapi.json && openapi-typescript openapi.json -o src/api/schema.d.ts",
     "typecheck": "tsc --noEmit",
     "test:e2e": "playwright test"
   },
@@ -22,14 +22,15 @@
     "react-router-dom": "^7.18.2"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.4",
+    "openapi-typescript": "^7.13.0",
     "oxlint": "^1.75.0",
     "playwright": "^1.62.1",
     "typescript": "~6.0.2",
-    "vite": "^8.2.0",
-    "@playwright/test": "^1.62.1"
+    "vite": "^8.2.0"
   }
 }

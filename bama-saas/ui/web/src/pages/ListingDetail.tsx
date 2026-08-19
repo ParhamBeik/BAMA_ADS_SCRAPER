@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client";
-import { Async, Fa, Provenance, toman } from "../ui";
+import { Async, FLAG_LABEL, Fa, Provenance, toman } from "../ui";
 import { ListingActions } from "../engagement";
 
 type Ad = {
@@ -23,6 +23,16 @@ type Ad = {
   url: string;
   seller_authenticated: boolean | null;
   cohort_flags: string[];
+  // The browse list is ACTIVE-only, but this route is deliberately not: a saved
+  // ad that has since been delisted must still open. It has to say so.
+  status?: string;
+  last_seen_at?: string | null;
+  price_basis_unclear?: boolean;
+  condition_flagged?: boolean;
+  // Not yet in the generated schema (another agent is adding these to the API);
+  // kept optional/local so this page renders fine against an old API response too.
+  seller_type?: "dealer" | "private" | null;
+  dealer_name?: string | null;
 };
 
 type FairPrice = {
@@ -70,7 +80,30 @@ export function ListingDetail() {
               <div className="stack">
                 <div className="card">
                   <h1><Fa>{data.title}</Fa></h1>
+                  {data.status && data.status !== "active" && (
+                    <p className="badge warn">
+                      این آگهی دیگر در باما فعال نیست
+                      {data.last_seen_at && (
+                        <>
+                          {" "}— آخرین بازدید{" "}
+                          {new Date(data.last_seen_at).toLocaleDateString("fa-IR")}
+                        </>
+                      )}
+                    </p>
+                  )}
                   <p className="price">{data.current_price != null ? toman(data.current_price) : "—"}</p>
+                  {data.price_basis_unclear && (
+                    <p className="badge warn">
+                      این عدد احتمالاً پیش‌پرداخت یا قسط است، نه قیمت کامل خودرو —
+                      به همین دلیل از تابلوی پیشنهادها کنار گذاشته شده.
+                    </p>
+                  )}
+                  {data.condition_flagged && (
+                    <p className="badge warn">
+                      توضیحات آگهی به وضعیت خودرو (تصادف، پلاک منطقهٔ آزاد یا
+                      مشابه) اشاره دارد — پیش از مقایسهٔ قیمت آن را بخوانید.
+                    </p>
+                  )}
                   <ul className="spec-list">
                     <li>سال: {data.year_jalali ?? "—"}</li>
                     <li>کارکرد: {data.mileage?.toLocaleString("en-US") ?? "—"}</li>
@@ -79,10 +112,19 @@ export function ListingDetail() {
                     <li>سوخت: {data.fuel || "—"}</li>
                     <li>شهر: <Fa>{data.city_name || "—"}</Fa></li>
                     <li>فروشنده تأییدشده: {data.seller_authenticated == null ? "—" : data.seller_authenticated ? "بله" : "خیر"}</li>
+                    {data.seller_type && (
+                      <li>
+                        {data.seller_type === "dealer"
+                          ? `نمایشگاه: ${data.dealer_name || "—"}`
+                          : "فروشنده شخصی"}
+                      </li>
+                    )}
                   </ul>
-                  {data.cohort_flags?.length > 0 && (
-                    <p className="warn">پرچم‌های کیفیت: {data.cohort_flags.join(", ")}</p>
-                  )}
+                  {data.cohort_flags?.map((f) => (
+                    <p key={f} className="badge warn">
+                      {FLAG_LABEL[f] ?? f}
+                    </p>
+                  ))}
                   {data.url && (
                     <a className="btn" href={data.url} target="_blank" rel="noreferrer">مشاهده در باما</a>
                   )}

@@ -8,7 +8,10 @@ JobRun that was answerable only by reading container logs, and a step that was
 skipped because its prerequisite failed looked exactly like one that succeeded.
 """
 
+from unittest.mock import Mock
+
 import pytest
+import requests
 
 from apps.core.models import JobRun
 from apps.jobs.services import pipeline as P
@@ -85,9 +88,9 @@ def test_an_unrelated_step_still_runs_after_a_failure(monkeypatch):
             raise RuntimeError("nope")
 
     monkeypatch.setattr(P, "call_command", selective)
-    P.run_pipeline(fetch=False, steps={"daily_snapshot", "market_snapshot"})
+    P.run_pipeline(fetch=False, steps={"daily_snapshot", "episodes"})
 
-    assert JobRun.objects.get(name="market_snapshot").status == JobRun.Status.OK
+    assert JobRun.objects.get(name="episodes").status == JobRun.Status.OK
 
 
 @pytest.mark.django_db
@@ -107,6 +110,20 @@ def test_a_failed_fetch_does_not_cascade(monkeypatch):
     assert JobRun.objects.get(name="daily_snapshot").status == JobRun.Status.OK
 
 
+def test_a_403_fetch_is_not_retried():
+    calls = 0
+
+    def reject():
+        nonlocal calls
+        calls += 1
+        raise requests.HTTPError("HTTP 403", response=Mock(status_code=403))
+
+    with pytest.raises(requests.HTTPError):
+        P._retry(reject, attempts=3, base_delay=0, label="fetch")
+
+    assert calls == 1
+
+
 @pytest.mark.django_db
 def test_hot_cadence_skips_warm_steps(monkeypatch):
     seen = []
@@ -121,7 +138,7 @@ def test_hot_cadence_skips_warm_steps(monkeypatch):
     assert "sync_episodes" not in seen
     assert "daily_snapshot" not in seen
     names = [s.name for s in report.steps]
-    assert names == ["mark_inactive", "deal_scores"]
+    assert names == ["mark_inactive", "deal_scores", "notify"]
 
 
 @pytest.mark.django_db
@@ -137,7 +154,7 @@ def test_warm_cadence_skips_fetch_and_deals(monkeypatch):
     assert "fetch_live" not in seen
     assert "compute_deal_scores" not in seen
     assert [s.name for s in report.steps] == [
-        "episodes", "daily_snapshot", "market_index", "market_snapshot",
+        "episodes", "daily_snapshot", "market_index",
     ]
 
 

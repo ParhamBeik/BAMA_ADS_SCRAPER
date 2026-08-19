@@ -6,6 +6,8 @@ recent price drop so the saved screen can answer the only question it is really
 asked: did anything I am watching get cheaper.
 """
 
+from datetime import datetime
+
 from rest_framework import serializers, status, viewsets
 from rest_framework.response import Response
 
@@ -37,11 +39,11 @@ class FavoriteSerializer(serializers.ModelSerializer):
             .first()
         )
 
-    def get_previous_price(self, obj):
+    def get_previous_price(self, obj) -> int | None:
         drop = self._latest_drop(obj)
         return drop["old_price"] if drop else None
 
-    def get_price_changed_at(self, obj):
+    def get_price_changed_at(self, obj) -> datetime | None:
         drop = self._latest_drop(obj)
         return drop["observed_at"] if drop else None
 

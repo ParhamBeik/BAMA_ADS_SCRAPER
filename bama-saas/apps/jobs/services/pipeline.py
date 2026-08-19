@@ -2,8 +2,8 @@
 
 Cadences (see ``HOT_STEPS`` / ``WARM_STEPS``):
 
-    hot   (~5 min)  fetch + mark_inactive + incremental deal scores
-    warm  (~30 min) episodes + daily_snapshot + market_index + market_snapshot
+    hot   (~15 min) fetch + mark_inactive + incremental deal scores + notify
+    warm  (~30 min) episodes + daily_snapshot + market_index
     full            every step, with a full deal-score rebuild
 
 Each step reuses an existing primitive rather than reimplementing it:
@@ -13,15 +13,17 @@ Each step reuses an existing primitive rather than reimplementing it:
                                  via ingest_ad.
     mark_inactive     (local)  — flips stale ACTIVE ads to REMOVED.
     daily_snapshot    (local)  — idempotently refreshes today's per-slice inventory.
-    market_snapshot   (local)  — idempotently refreshes today's whole-market rollup.
     market_index      (local)  — chains cohort medians into the price index;
                                  must follow daily_snapshot, whose rows it reads.
     deal_scores       (local)  — HOT: refresh models sighted in the latest fetch;
-                                 FULL: rebuild DealScoreCache. Sweep also rebuilds.
+                                 FULL: rebuild DealScoreCache. Maintenance rebuilds too.
+    notify            (network) — Telegram for deals clearing the notifier bars;
+                                 must follow deal_scores, whose rows it reads.
 
-``refresh_analytics`` used to be a step here. It has been deleted outright: the
-only table it wrote, ``PriceStatistics``, was read by no view, serializer or
-service, so every one of its runs was pure cost.
+``refresh_analytics`` used to be a step here, and ``market_snapshot`` until
+recently. Both were deleted outright for the same reason: the only tables they
+wrote (``PriceStatistics``, ``MarketSnapshot``) were read by no view, serializer
+or service, so every one of their runs was pure cost.
 
 Steps are largely independent — a failure in one is logged and the rest still
 run, so a flaky live fetch does not stop the cheap local steps from keeping
@@ -48,6 +50,9 @@ from typing import Callable, Optional
 from django.core.management import call_command
 from django.utils import timezone
 
+from apps.jobs.services.crawl_gate import CrawlBlocked
+from apps.jobs.services.fetcher import _retryable
+
 logger = logging.getLogger("bama.worker")
 
 # Ordered step list — the canonical full pipeline. ``run_pipeline`` runs exactly
@@ -58,12 +63,12 @@ STEP_ORDER = (
     "episodes",
     "daily_snapshot",
     "market_index",
-    "market_snapshot",
     "deal_scores",
+    "notify",
 )
 
-HOT_STEPS = ("fetch", "mark_inactive", "deal_scores")
-WARM_STEPS = ("episodes", "daily_snapshot", "market_index", "market_snapshot")
+HOT_STEPS = ("fetch", "mark_inactive", "deal_scores", "notify")
+WARM_STEPS = ("episodes", "daily_snapshot", "market_index")
 CADENCES = {
     "hot": HOT_STEPS,
     "warm": WARM_STEPS,
@@ -79,8 +84,10 @@ _LOCAL_COMMANDS = {
     # Strictly after daily_snapshot: the index is chained arithmetic over the
     # rows that command writes, so running it first would index yesterday.
     "market_index": "build_market_index",
-    "market_snapshot": "market_snapshot",
     "deal_scores": "compute_deal_scores",
+    # Strictly after deal_scores: it reads DealScoreCache, which that step
+    # rebuilds, so running it first would announce the previous tick's board.
+    "notify": "notify_deals",
     # No refresh_analytics: PriceStatistics, the only table it wrote, was read by
     # nothing and has been removed along with the command.
 }
@@ -137,13 +144,22 @@ def _retry(fn: Callable, *, attempts: int, base_delay: float, label: str):
         try:
             return fn()
         except Exception as exc:  # noqa: BLE001 — surface any failure to caller
-            if attempt >= attempts:
-                logger.warning("%s attempt %d/%d exhausted: %s", label, attempt, attempts, exc)
+            if attempt >= attempts or not _retryable(exc):
+                logger.warning(
+                    "event=pipeline_fetch_failed attempt=%d/%d retryable=%s error=%s",
+                    attempt,
+                    attempts,
+                    _retryable(exc),
+                    exc,
+                )
                 raise
             delay = base_delay * (2 ** (attempt - 1))
             logger.warning(
-                "%s attempt %d/%d failed (%s); retrying in %.1fs",
-                label, attempt, attempts, exc, delay,
+                "event=pipeline_fetch_retry attempt=%d/%d delay_s=%.1f error=%s",
+                attempt,
+                attempts,
+                delay,
+                exc,
             )
             time.sleep(delay)
 
@@ -179,7 +195,15 @@ class _JobRecorder:
     def __exit__(self, exc_type, exc, tb):
         self.row.duration_s = time.monotonic() - self._start
         self.row.finished_at = timezone.now()
-        if exc is not None:
+        if isinstance(exc, CrawlBlocked):
+            # A back-off this system chose, not a fault. Recorded here rather
+            # than in the fetch step so any future gated operation inherits it,
+            # and so `failed_runs` on the health page keeps meaning "something
+            # is broken" — during the 2026-08-16 block it read 245 failures for
+            # a situation with exactly one cause.
+            self.row.status = self.model.Status.SKIPPED
+            self.row.detail = str(exc)[:4000]
+        elif exc is not None:
             self.row.status = self.model.Status.FAILED
             self.row.error = str(exc)[:4000]
         elif self.row.status == self.model.Status.RUNNING:
@@ -234,9 +258,22 @@ def _exec_cmd_step(
             job.detail = detail[:4000]
             logger.info("step=%s OK duration=%.1fs %s", name, dur, detail)
             return StepResult(name, True, detail, dur)
+    except CrawlBlocked as exc:
+        # `_JobRecorder.__exit__` has already recorded the row as SKIPPED.
+        # Reported as ok=True so the tick continues to the steps that do not need
+        # the network (episodes, snapshots, the market index all still work).
+        dur = time.monotonic() - start
+        logger.info("step=%s SKIPPED duration=%.1fs %s", name, dur, exc)
+        return StepResult(name, True, f"skipped: {exc}"[:500], dur)
     except Exception as exc:  # noqa: BLE001
         dur = time.monotonic() - start
-        logger.exception("step=%s FAILED duration=%.1fs err=%s", name, dur, exc)
+        logger.exception(
+            "event=pipeline_step_failed step=%s duration_s=%.1f error_type=%s error=%s",
+            name,
+            dur,
+            type(exc).__name__,
+            exc,
+        )
         return StepResult(name, False, str(exc)[:500], dur)
 
 
@@ -284,7 +321,9 @@ def _deal_scores_step(*, incremental: bool, triggered_by: str = "scheduler") -> 
             res = refresh_cohort_deal_scores(model_ids)
             detail = (
                 f"incremental models={res['refreshed_models']} "
-                f"scored={res['total_scored']}"
+                f"scored={res['total_scored']} "
+                f"outliers_flagged={res['total_outliers_flagged']} "
+                f"outliers_cleared={res['total_outliers_cleared']}"
             )
             job.detail = detail[:4000]
             dur = time.monotonic() - start
@@ -387,4 +426,3 @@ def run_pipeline(
     report.finished_at = timezone.now()
     logger.info("%s", report.summary())
     return report
-

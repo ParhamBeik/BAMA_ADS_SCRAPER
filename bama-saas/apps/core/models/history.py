@@ -40,6 +40,10 @@ class FetchRun(models.Model):
         MAX_PAGES = "max_pages", "Hit the page-range end (backfill)"
         ERROR = "error", "Aborted on an unrecoverable error"
         INTERRUPTED = "interrupted", "Interrupted by the operator"
+        # Distinct from ERROR because the response is a policy decision by the
+        # source, not a fault: it must drive a cooldown rather than a retry.
+        # See apps/jobs/services/crawl_gate.py.
+        BLOCKED = "blocked", "Refused by the source's WAF/CDN (403)"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     source = models.CharField(
@@ -230,51 +234,6 @@ class AdObservation(models.Model):
 
     def __str__(self) -> str:
         return f"{self.ad_id} in {self.fetch_run_id}"
-
-
-class AdChangeEvent(models.Model):
-    """A recorded change between two observations of an ad."""
-
-    class EventType(models.TextChoices):
-        CONTENT_CHANGED = "content_changed", "Content changed"
-        ROUTE_CHANGED = "route_changed", "Route changed"
-        REAPPEARED = "reappeared", "Reappeared"
-
-    ad = models.ForeignKey(
-        "core.Ad", on_delete=models.CASCADE, related_name="change_events"
-    )
-    observation = models.ForeignKey(
-        AdObservation, on_delete=models.CASCADE, related_name="change_events"
-    )
-    previous_version = models.ForeignKey(
-        AdVersion, on_delete=models.SET_NULL, related_name="changes_as_prev",
-        null=True, blank=True,
-    )
-    new_version = models.ForeignKey(
-        AdVersion, on_delete=models.CASCADE, related_name="changes_as_new"
-    )
-    event_type = models.CharField(max_length=24, choices=EventType.choices)
-    categories = models.JSONField(default=list, blank=True)
-    changed_paths = models.JSONField(default=list, blank=True)
-    changes = models.JSONField(default=dict, blank=True)
-    origin = models.CharField(max_length=32, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        db_table = "history_adchangeevent"
-        ordering = ("-created_at",)
-        constraints = [
-            models.UniqueConstraint(
-                fields=("observation", "event_type"), name="uq_change_obs_type"
-            ),
-        ]
-        indexes = [
-            GinIndex(fields=["categories"], name="change_cat_gin"),
-            GinIndex(fields=["changed_paths"], name="change_paths_gin"),
-        ]
-
-    def __str__(self) -> str:
-        return f"{self.ad_id} {self.event_type}"
 
 
 class ListingEpisode(models.Model):

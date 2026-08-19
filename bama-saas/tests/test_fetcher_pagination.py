@@ -122,6 +122,18 @@ def test_first_request_is_page_index_zero():
     assert "pageIndex=1" not in session.urls[0]
 
 
+def test_403_is_logged_once_without_retry(caplog):
+    """A rejected session must be visible and must not hammer the upstream."""
+    session = FakeSession([], fail_on=0, fail_status=403)
+
+    with pytest.raises(requests.HTTPError):
+        fetcher.fetch_page_with_backoff(session, 0, request_timeout=5)
+
+    assert session.page_indices == [0]
+    assert "event=bama_http_error page=0 status=403 retryable=False" in caplog.text
+    assert "event=bama_fetch_failed page=0 attempt=1 status=403 retryable=False" in caplog.text
+
+
 @pytest.mark.django_db
 def test_pages_are_contiguous_with_no_gap():
     session = FakeSession(make_feed(4, "B"))
