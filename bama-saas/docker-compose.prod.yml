@@ -9,6 +9,15 @@
 #
 # Only frontend joins the shared `vps-edge` network (Caddy terminates TLS
 # there); postgres/django/worker stay on the internal network.
+#
+# `name:` pins the Compose project name (and therefore the named-volume
+# prefix, e.g. bama-saas_postgres_data) instead of leaving it to derive from
+# the invoking directory's basename. Deploy runs from a git checkout now
+# (see deploy/vps_pull_deploy.sh), and a project name that silently changed
+# because of *where* the repo happened to be cloned would make Compose spin
+# up fresh, empty volumes next to the real ones — the data would look gone.
+name: bama-saas
+
 x-json-logging: &json-logging
   driver: json-file
   options:
