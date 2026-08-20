@@ -1,12 +1,8 @@
 """User and saved-ads models.
 
-This is a local, single-operator tool: there is no subscription tier, no
-alerting, no in-app inbox. ``User`` survives only because Django admin needs a
-user table and swapping ``AUTH_USER_MODEL`` on a database holding 66k ads and
-688k observations is a far bigger risk than the ~40 lines it costs to keep.
-
-``Favorite`` lost its user FK with the rest of the SaaS layer — one operator
-means the saved list is a flat table keyed on the ad.
+This is a local market-intelligence tool: there is no subscription tier,
+alerting, or in-app inbox. Users exist for session auth, Django admin, and
+isolated saved listings.
 """
 
 import uuid
@@ -57,9 +53,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     full_name = models.CharField(max_length=255, blank=True)
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
-    # Read-only login: can view everything, blocked from POST/PATCH/DELETE by
-    # ReadOnlyForDemo (see config/settings/prod.py). Lets the operator hand out
-    # a look-but-don't-touch credential without building a real roles system.
+    # Marks the configured demo account; it remains a normal user and is not
+    # staff, so it cannot reach operator APIs.
     is_demo = models.BooleanField(default=False)
     date_joined = models.DateTimeField(default=timezone.now)
 
@@ -77,16 +72,24 @@ class User(AbstractBaseUser, PermissionsMixin):
 
 
 class Favorite(models.Model):
-    """A saved ad. One row per ad — there is only one operator."""
+    """A saved ad owned by one authenticated user."""
 
-    ad = models.OneToOneField(
-        "core.Ad", on_delete=models.CASCADE, related_name="favorite"
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="favorites", null=True, blank=True
+    )
+    ad = models.ForeignKey(
+        "core.Ad", on_delete=models.CASCADE, related_name="favorites"
     )
     created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
         db_table = "accounts_favorite"
         ordering = ("-created_at",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=("user", "ad"), name="uq_favorite_user_ad"
+            ),
+        ]
 
     def __str__(self) -> str:
         return str(self.ad_id)

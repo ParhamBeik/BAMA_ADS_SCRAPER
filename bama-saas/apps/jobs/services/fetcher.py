@@ -40,7 +40,7 @@ from typing import Any, Iterator
 
 import requests
 from django.conf import settings
-from django.db import transaction
+from django.db import connection, transaction
 from django.utils import timezone as djtz
 
 from apps.core.models import FetchRun, PageCoverage
@@ -116,6 +116,31 @@ MIN_END_OF_FEED_DEPTH_RATIO = 0.5
 CHURN_ADS_PER_MIN = 1.5
 DELTA_FLOOR_MAX_PAGES = 40
 DEFAULT_MAX_STALE_PAGES = 3
+MAX_RANK_DRIFT = PAGE_SIZE * 4
+FETCH_LEASE_KEY = 0x42414D41  # "BAMA"
+
+
+class FetchLeaseBusy(crawl_gate.CrawlBlocked):
+    """Another process already owns the single live-fetch lease."""
+
+
+@contextmanager
+def _fetch_lease():
+    """Serialize delta, full, backfill, and admin-triggered fetches.
+
+    # ponytail: one PostgreSQL advisory lock; per-source locks only if the
+    # deployment later needs concurrent fetch classes.
+    """
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_try_advisory_lock(%s)", [FETCH_LEASE_KEY])
+        acquired = bool(cursor.fetchone()[0])
+    if not acquired:
+        raise FetchLeaseBusy("another live fetch is already running")
+    try:
+        yield
+    finally:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_advisory_unlock(%s)", [FETCH_LEASE_KEY])
 
 
 def create_session(cookie: str | None = None) -> requests.Session:
@@ -248,10 +273,18 @@ def fetch_page_with_backoff(
 
 def rank_of(ad: dict[str, Any], page: int, offset: int) -> int:
     """The ad's feed rank, falling back to page arithmetic when absent."""
+    fallback = PAGE_SIZE * page + offset
     try:
-        return int((ad.get("detail") or {})["rank"])
+        rank = int((ad.get("detail") or {})["rank"])
     except (KeyError, TypeError, ValueError):
-        return PAGE_SIZE * page + offset
+        return fallback
+    if rank < 1 or abs(rank - fallback) > MAX_RANK_DRIFT:
+        logger.warning(
+            "event=bama_rank_invalid page=%d offset=%d rank=%s fallback=%d",
+            page, offset, rank, fallback,
+        )
+        return fallback
+    return rank
 
 
 def iter_pages(
@@ -291,6 +324,16 @@ def iter_pages(
                 break
             rows.append((ad, rank_of(ad, page, offset)))
             yielded += 1
+        ranks = [rank for _, rank in rows]
+        if len(set(ranks)) != len(ranks):
+            logger.warning(
+                "event=bama_rank_duplicate page=%d rows=%d; using page arithmetic",
+                page, len(rows),
+            )
+            rows = [
+                (ad, PAGE_SIZE * page + offset)
+                for offset, (ad, _) in enumerate(rows, start=1)
+            ]
         yield page, rows
         page += 1
         time.sleep(page_pause)
@@ -426,8 +469,9 @@ def fetch_live(**kwargs) -> FetchRun:
     :class:`crawl_gate.CrawlBlocked`, which callers treat as a skip.
     """
     crawl_gate.check()
-    with _checkpoint_on_sigterm():
-        return _fetch_live(**kwargs)
+    with _fetch_lease():
+        with _checkpoint_on_sigterm():
+            return _fetch_live(**kwargs)
 
 
 def _fetch_live(
@@ -551,23 +595,29 @@ def _fetch_live(
                 end_page=end_page,
             ):
                 if not rows:
-                    # A full sweep claims the feed ended here. Believe it only if
-                    # it got deep enough to be plausible; a truncated sweep that
-                    # stamps reached_end tells every downstream consumer that the
-                    # rest of the market disappeared.
-                    credible = mode != FetchRun.Mode.FULL or end_of_feed_is_credible(
+                    # Only a credible full sweep can establish global feed depth.
+                    # Delta and bounded backfill empties are local stop signals;
+                    # treating them as global evidence can authorize removals
+                    # after one transient empty response.
+                    credible = mode == FetchRun.Mode.FULL and end_of_feed_is_credible(
                         page, expected_depth
                     )
-                    if credible:
+                    if mode == FetchRun.Mode.FULL and credible:
                         run.reached_end = True
                         stop_reason = FetchRun.StopReason.END_OF_FEED
-                    else:
+                    elif mode == FetchRun.Mode.FULL:
                         run.error = (
                             f"end-of-feed at page {page}; the last completed sweep "
                             f"reached {expected_depth}. Treating as truncated, not "
                             "as the end of the feed."
                         )
                         stop_reason = FetchRun.StopReason.ERROR
+                    else:
+                        stop_reason = (
+                            FetchRun.StopReason.END_OF_FEED
+                            if mode == FetchRun.Mode.DELTA
+                            else FetchRun.StopReason.MAX_PAGES
+                        )
                     break
 
                 resume_page = page

@@ -126,9 +126,56 @@ def test_ensure_dev_admin_refuses_when_not_debug(settings):
 
 
 @pytest.mark.django_db
-def test_auth_routes_are_gone(api_client):
-    for path in ("/api/auth/register/", "/api/auth/login/", "/api/auth/me/"):
-        assert api_client.get(path).status_code == 404
+def test_ensure_seed_users_creates_admin_and_demo(settings):
+    from django.core.management import call_command
+
+    settings.DEV_ADMIN_EMAIL = "admin@bama.local"
+    settings.DEV_ADMIN_PASSWORD = "LocalOps-2026"
+    settings.DEMO_USER_EMAIL = "demo@bama.local"
+    settings.DEMO_USER_PASSWORD = "LocalOps-2026-demo"
+    call_command("ensure_seed_users")
+
+    admin = User.objects.get(email="admin@bama.local")
+    demo = User.objects.get(email="demo@bama.local")
+    assert admin.is_staff and admin.is_superuser and not admin.is_demo
+    assert demo.is_demo and not demo.is_staff and demo.check_password("LocalOps-2026-demo")
+
+
+@pytest.mark.django_db
+def test_auth_registration_creates_session_user(api_client):
+    response = api_client.post(
+        "/api/auth/register/",
+        {"email": "new-user@example.com", "password": "StrongPass1!"},
+        format="json",
+    )
+    assert response.status_code == 201, response.content
+    assert response.json()["email"] == "new-user@example.com"
+    assert User.objects.get(email="new-user@example.com").is_demo is False
+
+    me = api_client.get("/api/auth/me/")
+    assert me.status_code == 200
+    assert me.json()["email"] == "new-user@example.com"
+
+
+@pytest.mark.django_db
+def test_auth_registration_rejects_duplicate_and_weak_password(api_client):
+    User.objects.create_user(email="existing@example.com", password="StrongPass1!")
+
+    duplicate = api_client.post(
+        "/api/auth/register/",
+        {"email": "existing@example.com", "password": "StrongPass1!"},
+        format="json",
+    )
+    assert duplicate.status_code == 400
+    assert "email" in duplicate.json()
+
+    weak = api_client.post(
+        "/api/auth/register/",
+        {"email": "new@example.com", "password": "123"},
+        format="json",
+    )
+    assert weak.status_code == 400
+    assert "password" in weak.json()
 
 
 # ---------------------------------------------------------------------------
@@ -491,6 +538,8 @@ def test_deal_score_pagination_is_stable_when_scores_tie(api_client, catalog):
 
 @pytest.mark.django_db
 def test_favorite_response_matches_saved_screen_contract(api_client, catalog):
+    user = User.objects.create_user(email="demo@example.com", password="StrongPass1!")
+    api_client.force_authenticate(user=user)
     ad = catalog["ads"][0]
 
     resp = api_client.post("/api/favorites/", {"code": ad.code}, format="json")
@@ -513,6 +562,10 @@ def test_favorite_response_matches_saved_screen_contract(api_client, catalog):
 
 @pytest.mark.django_db
 def test_admin_fetch_is_202(api_client):
+    user = User.objects.create_superuser(
+        email="admin@example.com", password="StrongPass1!"
+    )
+    api_client.force_authenticate(user=user)
     with patch("apps.jobs.views._spawn") as mock_spawn:
         resp = api_client.post("/api/admin/jobs/fetch/", {"max_ads": 10}, format="json")
     assert resp.status_code == 202, resp.content
@@ -536,6 +589,10 @@ def test_admin_import_route_is_gone(api_client):
 
 @pytest.mark.django_db
 def test_admin_refresh_is_202(api_client):
+    user = User.objects.create_superuser(
+        email="admin@example.com", password="StrongPass1!"
+    )
+    api_client.force_authenticate(user=user)
     with patch("apps.jobs.views._spawn") as mock_spawn:
         resp = api_client.post("/api/admin/jobs/refresh-analytics/", {}, format="json")
     assert resp.status_code == 202, resp.content
@@ -546,6 +603,10 @@ def test_admin_refresh_is_202(api_client):
 
 @pytest.mark.django_db
 def test_admin_fetch_bad_input_is_400(api_client):
+    user = User.objects.create_superuser(
+        email="admin@example.com", password="StrongPass1!"
+    )
+    api_client.force_authenticate(user=user)
     with patch("apps.jobs.views._spawn"):
         resp = api_client.post(
             "/api/admin/jobs/fetch/", {"max_ads": "not-a-number"}, format="json"
@@ -554,8 +615,29 @@ def test_admin_fetch_bad_input_is_400(api_client):
 
 
 @pytest.mark.django_db
+def test_admin_fetch_rejects_unsafe_bounds(api_client, settings):
+    user = User.objects.create_superuser(
+        email="admin@example.com", password="StrongPass1!"
+    )
+    api_client.force_authenticate(user=user)
+    settings.BAMA_MAX_ADS = 500
+
+    with patch("apps.jobs.views._spawn") as mock_spawn:
+        resp = api_client.post(
+            "/api/admin/jobs/fetch/", {"max_ads": 501}, format="json"
+        )
+
+    assert resp.status_code == 400
+    mock_spawn.assert_not_called()
+
+
+@pytest.mark.django_db
 def test_admin_fetch_concurrency_guard_is_409(api_client):
     """A RUNNING live-fetch FetchRun blocks a new fetch with 409."""
+    user = User.objects.create_superuser(
+        email="admin@example.com", password="StrongPass1!"
+    )
+    api_client.force_authenticate(user=user)
     running = FetchRun.objects.create(
         source=FetchRun.Source.LIVE_FETCH, status=FetchRun.Status.RUNNING
     )
@@ -566,3 +648,29 @@ def test_admin_fetch_concurrency_guard_is_409(api_client):
         assert "detail" in resp.json()
     finally:
         running.delete()
+
+
+@pytest.mark.django_db
+def test_demo_user_can_write_favorites_but_not_trigger_admin_job(api_client, catalog):
+    user = User.objects.create_user(email="demo@example.com", password="StrongPass1!", is_demo=True)
+    api_client.force_authenticate(user=user)
+    ad = catalog["ads"][0]
+
+    favorite = api_client.post("/api/favorites/", {"code": ad.code}, format="json")
+    denied = api_client.post("/api/admin/jobs/fetch/", {}, format="json")
+
+    assert favorite.status_code == 201, favorite.content
+    assert denied.status_code == 403, denied.content
+
+
+@pytest.mark.django_db
+def test_favorites_are_isolated_between_users(api_client, catalog):
+    first = User.objects.create_user(email="first@example.com", password="StrongPass1!")
+    second = User.objects.create_user(email="second@example.com", password="StrongPass1!")
+    ad = catalog["ads"][0]
+
+    api_client.force_authenticate(user=first)
+    assert api_client.post("/api/favorites/", {"code": ad.code}, format="json").status_code == 201
+    api_client.force_authenticate(user=second)
+    body = api_client.get("/api/favorites/").json()
+    assert body["results"] == []

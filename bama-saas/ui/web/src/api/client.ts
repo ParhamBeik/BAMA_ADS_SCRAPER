@@ -1,7 +1,6 @@
 /**
- * API client for the local single-user app. There is no authentication; the
- * CSRF header is still sent on unsafe methods because Django's middleware
- * requires it regardless of who is (not) logged in.
+ * API client for the session-authenticated app. The CSRF header is sent on
+ * unsafe methods because Django's middleware requires it.
  */
 const BASE = import.meta.env.VITE_API_BASE ?? "";
 

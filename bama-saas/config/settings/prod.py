@@ -8,8 +8,6 @@ DEBUG = False
 ALLOWED_HOSTS = [h.strip() for h in os.environ.get("ALLOWED_HOSTS", "").split(",") if h.strip()]
 
 # Consumed by `ensure_seed_users` (see docker-compose.prod.yml's django command).
-# DEV_ADMIN_* names stay as-is for continuity with the existing required env var;
-# DEMO_USER_* is new, for the read-only login.
 DEV_ADMIN_EMAIL = os.environ.get("DEV_ADMIN_EMAIL", "")
 DEV_ADMIN_PASSWORD = os.environ.get("DEV_ADMIN_PASSWORD", "")
 DEMO_USER_EMAIL = os.environ.get("DEMO_USER_EMAIL", "")
@@ -40,12 +38,9 @@ REST_FRAMEWORK = {
         "anon": os.environ.get("THROTTLE_ANON", "60/min"),
         "user": os.environ.get("THROTTLE_USER", "600/min"),
     },
-    # base.py defaults to AllowAny, which is fine for the local-first single-operator
-    # use case (no network exposure). A deployed instance IS reachable, so it must
-    # require a logged-in Django session rather than serving the whole catalog/API
-    # to anyone who finds the URL. Session auth only (no JWT, no registration) —
-    # this stays a two-account tool (admin + read-only demo) even when deployed.
+    # A deployed instance requires a logged-in Django session. Operator endpoints
+    # add an explicit IsAdminUser permission at the view boundary.
     "DEFAULT_PERMISSION_CLASSES": (
-        "apps.accounts.permissions.ReadOnlyForDemo",
+        "rest_framework.permissions.IsAuthenticated",
     ),
 }

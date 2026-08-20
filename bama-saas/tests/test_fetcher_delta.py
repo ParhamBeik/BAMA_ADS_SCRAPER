@@ -98,8 +98,16 @@ def test_delta_that_runs_out_of_feed_reports_end_of_feed():
     run = run_delta(pages, mode="delta", max_stale_pages=2)
 
     assert run.stop_reason == FetchRun.StopReason.END_OF_FEED
-    assert run.reached_end is True
+    assert run.reached_end is False
     assert run.pages_fetched == 2
+
+
+@pytest.mark.django_db
+def test_backfill_empty_page_is_range_end_not_global_feed_end():
+    run = run_delta([[]], mode="backfill", start_page=20, end_page=20)
+
+    assert run.stop_reason == FetchRun.StopReason.MAX_PAGES
+    assert run.reached_end is False
 
 
 @pytest.mark.django_db

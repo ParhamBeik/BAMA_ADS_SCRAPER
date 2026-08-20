@@ -16,6 +16,7 @@ router.register("favorites", views.FavoriteViewSet, basename="favorite")
 
 urlpatterns = [
     path("auth/me/", views_auth.MeView.as_view(), name="auth-me"),
+    path("auth/register/", views_auth.RegisterView.as_view(), name="auth-register"),
     path("auth/login/", views_auth.LoginView.as_view(), name="auth-login"),
     path("auth/logout/", views_auth.LogoutView.as_view(), name="auth-logout"),
     path("", include(router.urls)),

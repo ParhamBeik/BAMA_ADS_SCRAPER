@@ -5,9 +5,8 @@ scheduler) and return HTTP 202 immediately; the caller polls
 ``GET /api/admin/jobs/overview/``. A cheap DB-level guard rejects a new run while
 a same-source run is already ``RUNNING`` so two live fetches can't race.
 
-These used to be ``IsStaff``-gated. There is no auth layer left to gate on: this
-app runs on one machine, bound to localhost, for one operator. The gate protected
-nothing that the network boundary does not already protect.
+Every endpoint is explicitly staff-gated. The network boundary is useful
+defense-in-depth, not the authorization model.
 """
 
 from __future__ import annotations
@@ -19,12 +18,14 @@ from typing import Callable
 
 from datetime import timedelta
 
+from django.conf import settings
 from django.core.management import call_command
 from django.db import connection
 from django.db.models import Count
 from django.utils import timezone
 from rest_framework import status, serializers
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAdminUser
 from rest_framework.response import Response
 from drf_spectacular.utils import OpenApiResponse, extend_schema
 
@@ -32,6 +33,7 @@ from django.shortcuts import get_object_or_404
 from drf_spectacular.types import OpenApiTypes
 
 from apps.core.models import Ad, AdVersion, Brand, FetchRun, IngestReject, JobRun, Model
+from apps.jobs.services.coverage import COVERAGE_WINDOW_HOURS, find_gaps, known_feed_depth
 from apps.jobs.services.health import run_checks
 from apps.jobs.services.pipeline import record_job
 
@@ -102,6 +104,7 @@ def _accepted(command: str, **extra) -> Response:
     description="Trigger an async live Bama fetch (operator-only).",
 )
 @api_view(["POST"])
+@permission_classes([IsAdminUser])
 def trigger_fetch(request):
     """POST /api/admin/jobs/fetch/ — trigger an async live Bama fetch."""
     if _running(FetchRun.Source.LIVE_FETCH):
@@ -113,6 +116,17 @@ def trigger_fetch(request):
                 **_opt(request.data, "request_timeout", int)}
     except ValueError as exc:
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    bounds = {
+        "max_ads": (1, settings.BAMA_MAX_ADS),
+        "page_pause": (0.0, 60.0),
+        "request_timeout": (1, 120),
+    }
+    for key, (lower, upper) in bounds.items():
+        if key in opts and not lower <= opts[key] <= upper:
+            return Response(
+                {"detail": f"{key} must be between {lower} and {upper}."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
     _spawn("fetch_live", **opts)
     return _accepted("fetch_live", poll="GET /api/admin/jobs/overview/")
 
@@ -127,6 +141,7 @@ def trigger_fetch(request):
     ),
 )
 @api_view(["POST"])
+@permission_classes([IsAdminUser])
 def trigger_refresh(request):
     """POST /api/admin/jobs/refresh-analytics/ — rebuild the derived analytics.
 
@@ -146,6 +161,7 @@ def trigger_refresh(request):
     description="Rebuild per-ad DealScoreCache (the best-deal board). Operator-only.",
 )
 @api_view(["POST"])
+@permission_classes([IsAdminUser])
 def trigger_deal_scores(request):
     """POST /api/admin/jobs/deal-scores/ — rebuild DealScoreCache (async)."""
     try:
@@ -166,6 +182,7 @@ def trigger_deal_scores(request):
     ),
 )
 @api_view(["GET"])
+@permission_classes([IsAdminUser])
 def ad_provenance(request, code: str):
     """GET /api/admin/ads/<code>/provenance/ — the unabridged record."""
     ad = get_object_or_404(Ad, code=code)
@@ -189,6 +206,7 @@ def ad_provenance(request, code: str):
     description="Recent scheduled-job outcomes, newest first, including skips.",
 )
 @api_view(["GET"])
+@permission_classes([IsAdminUser])
 def jobs_overview(request):
     """GET /api/admin/jobs/overview/ — did the scheduled work actually run?
 
@@ -217,6 +235,7 @@ def jobs_overview(request):
     ),
 )
 @api_view(["GET"])
+@permission_classes([IsAdminUser])
 def crawl_health(request):
     """GET /api/admin/jobs/crawl-health/ — is the crawler actually working?
 
@@ -244,6 +263,7 @@ def crawl_health(request):
     description="Database size, catalog counts, recent ingest rejects, crawl checks.",
 )
 @api_view(["GET"])
+@permission_classes([IsAdminUser])
 def system_health(request):
     """GET /api/admin/health/ — the one-screen state of the installation.
 
@@ -261,6 +281,20 @@ def system_health(request):
     from django.db.migrations.recorder import MigrationRecorder
 
     since = timezone.now() - timedelta(hours=24)
+    latest_fetch = (
+        FetchRun.objects.filter(source=FetchRun.Source.LIVE_FETCH)
+        .order_by("-finished_at", "-started_at")
+        .values(
+            "mode", "status", "stop_reason", "reached_end", "pages_fetched",
+            "deepest_rank", "finished_at",
+        )
+        .first()
+    )
+    depth = known_feed_depth()
+    gaps = find_gaps(
+        since=timezone.now() - timedelta(hours=COVERAGE_WINDOW_HOURS),
+        max_rank=depth,
+    ) if depth else []
     status_counts = {
         row["status"]: row["n"]
         for row in Ad.objects.values("status").annotate(n=Count("code"))
@@ -284,6 +318,12 @@ def system_health(request):
                 IngestReject.objects.filter(observed_at__gte=since)
                 .values("rule").annotate(n=Count("id")).order_by("-n")
             ),
+        },
+        "fetch": {
+            "latest": latest_fetch,
+            "coverage_depth": depth,
+            "coverage_gap_count": len(gaps),
+            "coverage_window_hours": COVERAGE_WINDOW_HOURS,
         },
         "crawl": [
             {"name": c.name, "ok": c.ok, "detail": c.detail} for c in run_checks()

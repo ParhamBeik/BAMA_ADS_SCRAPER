@@ -107,9 +107,9 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # Django REST Framework
 # ---------------------------------------------------------------------------
 #
-# No authentication classes and no permission gate: this is a single-operator
-# tool that runs on one machine behind Docker Compose, never exposed publicly.
-# Session auth stays only so the Django admin's browsable API keeps working.
+# Session auth protects the deployed SPA/API. Development intentionally keeps
+# the catalog permissive for local tooling; production overrides permissions
+# while operator endpoints add their own staff boundary.
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
@@ -125,10 +125,12 @@ REST_FRAMEWORK = {
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 50,
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
-    # Login gets its own scoped throttle regardless of environment, since it's
-    # the one endpoint reachable without a session — a brute-force guard, not
-    # a capacity control like the anon/user rates below (those are prod-only).
-    "DEFAULT_THROTTLE_RATES": {"login": os.environ.get("THROTTLE_LOGIN", "10/min")},
+    # Auth endpoints get independent scoped throttles: these are reachable
+    # without a session and need a brute-force/abuse guard.
+    "DEFAULT_THROTTLE_RATES": {
+        "login": os.environ.get("THROTTLE_LOGIN", "10/min"),
+        "register": os.environ.get("THROTTLE_REGISTER", "5/min"),
+    },
 }
 
 SPECTACULAR_SETTINGS = {

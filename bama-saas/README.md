@@ -153,7 +153,9 @@ public field).
 - `GET /api/research/depreciation/<model_id>/` — year-over-year retention
 
 **Saved cars** — `GET/POST /api/favorites/`, `DELETE /api/favorites/<code>/`.
-No auth; one local list.
+Session-authenticated and scoped to the current user. The configured demo
+account can use normal saved-car writes; staff-only job/provenance endpoints
+remain separate.
 
 **Optional notifier** — `GET/PATCH /api/notifier-settings/`. The singleton is
 disabled by default; the worker evaluates it after each deal-score refresh and

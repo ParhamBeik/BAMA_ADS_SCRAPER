@@ -20,6 +20,7 @@ interface AuthState {
   user: AuthUser | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
+  register: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -56,12 +57,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const register = useCallback(async (email: string, password: string) => {
+    try {
+      const u = await api.post<AuthUser>("/api/auth/register/", { email, password });
+      setUser(u);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 400) {
+        const body = err.body as { email?: string[]; password?: string[] } | undefined;
+        throw new Error(body?.email?.[0] ?? body?.password?.[0] ?? "Please check your details.");
+      }
+      if (err instanceof ApiError && err.status === 429) {
+        throw new Error("Too many sign-up attempts. Wait a minute and try again.");
+      }
+      throw new Error("Account creation failed.");
+    }
+  }, []);
+
   const logout = useCallback(async () => {
     await api.post("/api/auth/logout/").catch(() => {});
     setUser(null);
   }, []);
 
-  const value = useMemo(() => ({ user, loading, login, logout }), [user, loading, login, logout]);
+  const value = useMemo(
+    () => ({ user, loading, login, register, logout }),
+    [user, loading, login, register, logout],
+  );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 

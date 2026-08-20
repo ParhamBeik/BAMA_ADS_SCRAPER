@@ -31,6 +31,20 @@ type Health = {
     rejects_24h: number;
     reject_rules_24h: { rule: string; n: number }[];
   };
+  fetch: {
+    latest: {
+      mode: string;
+      status: string;
+      stop_reason: string;
+      reached_end: boolean;
+      pages_fetched: number;
+      deepest_rank: number | null;
+      finished_at: string | null;
+    } | null;
+    coverage_depth: number | null;
+    coverage_gap_count: number;
+    coverage_window_hours: number;
+  };
   crawl: Check[];
 };
 
@@ -103,7 +117,7 @@ export function Control() {
         {(data) => {
           const failed = data.crawl.filter((check) => !check.ok);
           return (
-            <div className="grid cols-3">
+            <div className="grid cols-4">
               <Stat
                 label="Crawl health"
                 value={failed.length ? `${failed.length} failing` : "Healthy"}
@@ -119,6 +133,16 @@ export function Control() {
                 label="Database"
                 value={bytes(data.database.size_bytes)}
                 sub={`${n(data.database.connections)} connections`}
+              />
+              <Stat
+                label="Latest fetch"
+                value={data.fetch.latest?.mode ?? "—"}
+                tone={data.fetch.latest?.status === "failed" ? "warn" : "up"}
+                sub={
+                  data.fetch.latest
+                    ? `${data.fetch.latest.stop_reason || "running"} · depth ${n(data.fetch.latest.deepest_rank ?? 0)}`
+                    : "No fetch recorded"
+                }
               />
             </div>
           );
@@ -143,6 +167,20 @@ export function Control() {
             </div>
           )}
         </Async>
+      </Card>
+
+      <Card title="Coverage ledger">
+        <div className="row between wrap">
+          <span>
+            Depth ceiling: <code>{n(health.data?.fetch.coverage_depth ?? 0)}</code>
+          </span>
+          <span>
+            Gaps: <code>{n(health.data?.fetch.coverage_gap_count ?? 0)}</code>
+          </span>
+          <span className="stat-sub">
+            Rolling window: {health.data?.fetch.coverage_window_hours ?? 24}h
+          </span>
+        </div>
       </Card>
 
       <Card title="Run a job">

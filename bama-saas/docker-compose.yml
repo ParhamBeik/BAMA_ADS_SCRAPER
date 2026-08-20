@@ -44,6 +44,8 @@ services:
       SECRET_KEY: ${SECRET_KEY:-django-insecure-dev-compose-key-not-for-production}
       DEV_ADMIN_EMAIL: ${DEV_ADMIN_EMAIL:-admin@bama.local}
       DEV_ADMIN_PASSWORD: ${DEV_ADMIN_PASSWORD:-LocalOps-2026}
+      DEMO_USER_EMAIL: ${DEMO_USER_EMAIL:-demo@bama.local}
+      DEMO_USER_PASSWORD: ${DEMO_USER_PASSWORD:-LocalOps-2026-demo}
     volumes:
       - .:/app
       - ./data:/data:ro
@@ -52,7 +54,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    command: sh -c "python manage.py migrate --noinput && python manage.py ensure_dev_admin && python manage.py runserver 0.0.0.0:8000"
+    command: sh -c "python manage.py migrate --noinput && python manage.py ensure_seed_users && python manage.py runserver 0.0.0.0:8000"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health/"]
       interval: 10s

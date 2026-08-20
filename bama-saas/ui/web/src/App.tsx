@@ -18,6 +18,7 @@ import { Login } from "./pages/Login";
 import { Overview } from "./pages/Overview";
 import { Saved } from "./pages/Saved";
 import { ListingDetail } from "./pages/ListingDetail";
+import { BrandMark } from "./BrandMark";
 
 const Control = lazy(() =>
   import("./pages/Control").then((m) => ({ default: m.Control })),
@@ -32,7 +33,7 @@ const NAV = [
   { to: "/market", label: "Market", icon: LayoutDashboard, end: false },
   { to: "/research", label: "Research", icon: BarChart3, end: false },
   { to: "/saved", label: "Saved", icon: Bookmark, end: false },
-  { to: "/control", label: "Control", icon: Activity, end: false },
+  { to: "/control", label: "Control", icon: Activity, end: false, staffOnly: true },
 ];
 
 export function App() {
@@ -45,16 +46,20 @@ export function App() {
 
 function AppShell() {
   const location = useLocation();
-  const { logout } = useAuth();
-  const current = NAV.find((n) =>
+  const { user, logout } = useAuth();
+  const nav = NAV.filter((item) => !item.staffOnly || user?.is_staff);
+  const current = nav.find((n) =>
     n.end ? location.pathname === n.to : location.pathname.startsWith(n.to),
-  ) ?? NAV[0];
+  ) ?? nav[0];
 
   return (
     <div className="app" dir="rtl">
       <nav className="sidebar" aria-label="Main">
-        <div className="brand">Bama Market</div>
-        {NAV.map(({ to, label, icon: Icon, end }) => (
+        <div className="brand brand-lockup">
+          <BrandMark size={24} />
+          <span>Bama Market</span>
+        </div>
+        {nav.map(({ to, label, icon: Icon, end }) => (
           <NavLink
             key={to}
             to={to}
@@ -89,7 +94,16 @@ function AppShell() {
           <Route path="/research/:modelId" element={<Lazy><Research /></Lazy>} />
           <Route path="/saved" element={<Saved />} />
           <Route path="/listing/:code" element={<ListingDetail />} />
-          <Route path="/control" element={<Lazy><Control /></Lazy>} />
+          <Route
+            path="/control"
+            element={
+              user?.is_staff ? (
+                <Lazy><Control /></Lazy>
+              ) : (
+                <Navigate to="/" replace />
+              )
+            }
+          />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>

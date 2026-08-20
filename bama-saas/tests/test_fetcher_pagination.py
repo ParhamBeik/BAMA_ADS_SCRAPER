@@ -202,6 +202,22 @@ def test_rank_falls_back_to_page_arithmetic_when_absent():
     assert (cov.rank_lo, cov.rank_hi) == (1, PAGE_SIZE)
 
 
+def test_invalid_rank_falls_back_to_page_arithmetic():
+    ad = make_ad("invalidrank", rank=9999)
+    assert fetcher.rank_of(ad, page=0, offset=1) == 1
+
+
+@pytest.mark.django_db
+def test_duplicate_page_ranks_use_page_arithmetic_for_coverage():
+    page = make_feed(1, "R")[0]
+    page[1]["detail"]["rank"] = page[0]["detail"]["rank"]
+    session = FakeSession([page])
+    run = run_with(session, mode="backfill", start_page=0, end_page=0)
+
+    coverage = PageCoverage.objects.get(fetch_run=run)
+    assert (coverage.rank_lo, coverage.rank_hi) == (1, PAGE_SIZE)
+
+
 @pytest.mark.django_db
 def test_delta_stops_after_k_stale_pages():
     """Pages 1+ repeat page 0's ads: nothing created, no price change."""

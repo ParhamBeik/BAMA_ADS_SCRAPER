@@ -1,14 +1,9 @@
-"""Saved ads.
-
-One operator, one saved list, no accounts. ``POST {"code": "..."}`` saves an ad,
-``DELETE /api/favorites/<code>/`` unsaves it, and the list carries each ad's most
-recent price drop so the saved screen can answer the only question it is really
-asked: did anything I am watching get cheaper.
-"""
+"""Saved ads owned by the current session user."""
 
 from datetime import datetime
 
 from rest_framework import serializers, status, viewsets
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.core.models import PriceDropEvent
@@ -49,19 +44,23 @@ class FavoriteSerializer(serializers.ModelSerializer):
 
 
 class FavoriteViewSet(viewsets.ModelViewSet):
-    """Saved ads. POST {code}; idempotent if already saved."""
+    """Saved ads. POST {code}; idempotent for the current user."""
 
+    permission_classes = [IsAuthenticated]
     serializer_class = FavoriteSerializer
     lookup_field = "ad__code"
     lookup_url_kwarg = "code"
     http_method_names = ["get", "post", "delete", "head", "options"]
-    queryset = Favorite.objects.select_related("ad")
+    queryset = Favorite.objects.select_related("ad").order_by("-created_at")
+
+    def get_queryset(self):
+        return super().get_queryset().filter(user=self.request.user)
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         favorite, _ = Favorite.objects.get_or_create(
-            ad_id=serializer.validated_data["ad_id"]
+            user=request.user, ad_id=serializer.validated_data["ad_id"]
         )
         return Response(
             self.get_serializer(favorite).data, status=status.HTTP_201_CREATED

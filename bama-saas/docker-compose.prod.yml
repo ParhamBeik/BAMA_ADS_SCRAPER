@@ -38,8 +38,7 @@ x-django-env: &django-env
   BAMA_SCRAPED_DATA_ROOT: /data
   BAMA_HISTORY_DB_PATH: /data/bama.db
   # Read by ensure_seed_users (config/settings/prod.py), which creates/updates
-  # both logins on every startup — not just DJANGO_SUPERUSER_* consumed by
-  # createsuperuser, which only creates and never updates a changed password.
+  # both logins on every startup.
   DEV_ADMIN_EMAIL: ${DEV_ADMIN_EMAIL:-admin@bama.local}
   DEV_ADMIN_PASSWORD: ${DEV_ADMIN_PASSWORD:?set DEV_ADMIN_PASSWORD}
   DEMO_USER_EMAIL: ${DEMO_USER_EMAIL:-demo@bama.local}

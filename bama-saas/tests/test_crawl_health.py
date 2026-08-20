@@ -131,6 +131,25 @@ def test_known_feed_depth_is_not_lowered_by_a_truncated_run():
 
 
 @pytest.mark.django_db
+def test_delta_end_does_not_change_global_feed_depth():
+    _run(
+        mode=FetchRun.Mode.DELTA,
+        status=FetchRun.Status.SUCCEEDED,
+        stop_reason=FetchRun.StopReason.END_OF_FEED,
+        reached_end=False,
+        deepest_rank=30,
+    )
+    PageCoverage.objects.create(
+        fetch_run=FetchRun.objects.filter(mode=FetchRun.Mode.DELTA).first(),
+        page_index=0,
+        rank_lo=1,
+        rank_hi=30,
+        fetched_at=NOW,
+    )
+    assert known_feed_depth() == 30
+
+
+@pytest.mark.django_db
 def test_a_shrinking_feed_lowers_the_ceiling():
     """The ratchet must not outlive the feed it measured.
 
@@ -143,6 +162,8 @@ def test_a_shrinking_feed_lowers_the_ceiling():
     _cover(1, 34107, at=NOW - timedelta(days=2))
     _run(
         stop_reason=FetchRun.StopReason.END_OF_FEED,
+        mode=FetchRun.Mode.FULL,
+        reached_end=True,
         deepest_rank=33112,
         started_at=NOW - timedelta(hours=1),
     )
@@ -160,6 +181,8 @@ def test_a_growing_feed_is_not_capped_by_a_stale_end_of_feed():
     """
     _run(
         stop_reason=FetchRun.StopReason.END_OF_FEED,
+        mode=FetchRun.Mode.FULL,
+        reached_end=True,
         deepest_rank=500,
         started_at=NOW - timedelta(days=3),
     )

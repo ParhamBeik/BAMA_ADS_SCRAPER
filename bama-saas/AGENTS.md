@@ -1,8 +1,8 @@
 # Bama SaaS Agent Notes
 
-Local, single-operator market-intelligence app. Django 5.2 / DRF, PostgreSQL
+Local market-intelligence app. Django 5.2 / DRF, PostgreSQL
 only (GIN, `django.contrib.postgres`). `ui/web/` is the product UI (React +
-Vite), seven screens, no auth. Schema lives in Django models and is migrated
+Vite), session-authenticated with a staff-only Control screen. Schema lives in Django models and is migrated
 via Django migrations only.
 
 **Standalone.** No code or path dependency on any other repo. Payload rules
@@ -45,7 +45,7 @@ Keep these architecture decisions intact:
   dropped as a deposit/typo (`MIN_ASK_VS_MEDIAN`), as are حواله titles and
   the 10M-toman sentinel. Age is reported, not multiplied in.
 - **Provenance, not inspect.** `GET /api/admin/ads/<code>/provenance/` is the
-  unabridged record. Public `/api/ads/` stays curated. Worker boot runs
+  unabridged record and is staff-only. Public `/api/ads/` stays curated. Worker boot runs
   `reap_orphan_runs`.
 
 Crawl invariants (`apps/jobs/services/fetcher.py`) — do not simplify away:
@@ -60,7 +60,7 @@ Crawl invariants (`apps/jobs/services/fetcher.py`) — do not simplify away:
   Only `full`/`backfill` resume.
 
 Settings: `config/settings/base.py` (shared, `AllowAny`), `dev.py` (Django
-admin via `ensure_dev_admin`), `prod.py` (HSTS/secure cookies + anon
+admin and seeded demo account), `prod.py` (HSTS/secure cookies + anon
 throttle). `manage.py` defaults to `config.settings.dev`. There is no JWT,
 subscription, or per-user alert surface; the optional local Telegram notifier
 is a singleton edited through `/api/notifier-settings/`.
@@ -71,9 +71,9 @@ is a singleton edited through `/api/notifier-settings/`.
   `refresh_cohort_deal_scores` for models sighted in that fetch + optional
   `notify_deals`.
 - **WARM** (~30 min): `sync_episodes` + `daily_snapshot` + `build_market_index`.
-- **COLD** (~6 h sweep): full fetch + gap repair + full deal-score rebuild +
-  `prune_history` (90-day observations / coverage / job runs; last two
-  completed sweeps' coverage is kept).
+- **COLD** (~6 h maintenance): gap repair follow-up + full deal-score rebuild +
+  `prune_history` (90-day observations / coverage / job runs; the rolling
+  coverage window remains authoritative for removal detection).
 - No Celery/Redis. One compose `worker` loop (or host cron, never both).
   `notify_deals` is disabled until its singleton settings row is configured.
 
@@ -82,8 +82,8 @@ is a singleton edited through `/api/notifier-settings/`.
 - `config/` — `settings/{base,dev,prod}.py`, `urls.py`, `wsgi.py`, `asgi.py`.
 - `apps/core/{models,serializers,views}/` — catalog / history / market·price
   / analytics; `filters.py`, `urls.py`.
-- `apps/accounts/` — `User` (Django admin) + `Favorite` (one operator's
-  saved list). No auth routes.
+- `apps/accounts/` — email session auth, seeded admin/demo users, and per-user
+  favorites.
 - `apps/<app>/services/` — `core/services/{fair_price,deal_score,quality,
   index,liquidity,retention}.py`, `jobs/services/{ingest,fetcher,dimensions,
   pipeline,episodes,verify,health}.py`.

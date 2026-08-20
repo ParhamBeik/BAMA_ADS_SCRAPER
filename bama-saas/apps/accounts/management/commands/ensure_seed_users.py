@@ -33,7 +33,7 @@ def _upsert(email: str, password: str, *, is_staff: bool, is_superuser: bool, is
 
 
 class Command(BaseCommand):
-    help = "Ensure the admin and demo (read-only) users exist with the env-configured passwords."
+    help = "Ensure the admin and normal demo users exist with env-configured passwords."
 
     def handle(self, *args, **options):
         admin_email = (getattr(settings, "DEV_ADMIN_EMAIL", "") or "").strip()
@@ -50,6 +50,8 @@ class Command(BaseCommand):
         if not demo_email or not demo_password:
             self.stdout.write("DEMO_USER_EMAIL/DEMO_USER_PASSWORD not set — skipping demo user.")
             return
+        if User.objects.normalize_email(demo_email) == User.objects.normalize_email(admin_email):
+            raise CommandError("DEMO_USER_EMAIL must differ from DEV_ADMIN_EMAIL.")
         action = _upsert(
             demo_email, demo_password, is_staff=False, is_superuser=False, is_demo=True
         )

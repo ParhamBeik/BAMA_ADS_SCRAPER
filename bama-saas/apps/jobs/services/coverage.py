@@ -66,6 +66,9 @@ def known_feed_depth() -> int | None:
     last_end = (
         FetchRun.objects.filter(
             stop_reason=FetchRun.StopReason.END_OF_FEED,
+            mode=FetchRun.Mode.FULL,
+            reached_end=True,
+            status=FetchRun.Status.SUCCEEDED,
             started_at__gte=since,
             deepest_rank__isnull=False,
         )
