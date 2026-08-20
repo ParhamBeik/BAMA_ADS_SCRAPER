@@ -10,10 +10,10 @@ from unittest.mock import patch
 import pytest
 
 from apps.core.models import FetchRun, PageCoverage
-from apps.core.services.deal_score import refresh_cohort_deal_scores
-from apps.jobs.services import fetcher
-from apps.jobs.services.fetcher import fetch_live
-from apps.jobs.services.ingest import reset_price_cache
+from apps.core.pricing import refresh_cohort_deal_scores
+from apps.jobs import fetcher
+from apps.jobs.fetcher import fetch_live
+from apps.jobs.ingest import reset_price_cache
 
 
 @pytest.fixture(autouse=True)

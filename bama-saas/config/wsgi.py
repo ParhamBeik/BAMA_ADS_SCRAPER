@@ -1,9 +1,9 @@
-"""WSGI config for the Bama SaaS project."""
+"""WSGI entry point (gunicorn)."""
 
 import os
 
 from django.core.wsgi import get_wsgi_application
 
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.prod")
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 
 application = get_wsgi_application()

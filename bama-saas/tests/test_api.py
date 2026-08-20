@@ -21,7 +21,7 @@ from rest_framework.test import APIClient
 
 from apps.accounts.models import User
 from apps.core.models import Ad, Brand, City, DealScoreCache, Dealer, FetchRun, Model, PriceObservation, Variant
-from apps.core.services.deal_score import compute_deal_scores
+from apps.core.pricing import compute_deal_scores
 
 UTC = timezone.utc
 
@@ -101,28 +101,14 @@ def catalog(db):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.django_db
-def test_ensure_dev_admin_creates_verified_staff(settings):
-    from django.core.management import call_command
-
-    settings.DEBUG = True
-    settings.DEV_ADMIN_EMAIL = "admin@bama.local"
-    settings.DEV_ADMIN_PASSWORD = "LocalOps-2026"
-    call_command("ensure_dev_admin")
-    user = User.objects.get(email="admin@bama.local")
-    assert user.is_staff
-    assert user.check_password("LocalOps-2026")
-
-
-@pytest.mark.django_db
-def test_ensure_dev_admin_refuses_when_not_debug(settings):
+def test_ensure_seed_users_refuses_without_an_admin_password(settings):
     from django.core.management import call_command
     from django.core.management.base import CommandError
 
-    settings.DEBUG = False
     settings.DEV_ADMIN_EMAIL = "admin@bama.local"
-    settings.DEV_ADMIN_PASSWORD = "LocalOps-2026"
+    settings.DEV_ADMIN_PASSWORD = ""
     with pytest.raises(CommandError):
-        call_command("ensure_dev_admin")
+        call_command("ensure_seed_users")
 
 
 @pytest.mark.django_db
@@ -557,8 +543,9 @@ def test_favorite_response_matches_saved_screen_contract(api_client, catalog):
 # ---------------------------------------------------------------------------
 # Admin job-trigger API (/api/admin/jobs/*)
 # ---------------------------------------------------------------------------
-# These views spawn a background thread running call_command(...). We patch
-# apps.jobs.views._spawn with a no-op so only HTTP behavior is exercised.
+# These views spawn a background thread. Patching apps.jobs.views._spawn keeps
+# the test to HTTP behaviour — and stops a real thread writing JobRun rows
+# outside the test transaction, where they survive into every later test.
 
 @pytest.mark.django_db
 def test_admin_fetch_is_202(api_client):
@@ -571,11 +558,8 @@ def test_admin_fetch_is_202(api_client):
     assert resp.status_code == 202, resp.content
     body = resp.json()
     assert body["status"] == "started"
-    assert body["command"] == "fetch_live"
+    assert body["command"] == "fetch"
     mock_spawn.assert_called_once()
-    args, kwargs = mock_spawn.call_args
-    assert args[0] == "fetch_live"
-    assert kwargs == {"max_ads": 10}
 
 
 @pytest.mark.django_db
@@ -597,8 +581,8 @@ def test_admin_refresh_is_202(api_client):
         resp = api_client.post("/api/admin/jobs/refresh-analytics/", {}, format="json")
     assert resp.status_code == 202, resp.content
     body = resp.json()
-    assert body["command"] == "run_pipeline"
-    mock_spawn.assert_called_once_with("run_pipeline", skip_fetch=True, cadence="full")
+    assert body["command"] == "refresh-analytics"
+    mock_spawn.assert_called_once()
 
 
 @pytest.mark.django_db

@@ -1,132 +1,99 @@
-x-json-logging: &json-logging
+# Local development stack. Production is docker-compose.prod.yml.
+name: bama-saas
+
+x-django-env: &django-env
+  DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-bama_saas}
+  DJANGO_SETTINGS_MODULE: config.settings
+  DJANGO_DEBUG: "1"
+  SECRET_KEY: ${SECRET_KEY:-django-insecure-dev-compose-key-not-for-production}
+  DEV_ADMIN_EMAIL: ${DEV_ADMIN_EMAIL:-admin@bama.local}
+  DEV_ADMIN_PASSWORD: ${DEV_ADMIN_PASSWORD:-LocalOps-2026}
+  DEMO_USER_EMAIL: ${DEMO_USER_EMAIL:-demo@bama.local}
+  DEMO_USER_PASSWORD: ${DEMO_USER_PASSWORD:-LocalOps-2026-demo}
+
+x-logging: &logging
   driver: json-file
-  options:
-    max-size: "20m"
-    max-file: "5"
+  options: { max-size: "20m", max-file: "5" }
 
 services:
   postgres:
     image: postgres:16-alpine
     container_name: bama-postgres
     restart: unless-stopped
-    logging: *json-logging
+    logging: *logging
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-bama_saas}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    ports:
-      # Host port is configurable and defaults to 5433, because a native
-      # PostgreSQL install commonly already owns 5432 and the bind would fail.
-      # The container-internal port stays 5432, so DATABASE_URL below is
-      # unaffected. Override with POSTGRES_HOST_PORT in .env.
-      - "${POSTGRES_HOST_PORT:-5433}:5432"
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    # Host port defaults to 5433: a native PostgreSQL install commonly already
+    # owns 5432. The container-internal port stays 5432, so DATABASE_URL above
+    # is unaffected.
+    ports: ["${POSTGRES_HOST_PORT:-5433}:5432"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-bama_saas}"]
       interval: 5s
       timeout: 5s
       retries: 10
-    networks:
-      - bama-network
 
   django:
     build: .
     container_name: bama-django
     restart: unless-stopped
-    logging: *json-logging
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-bama_saas}
-      DJANGO_SETTINGS_MODULE: config.settings.dev
-      SECRET_KEY: ${SECRET_KEY:-django-insecure-dev-compose-key-not-for-production}
-      DEV_ADMIN_EMAIL: ${DEV_ADMIN_EMAIL:-admin@bama.local}
-      DEV_ADMIN_PASSWORD: ${DEV_ADMIN_PASSWORD:-LocalOps-2026}
-      DEMO_USER_EMAIL: ${DEMO_USER_EMAIL:-demo@bama.local}
-      DEMO_USER_PASSWORD: ${DEMO_USER_PASSWORD:-LocalOps-2026-demo}
+    logging: *logging
+    env_file: [{ path: .env, required: false }]
+    environment: *django-env
     volumes:
       - .:/app
       - ./data:/data:ro
-    ports:
-      - "8001:8000"
+    ports: ["8001:8000"]
     depends_on:
-      postgres:
-        condition: service_healthy
-    command: sh -c "python manage.py migrate --noinput && python manage.py ensure_seed_users && python manage.py runserver 0.0.0.0:8000"
+      postgres: { condition: service_healthy }
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py ensure_seed_users &&
+             python manage.py runserver 0.0.0.0:8000"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health/"]
       interval: 10s
       timeout: 5s
       retries: 12
       start_period: 30s
-    networks:
-      - bama-network
 
   frontend:
     image: node:24-alpine
     container_name: bama-frontend
     init: true
     restart: unless-stopped
-    logging: *json-logging
+    logging: *logging
     working_dir: /app
     environment:
       VITE_API_TARGET: http://django:8000
     volumes:
       - ./ui/web:/app
       - frontend_node_modules:/app/node_modules
-    ports:
-      - "${FRONTEND_HOST_PORT:-5174}:5173"
+    ports: ["${FRONTEND_HOST_PORT:-5174}:5173"]
     depends_on:
-      django:
-        condition: service_healthy
+      django: { condition: service_healthy }
     command: sh -c "npm ci && npm run dev -- --host 0.0.0.0"
-    networks:
-      - bama-network
 
   # The stack's own scheduler. Do not run a second worker on the host.
   worker:
     build: .
     container_name: bama-worker
-    logging: *json-logging
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-bama_saas}
-      DJANGO_SETTINGS_MODULE: config.settings.dev
-      SECRET_KEY: ${SECRET_KEY:-django-insecure-dev-compose-key-not-for-production}
+    restart: unless-stopped
+    logging: *logging
+    env_file: [{ path: .env, required: false }]
+    environment: *django-env
     volumes:
       - .:/app
       - ./data:/data:ro
     depends_on:
       # Waits for django, not postgres: django owns `migrate`, and the worker
       # must not fetch against a half-migrated schema.
-      django:
-        condition: service_healthy
-    restart: unless-stopped
-    command: sh deploy/worker/run_worker.sh
-    networks:
-      - bama-network
-
-  pgadmin:
-    image: dpage/pgadmin4:latest
-    profiles: ["dev"]
-    environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@example.com}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
-    ports:
-      - "5050:80"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - bama-network
+      django: { condition: service_healthy }
+    command: sh deploy/worker.sh
 
 volumes:
   postgres_data:
   frontend_node_modules:
-
-networks:
-  bama-network:

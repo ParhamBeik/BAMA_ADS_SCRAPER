@@ -19,8 +19,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from apps.core.models import Ad, Brand, City, DealScoreCache, Model, Variant
-from apps.core.services.deal_score import compute_deal_scores
-from apps.core.services.listing_kind import (
+from apps.core.pricing import compute_deal_scores
+from apps.core.quality import (
     condition_discounted,
     price_basis_unclear,
 )

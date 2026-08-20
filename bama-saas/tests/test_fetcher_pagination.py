@@ -13,9 +13,9 @@ import pytest
 import requests
 
 from apps.core.models import AdObservation, FetchRun, PageCoverage
-from apps.jobs.services import fetcher
-from apps.jobs.services.fetcher import PAGE_SIZE, fetch_live
-from apps.jobs.services.ingest import reset_price_cache
+from apps.jobs import fetcher
+from apps.jobs.fetcher import PAGE_SIZE, fetch_live
+from apps.jobs.ingest import reset_price_cache
 
 
 @pytest.fixture(autouse=True)

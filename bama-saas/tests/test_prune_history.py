@@ -6,7 +6,7 @@ import pytest
 from django.utils import timezone
 
 from apps.core.models import Ad, AdObservation, AdVersion, Brand, FetchRun, JobRun, Model, PageCoverage
-from apps.jobs.services.prune import prune_history
+from apps.jobs.jobs import prune
 
 
 @pytest.mark.django_db
@@ -54,7 +54,7 @@ def test_prune_history_deletes_old_rows_and_keeps_recent_and_sweep_coverage():
     JobRun.objects.create(name="fetch", status=JobRun.Status.OK, started_at=old, finished_at=old)
     JobRun.objects.create(name="fetch", status=JobRun.Status.OK, started_at=now, finished_at=now)
 
-    result = prune_history(days=90)
+    result = prune(days=90)
 
     assert result["observations"] == 1
     assert AdObservation.objects.count() == 1
@@ -89,6 +89,6 @@ def test_prune_never_deletes_coverage_inside_the_depth_window():
         ad_count=30, fetched_at=recent,
     )
 
-    prune_history(days=1)
+    prune(days=1)
 
     assert PageCoverage.objects.count() == 1

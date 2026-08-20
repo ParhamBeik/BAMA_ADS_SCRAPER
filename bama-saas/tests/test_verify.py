@@ -14,8 +14,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from apps.jobs.services import verify as V
-from apps.parsing import extract_ad
+from apps.jobs import verify as V
+from apps.jobs.parsing import extract_ad
 
 OBSERVED_AT = datetime(2025, 7, 1, tzinfo=timezone.utc)
 

@@ -6,10 +6,10 @@ import pytest
 
 from apps.core.models import Ad
 from apps.core.models import FetchRun
-from apps.jobs.services.dimensions import reset_cache
-from apps.jobs.services.ingest import ingest_ad, reset_price_cache
+from apps.jobs.ingest import reset_cache
+from apps.jobs.ingest import ingest_ad, reset_price_cache
 from apps.core.models import PriceObservation
-from apps.parsing import extract_ad, parse_publish_time
+from apps.jobs.parsing import extract_ad, parse_publish_time
 
 
 def make_payload(code, price, phrase="2 ساعت پیش", brand="پژو", model="405", trim="دنده‌ای"):
@@ -294,7 +294,7 @@ def test_source_timestamps_are_read_as_tehran_local():
     """Bama sends a bare local timestamp with no offset. Reading it as UTC would
     shift every value by Tehran's offset — an error that never surfaces because
     the result still looks like a plausible date."""
-    from apps.jobs.services.ingest import parse_source_datetime
+    from apps.jobs.ingest import parse_source_datetime
 
     parsed = parse_source_datetime("2026-05-13T12:30:58.32")
 
@@ -321,7 +321,7 @@ def test_integrity_error_on_one_ad_does_not_lose_the_rest_of_the_page(
     from django.db import IntegrityError, transaction
 
     from apps.core.models import IngestReject
-    from apps.jobs.services import ingest as ingest_mod
+    from apps.jobs import ingest as ingest_mod
 
     real_get_or_create = ingest_mod.AdVersion.objects.get_or_create
 
@@ -368,7 +368,7 @@ def test_rolled_back_version_is_dropped_from_the_cache(known_catalog, monkeypatc
     """
     from django.db import IntegrityError
 
-    from apps.jobs.services import ingest as ingest_mod
+    from apps.jobs import ingest as ingest_mod
 
     observed = datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc)
     run = FetchRun.objects.create(source=FetchRun.Source.LIVE_FETCH)

@@ -1,8 +1,8 @@
-"""Operator job-trigger URL configuration."""
+"""Operator endpoints, mounted at ``/api/admin/jobs/``."""
 
 from django.urls import path
 
-from . import views
+from apps.jobs import views
 
 app_name = "jobs"
 

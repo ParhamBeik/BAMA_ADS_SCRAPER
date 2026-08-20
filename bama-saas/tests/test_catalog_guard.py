@@ -17,9 +17,9 @@ from datetime import datetime, timezone
 import pytest
 
 from apps.core.models import Ad, Brand, FetchRun, Model
-from apps.jobs.services.dimensions import reset_cache, resolve_dimensions
-from apps.jobs.services.ingest import ingest_ad, reset_price_cache
-from apps.parsing import extract_ad
+from apps.jobs.ingest import reset_cache, resolve_dimensions
+from apps.jobs.ingest import ingest_ad, reset_price_cache
+from apps.jobs.parsing import extract_ad
 
 from tests.test_importer import _ing, _ing3, make_payload
 
@@ -125,7 +125,7 @@ def test_flag_clears_once_the_dimension_exists():
 def test_unknown_dimension_is_soft():
     """Soft by construction: analytics excludes exactly HARD_RULE_IDS, and an ad
     with a genuinely new model is still a real, usable listing."""
-    from apps.jobs.services.verify import EXTERNAL_FLAG_IDS, HARD_RULE_IDS
+    from apps.jobs.verify import EXTERNAL_FLAG_IDS, HARD_RULE_IDS
 
     assert "unknown_dimension" in EXTERNAL_FLAG_IDS
     assert "unknown_dimension" not in HARD_RULE_IDS

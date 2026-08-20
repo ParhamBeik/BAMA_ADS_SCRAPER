@@ -63,9 +63,21 @@ def test_ad_detail_does_not_leak_the_raw_payload(catalog):
 
 
 @pytest.mark.django_db
-def test_provenance_returns_the_full_record(catalog):
+def test_provenance_is_staff_only(catalog):
+    make_ad(catalog, "prov0001")
+    assert APIClient().get("/api/admin/ads/prov0001/provenance/").status_code == 403
+
+
+@pytest.mark.django_db
+def test_provenance_returns_the_full_record_to_staff(catalog):
+    from apps.accounts.models import User
+
     make_ad(catalog, "prov0002")
-    body = APIClient().get("/api/admin/ads/prov0002/provenance/").json()
+    client = APIClient()
+    client.force_authenticate(
+        User.objects.create_superuser(email="ops@example.com", password="StrongPass1!")
+    )
+    body = client.get("/api/admin/ads/prov0002/provenance/").json()
 
     assert body["raw_payload"]["detail"]["dealer_phone"], (
         "removing it from the public serializer must not lose operator access"

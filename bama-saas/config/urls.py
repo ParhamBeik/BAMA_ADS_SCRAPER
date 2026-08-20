@@ -4,11 +4,6 @@ from django.contrib import admin
 from django.db import connection
 from django.http import JsonResponse
 from django.urls import include, path
-from drf_spectacular.views import (
-    SpectacularAPIView,
-    SpectacularRedocView,
-    SpectacularSwaggerView,
-)
 
 from apps.jobs import views as jobs_views
 
@@ -30,18 +25,11 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/health/", health, name="health"),
     path("api/db/health/", db_health, name="db-health"),
-    # Auto-generated OpenAPI schema + docs UI.
-    path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
-    path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger"),
-    path("api/redoc/", SpectacularRedocView.as_view(url_name="schema"), name="redoc"),
     path("api/", include("apps.accounts.urls")),
     path("api/admin/jobs/", include("apps.jobs.urls")),
     path("api/admin/health/", jobs_views.system_health, name="admin-health"),
     # The raw payload that used to ride along on every public ad response.
-    path(
-        "api/admin/ads/<str:code>/provenance/",
-        jobs_views.ad_provenance,
-        name="ad-provenance",
-    ),
+    path("api/admin/ads/<str:code>/provenance/", jobs_views.ad_provenance,
+         name="ad-provenance"),
     path("api/", include("apps.core.urls")),
 ]

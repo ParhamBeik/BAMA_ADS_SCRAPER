@@ -25,8 +25,8 @@ import requests
 from django.utils import timezone
 
 from apps.core.models import FetchRun
-from apps.jobs.services import crawl_gate
-from apps.jobs.services.crawl_gate import CrawlBlocked
+from apps.jobs import fetcher as crawl_gate
+from apps.jobs.fetcher import CrawlBlocked
 
 NOW = timezone.now
 
@@ -74,7 +74,7 @@ def test_a_clean_history_does_not_gate():
     make_run(pages=5, ago_minutes=5)
     assert crawl_gate.consecutive_blocks() == 0
     assert crawl_gate.cooldown_until() is None
-    assert crawl_gate.check() is None  # returns without raising
+    assert crawl_gate.check_gate() is None  # returns without raising
 
 
 @pytest.mark.django_db
@@ -82,12 +82,12 @@ def test_one_block_costs_one_tick_then_reopens():
     """The first cooldown is a single pipeline tick: cheap probe, no latching."""
     make_run(blocked=True, ago_minutes=1)
     with pytest.raises(CrawlBlocked):
-        crawl_gate.check()
+        crawl_gate.check_gate()
 
     # Same single block, but long enough ago that the cooldown has expired.
     FetchRun.objects.all().delete()
     make_run(blocked=True, ago_minutes=20)
-    assert crawl_gate.check() is None
+    assert crawl_gate.check_gate() is None
 
 
 @pytest.mark.django_db
@@ -122,7 +122,7 @@ def test_a_success_clears_the_streak():
     make_run(pages=3, ago_minutes=1)
 
     assert crawl_gate.consecutive_blocks() == 0
-    assert crawl_gate.check() is None
+    assert crawl_gate.check_gate() is None
 
 
 @pytest.mark.django_db
@@ -139,7 +139,7 @@ def test_an_ordinary_failure_does_not_trip_the_breaker():
     """A parser bug should be retried on the next tick, not cooled down for hours."""
     make_run(failed=True, ago_minutes=1)
     assert crawl_gate.consecutive_blocks() == 0
-    assert crawl_gate.check() is None
+    assert crawl_gate.check_gate() is None
 
 
 # --- the gate at the fetch boundary --------------------------------------------
@@ -148,7 +148,7 @@ def test_an_ordinary_failure_does_not_trip_the_breaker():
 def test_a_gated_fetch_raises_before_touching_the_network(monkeypatch):
     """`fetch_live` must not reach `_fetch_live` while the breaker is open —
     otherwise it writes another FAILED row and another blocked request."""
-    from apps.jobs.services import fetcher
+    from apps.jobs import fetcher
 
     make_run(blocked=True, ago_minutes=1)
     called = []
@@ -167,7 +167,7 @@ def test_a_healthy_history_does_not_cap_the_range(monkeypatch):
     coverage chunks in exchange for nothing: the 403 was on our egress IP, not on
     our request rate. Whatever the caller asked for is what gets fetched.
     """
-    from apps.jobs.services import fetcher
+    from apps.jobs import fetcher
 
     make_run(pages=280, ago_minutes=5)   # a heavy hour is not a reason to slow down
     seen = {}

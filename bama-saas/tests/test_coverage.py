@@ -10,7 +10,7 @@ import pytest
 from django.utils import timezone as djtz
 
 from apps.core.models import FetchRun, PageCoverage
-from apps.jobs.services.coverage import find_gaps, plan_backfill
+from apps.jobs.fetcher import find_gaps, plan_backfill
 
 
 def _run():

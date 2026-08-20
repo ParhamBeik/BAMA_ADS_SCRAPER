@@ -15,9 +15,9 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from apps.core.models import Ad, Brand, City, ListingEpisode, Model, Variant
-from apps.core.services import fair_price as FP
-from apps.core.services import liquidity as L
-from apps.core.services import retention as R
+from apps.core import pricing as FP
+from apps.core import research as L
+from apps.core import research as R
 
 NOW = datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc)
 

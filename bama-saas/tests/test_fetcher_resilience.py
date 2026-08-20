@@ -15,7 +15,7 @@ import pytest
 import requests
 
 from apps.core.models import FetchRun
-from apps.jobs.services import fetcher as F
+from apps.jobs import fetcher as F
 
 
 class _Resp:
@@ -63,14 +63,14 @@ def test_a_past_date_is_ignored():
 def test_retry_after_overrides_the_exponential_guess():
     """Guessing a backoff curve against an explicit instruction is how a client
     earns a ban."""
-    delay = F._backoff_delay(_http_error({"Retry-After": "20"}), attempt_delay=1.0)
+    delay = F.backoff_delay(_http_error({"Retry-After": "20"}), attempt_delay=1.0)
     assert 20 <= delay <= 20 * (1 + F.BACKOFF_JITTER)
 
 
 def test_jitter_is_applied_without_a_header():
     """Without jitter every client that backed off together retries at the same
     instant, giving a struggling server a synchronised second wave."""
-    delays = {F._backoff_delay(_http_error(), attempt_delay=4.0) for _ in range(40)}
+    delays = {F.backoff_delay(_http_error(), attempt_delay=4.0) for _ in range(40)}
     assert len(delays) > 1
     assert all(4.0 <= d <= 4.0 * (1 + F.BACKOFF_JITTER) for d in delays)
 

@@ -1,44 +1,37 @@
-# Production stack for bama-saas: Postgres, Django (gunicorn), the built
-# React/Vite SPA behind nginx, and the worker loop. Standalone file (not an
-# overlay on docker-compose.yml) because the frontend service is structurally
-# different in prod (built static bundle behind nginx, not the Vite dev
-# server) and the edge network / static-file wiring are easier to read as one
-# explicit definition than as a diff against the dev compose.
+# Production stack: Postgres, Django (gunicorn), the built SPA behind nginx, worker.
 #
 #   docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
 #
-# Only frontend joins the shared `vps-edge` network (Caddy terminates TLS
-# there); postgres/django/worker stay on the internal network.
+# Standalone rather than an overlay: the frontend service is structurally
+# different in prod (static bundle behind nginx, not the Vite dev server), and
+# the edge wiring reads better as one explicit definition than as a diff.
 #
-# `name:` pins the Compose project name (and therefore the named-volume
-# prefix, e.g. bama-saas_postgres_data) instead of leaving it to derive from
-# the invoking directory's basename. Deploy runs from a git checkout now
-# (see deploy/vps_pull_deploy.sh), and a project name that silently changed
-# because of *where* the repo happened to be cloned would make Compose spin
-# up fresh, empty volumes next to the real ones — the data would look gone.
+# Only `frontend` joins the shared `edge` network (Caddy terminates TLS there);
+# everything else stays internal.
+#
+# `name:` pins the Compose project name, and therefore the named-volume prefix,
+# instead of letting it derive from the invoking directory. Deploy runs from a
+# git checkout, and a project name that silently changed because of *where* the
+# repo was cloned would make Compose spin up fresh, empty volumes next to the
+# real ones — the data would look gone.
 name: bama-saas
 
-x-json-logging: &json-logging
+x-logging: &logging
   driver: json-file
-  options:
-    max-size: "20m"
-    max-file: "5"
+  options: { max-size: "20m", max-file: "5" }
 
 x-django-env: &django-env
   DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-bama_saas}
-  DJANGO_SETTINGS_MODULE: config.settings.prod
+  DJANGO_SETTINGS_MODULE: config.settings
   SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY}
   ALLOWED_HOSTS: ${ALLOWED_HOSTS:?set ALLOWED_HOSTS}
   CORS_ORIGINS: ${CORS_ORIGINS:?set CORS_ORIGINS}
-  ADMIN_API_KEY: ${ADMIN_API_KEY:-}
   BAMA_MAX_ADS: ${BAMA_MAX_ADS:-50000}
-  BAMA_PAGE_PAUSE: ${BAMA_PAGE_PAUSE:-0.8}
+  BAMA_PAGE_PAUSE: ${BAMA_PAGE_PAUSE:-1.5}
   BAMA_REQUEST_TIMEOUT: ${BAMA_REQUEST_TIMEOUT:-20}
   BAMA_COOKIE: ${BAMA_COOKIE:-}
-  BAMA_SCRAPED_DATA_ROOT: /data
-  BAMA_HISTORY_DB_PATH: /data/bama.db
-  # Read by ensure_seed_users (config/settings/prod.py), which creates/updates
-  # both logins on every startup.
+  BAMA_TELEGRAM_TOKEN: ${BAMA_TELEGRAM_TOKEN:-}
+  # Read by ensure_seed_users, which creates/updates both logins on every start.
   DEV_ADMIN_EMAIL: ${DEV_ADMIN_EMAIL:-admin@bama.local}
   DEV_ADMIN_PASSWORD: ${DEV_ADMIN_PASSWORD:?set DEV_ADMIN_PASSWORD}
   DEMO_USER_EMAIL: ${DEMO_USER_EMAIL:-demo@bama.local}
@@ -49,36 +42,32 @@ services:
     image: postgres:16-alpine
     container_name: bama-postgres
     restart: unless-stopped
-    logging: *json-logging
+    logging: *logging
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-bama_saas}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+    volumes: [postgres_data:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-bama_saas}"]
       interval: 5s
       timeout: 5s
       retries: 10
-    networks:
-      - internal
+    networks: [internal]
 
   django:
     build: .
     container_name: bama-django
     restart: unless-stopped
-    logging: *json-logging
+    logging: *logging
     environment: *django-env
     volumes:
       - staticfiles:/app/staticfiles
       - ./data:/data:ro
     depends_on:
-      postgres:
-        condition: service_healthy
-    # ensure_seed_users (not createsuperuser) so a redeploy with a changed
-    # DEV_ADMIN_PASSWORD/DEMO_USER_PASSWORD actually takes effect instead of
-    # silently no-opping on an already-provisioned DB.
+      postgres: { condition: service_healthy }
+    # ensure_seed_users, not createsuperuser: a redeploy with a changed password
+    # must actually take effect instead of silently no-opping.
     command: >
       sh -c "python manage.py migrate --noinput &&
              python manage.py collectstatic --noinput &&
@@ -92,20 +81,16 @@ services:
       start_period: 30s
     networks:
       internal:
-        aliases: [backend]   # ui/web/nginx.conf proxies /api/ and /admin/ to "backend"
+        aliases: [backend]   # ui/web/nginx.conf proxies /api/ and /admin/ here
 
   frontend:
-    build:
-      context: ./ui/web
-      dockerfile: Dockerfile.prod
+    build: { context: ./ui/web, dockerfile: Dockerfile.prod }
     container_name: bama-frontend
     restart: unless-stopped
-    logging: *json-logging
+    logging: *logging
     depends_on:
-      django:
-        condition: service_healthy
-    volumes:
-      - staticfiles:/static:ro
+      django: { condition: service_healthy }
+    volumes: [staticfiles:/static:ro]
     expose: ["80"]
     networks:
       internal:
@@ -116,16 +101,13 @@ services:
     build: .
     container_name: bama-worker
     restart: unless-stopped
-    logging: *json-logging
+    logging: *logging
     environment: *django-env
-    volumes:
-      - ./data:/data:ro
+    volumes: [./data:/data:ro]
     depends_on:
-      django:
-        condition: service_healthy
-    command: sh deploy/worker/run_worker.sh
-    networks:
-      - internal
+      django: { condition: service_healthy }
+    command: sh deploy/worker.sh
+    networks: [internal]
 
 volumes:
   postgres_data:

@@ -16,9 +16,9 @@ import pytest
 from django.utils import timezone
 
 from apps.core.models import FetchRun, IngestReject, PageCoverage
-from apps.jobs.services import fetcher
-from apps.jobs.services.coverage import known_feed_depth
-from apps.jobs.services.health import (
+from apps.jobs import fetcher
+from apps.jobs.fetcher import known_feed_depth
+from apps.jobs.jobs import (
     REJECT_SPIKE_MIN_COUNT,
     check_failed_runs,
     check_ingest_progress,

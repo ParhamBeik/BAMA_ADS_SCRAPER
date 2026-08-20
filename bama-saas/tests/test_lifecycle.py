@@ -23,12 +23,8 @@ from apps.core.models import (
     PageCoverage,
     Variant,
 )
-from apps.core.services.deal_score import compute_deal_scores
-from apps.jobs.management.commands.mark_inactive_ads import (
-    REQUIRED_MISSED_WINDOWS,
-    sweep_cutoff,
-)
-from django.core.management import call_command
+from apps.core.pricing import compute_deal_scores
+from apps.jobs.jobs import REQUIRED_MISSED_WINDOWS, mark_inactive, sweep_cutoff
 from django.utils import timezone as djtz
 
 NOW = datetime(2026, 8, 8, 12, 0, tzinfo=tz.utc)
@@ -42,8 +38,8 @@ def _reset_ingest_caches():
     transaction rolls back those ids no longer exist, and the next test's insert
     fails on the foreign key.
     """
-    from apps.jobs.services.dimensions import reset_cache
-    from apps.jobs.services.ingest import reset_price_cache
+    from apps.jobs.ingest import reset_cache
+    from apps.jobs.ingest import reset_price_cache
 
     reset_cache()
     reset_price_cache()
@@ -120,7 +116,7 @@ def test_no_removal_with_one_covered_window(catalog):
     _cover(now - timedelta(hours=2))
     stale = _ad(catalog, "stale001", now - timedelta(days=30))
 
-    call_command("mark_inactive_ads")
+    mark_inactive()
 
     stale.refresh_from_db()
     assert stale.status == Ad.Status.ACTIVE
@@ -132,7 +128,7 @@ def test_no_removal_with_one_covered_window(catalog):
 @pytest.mark.django_db
 def test_no_removal_without_any_coverage(catalog):
     stale = _ad(catalog, "stale002", djtz.now() - timedelta(days=90))
-    call_command("mark_inactive_ads")
+    mark_inactive()
     stale.refresh_from_db()
     assert stale.status == Ad.Status.ACTIVE
 
@@ -145,7 +141,7 @@ def test_ad_absent_from_two_covered_windows_is_removed(catalog):
 
     gone = _ad(catalog, "gone0001", now - timedelta(hours=50))
 
-    call_command("mark_inactive_ads")
+    mark_inactive()
 
     gone.refresh_from_db()
     assert gone.status == Ad.Status.REMOVED
@@ -162,7 +158,7 @@ def test_ad_seen_inside_the_windows_survives(catalog):
 
     survivor = _ad(catalog, "alive001", now - timedelta(hours=3))
 
-    call_command("mark_inactive_ads")
+    mark_inactive()
 
     survivor.refresh_from_db()
     assert survivor.status == Ad.Status.ACTIVE
@@ -181,7 +177,7 @@ def test_partial_coverage_does_not_authorise_removal(catalog):
     _cover(now - timedelta(hours=2), lo=1, hi=50)
 
     stale = _ad(catalog, "stale003", now - timedelta(days=30))
-    call_command("mark_inactive_ads")
+    mark_inactive()
 
     stale.refresh_from_db()
     assert stale.status == Ad.Status.ACTIVE
@@ -204,7 +200,7 @@ def test_coverage_unions_across_several_partial_runs(catalog):
             _cover(at, lo=lo, hi=lo + 24)   # a separate run each time
 
     gone = _ad(catalog, "gone0002", now - timedelta(hours=50))
-    call_command("mark_inactive_ads")
+    mark_inactive()
 
     gone.refresh_from_db()
     assert gone.status == Ad.Status.REMOVED
@@ -214,7 +210,7 @@ def test_coverage_unions_across_several_partial_runs(catalog):
 def test_days_override_bypasses_coverage_rule(catalog):
     """The escape hatch still works with no coverage on record at all."""
     stale = _ad(catalog, "stale005", djtz.now() - timedelta(days=30))
-    call_command("mark_inactive_ads", days=1)
+    mark_inactive(days=1)
     stale.refresh_from_db()
     assert stale.status == Ad.Status.REMOVED
 
@@ -255,8 +251,8 @@ def test_stale_observation_does_not_move_last_seen_backwards(catalog):
     into last_seen_at put 5,009 production ads in a state where
     last_seen_at < first_seen_at and every duration came out negative.
     """
-    from apps.jobs.services.ingest import ingest_ad
-    from apps.parsing import extract_ad
+    from apps.jobs.ingest import ingest_ad
+    from apps.jobs.parsing import extract_ad
 
     recent = NOW
     older = NOW - timedelta(days=10)
@@ -278,8 +274,8 @@ def test_stale_observation_does_not_move_last_seen_backwards(catalog):
 @pytest.mark.django_db
 def test_stale_observation_does_not_resurrect_a_removed_ad(catalog):
     """A backfill of old pages must not undo mark_inactive_ads."""
-    from apps.jobs.services.ingest import ingest_ad
-    from apps.parsing import extract_ad
+    from apps.jobs.ingest import ingest_ad
+    from apps.jobs.parsing import extract_ad
 
     recent = NOW
     run = FetchRun.objects.create(source=FetchRun.Source.LIVE_FETCH)
@@ -303,8 +299,8 @@ def test_stale_observation_does_not_resurrect_a_removed_ad(catalog):
 @pytest.mark.django_db
 def test_fresh_observation_still_reactivates(catalog):
     """The guard must not break the legitimate case: a genuinely re-seen ad."""
-    from apps.jobs.services.ingest import ingest_ad
-    from apps.parsing import extract_ad
+    from apps.jobs.ingest import ingest_ad
+    from apps.jobs.parsing import extract_ad
 
     older = NOW - timedelta(days=5)
     run = FetchRun.objects.create(source=FetchRun.Source.LIVE_FETCH)

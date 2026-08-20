@@ -22,7 +22,7 @@ from apps.core.models import (
     NotifierSettings,
     Variant,
 )
-from apps.core.services import notify as N
+from apps.core import notify as N
 
 NOW = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
 

@@ -23,7 +23,7 @@ from apps.core.models import (
     Model,
     Variant,
 )
-from apps.core.services.index import (
+from apps.core.research import (
     BASE_VALUE,
     MIN_COHORT_ADS,
     build_index,
