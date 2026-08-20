@@ -22,5 +22,5 @@ class Command(BaseCommand):
             f"{prefix} observations={result['observations']} "
             f"page_coverage={result['page_coverage']} "
             f"job_runs={result['job_runs']} "
-            f"(days={result['days']}, kept_sweeps={result['kept_sweep_runs']})"
+            f"(days={result['days']}, coverage_kept_since={result['coverage_cutoff']})"
         ))
