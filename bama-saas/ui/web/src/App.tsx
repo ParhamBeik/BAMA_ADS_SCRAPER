@@ -18,7 +18,7 @@ import { Login } from "./pages/Login";
 import { Overview } from "./pages/Overview";
 import { Saved } from "./pages/Saved";
 import { ListingDetail } from "./pages/ListingDetail";
-import { BrandMark } from "./BrandMark";
+import { BrandMark } from "./ui";
 
 const Control = lazy(() =>
   import("./pages/Control").then((m) => ({ default: m.Control })),

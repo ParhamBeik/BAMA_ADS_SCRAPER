@@ -463,7 +463,9 @@ class JobRun(models.Model):
         RUNNING = "running", "Running"
         OK = "ok", "Succeeded"
         FAILED = "failed", "Failed"
-        SKIPPED = "skipped", "Skipped (prerequisite failed or gated)"
+        # Also covers a gated crawl: CrawlBlocked is a back-off we chose,
+        # not a fault, so it must not read as FAILED on the health page.
+        SKIPPED = "skipped", "Skipped (prerequisite failed)"
 
     class Trigger(models.TextChoices):
         SCHEDULER = "scheduler", "Scheduled worker"

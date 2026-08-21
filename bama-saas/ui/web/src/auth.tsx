@@ -8,7 +8,7 @@
  * POST/PATCH/DELETE can succeed — App renders nothing else until it resolves.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { api, ApiError } from "./api/client";
+import { api, ApiError } from "./api";
 
 export interface AuthUser {
   email: string;

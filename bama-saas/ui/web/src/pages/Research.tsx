@@ -13,8 +13,8 @@
  */
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
-import { api } from "../api/client";
-import type { Envelope, Paginated } from "../api/client";
+import { api } from "../api";
+import type { Envelope, Paginated } from "../api";
 import { Chart } from "../Chart";
 import { Async, Card, Fa, Provenance, Table, toman } from "../ui";
 

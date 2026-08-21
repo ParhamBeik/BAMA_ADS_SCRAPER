@@ -7,8 +7,8 @@
  */
 import { lazy, Suspense } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "../api/client";
-import type { Envelope } from "../api/client";
+import { api } from "../api";
+import type { Envelope } from "../api";
 import { Async, Card, Fa, Provenance, Stat, Table, pct } from "../ui";
 
 const Chart = lazy(() => import("../Chart").then((m) => ({ default: m.Chart })));

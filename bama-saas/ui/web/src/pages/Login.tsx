@@ -1,7 +1,7 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { ArrowRight, Eye, EyeOff, ShieldCheck } from "lucide-react";
 import { useAuth } from "../auth";
-import { BrandMark } from "../BrandMark";
+import { BrandMark } from "../ui";
 
 type Mode = "login" | "signup";
 

@@ -16,8 +16,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Trash2, TrendingDown } from "lucide-react";
 import { Link } from "react-router-dom";
-import { api } from "../api/client";
-import type { Paginated } from "../api/client";
+import { api } from "../api";
+import type { Paginated } from "../api";
 import { Async, Card, Fa, Table, pct, toman } from "../ui";
 
 interface SavedAd {
