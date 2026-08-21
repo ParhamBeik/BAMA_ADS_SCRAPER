@@ -1,14 +1,8 @@
-"""API-level regression tests for the HTTP/view layer.
+"""The HTTP surface: routing, serializers, permissions, and what leaks.
 
-The rest of the suite covers services/parsing/importer; these tests lock down
-the DRF serializers, views, and URL routing so the bugs that previously slipped
-through (Count("id") vs Count("code"), redundant `source` kwarg on
-ModelSerializer, F()-annotation typing in the markets view) cannot regress.
-
-Conventions follow the rest of the suite: pytest + pytest-django, plain
-fixtures, ``@pytest.mark.django_db``, and self-contained ORM fixtures so the
-tests do not depend on the seeded 50k-row dev database. The DRF test client
-``APIClient`` is used for JWT auth and JSON bodies.
+API/integration level: the subject is the serialized HTTP response, which is the
+only place these facts are observable. Fixtures are self-contained ORM rows so
+nothing depends on the seeded 50k-row dev database.
 """
 
 from __future__ import annotations
@@ -20,8 +14,13 @@ import pytest
 from rest_framework.test import APIClient
 
 from apps.accounts.models import User
-from apps.core.models import Ad, Brand, City, DealScoreCache, Dealer, FetchRun, Model, PriceObservation, Variant
+from apps.core.models import (
+    Ad, Brand, City, DealScoreCache, Dealer, FetchRun, Model, PriceObservation,
+    Variant,
+)
 from apps.core.pricing import compute_deal_scores
+from tests.conftest import NOW, UTC
+
 
 UTC = timezone.utc
 
@@ -658,3 +657,128 @@ def test_favorites_are_isolated_between_users(api_client, catalog):
     api_client.force_authenticate(user=second)
     body = api_client.get("/api/favorites/").json()
     assert body["results"] == []
+
+
+# ==========================================================================
+# What the API is allowed to hand out, and to whom
+# ==========================================================================
+
+@pytest.fixture
+def exposure_catalog(db):
+    brand = Brand.objects.create(slug="peugeot", name_fa="پژو", is_confirmed=True)
+    model = Model.objects.create(brand=brand, name_fa="405", is_confirmed=True)
+    variant = Variant.objects.create(model=model, name_fa="GLX")
+    city = City.objects.create(name_fa="تهران")
+    return {"brand": brand, "model": model, "variant": variant, "city": city}
+
+
+def make_ad(exposure_catalog, code, **overrides):
+    fields = dict(
+        code=code,
+        brand=exposure_catalog["brand"], model=exposure_catalog["model"],
+        variant=exposure_catalog["variant"], city=exposure_catalog["city"],
+        year_jalali=1399, mileage=100_000, current_price=500_000_000,
+        status=Ad.Status.ACTIVE, first_seen_at=NOW, last_seen_at=NOW,
+        publish_at=NOW,
+        raw_payload={"detail": {"code": code, "dealer_phone": "0912..."}},
+    )
+    fields.update(overrides)
+    return Ad.objects.create(**fields)
+
+
+# --- the scraped payload is not public -------------------------------------
+
+@pytest.mark.django_db
+def test_ad_list_does_not_leak_the_raw_payload(exposure_catalog):
+    make_ad(exposure_catalog, "leak0001")
+    body = APIClient().get("/api/ads/").json()
+
+    assert body["results"], "fixture should be listed"
+    assert "raw_payload" not in body["results"][0]
+
+
+@pytest.mark.django_db
+def test_ad_detail_does_not_leak_the_raw_payload(exposure_catalog):
+    make_ad(exposure_catalog, "leak0002")
+    body = APIClient().get("/api/ads/leak0002/").json()
+
+    assert body["code"] == "leak0002"
+    assert "raw_payload" not in body
+
+
+@pytest.mark.django_db
+def test_provenance_is_staff_only(exposure_catalog):
+    make_ad(exposure_catalog, "prov0001")
+    assert APIClient().get("/api/admin/ads/prov0001/provenance/").status_code == 403
+
+
+@pytest.mark.django_db
+def test_provenance_returns_the_full_record_to_staff(exposure_catalog):
+    from apps.accounts.models import User
+
+    make_ad(exposure_catalog, "prov0002")
+    client = APIClient()
+    client.force_authenticate(
+        User.objects.create_superuser(email="ops@example.com", password="StrongPass1!")
+    )
+    body = client.get("/api/admin/ads/prov0002/provenance/").json()
+
+    assert body["raw_payload"]["detail"]["dealer_phone"], (
+        "removing it from the public serializer must not lose operator access"
+    )
+
+
+# --- exposure_catalog and statistics describe the same population --------------------
+
+@pytest.mark.django_db
+def test_a_hard_failed_ad_is_not_listed(exposure_catalog):
+    """It was listed and filterable while every analytical read excluded it, so
+    a user could find an ad the market summary insisted did not exist."""
+    make_ad(exposure_catalog, "good0001")
+    make_ad(exposure_catalog, "bad00001", quality_flags=["price_too_low"])
+
+    codes = {r["code"] for r in APIClient().get("/api/ads/").json()["results"]}
+
+    assert codes == {"good0001"}
+
+
+@pytest.mark.django_db
+def test_inspect_routes_are_gone(exposure_catalog):
+    make_ad(exposure_catalog, "hid00001")
+    assert APIClient().get("/api/admin/inspect/ads/").status_code == 404
+    assert APIClient().get("/api/admin/inspect/fetch-runs/").status_code == 404
+
+
+@pytest.mark.django_db
+def test_an_underpriced_outlier_is_never_hidden_from_browsing(exposure_catalog):
+    """The asymmetry the browse filter turns on.
+
+    A listing priced far *below* its peers is the underpriced car this product
+    exists to find; hiding it to tidy the list would delete the product's whole
+    point. It stays, carrying its flag so the reader can judge it.
+    """
+    make_ad(exposure_catalog, "odd00001", cohort_flags=["price_outlier_low"])
+
+    rows = APIClient().get("/api/ads/").json()["results"]
+
+    assert [r["code"] for r in rows] == ["odd00001"]
+    assert rows[0]["cohort_flags"] == ["price_outlier_low"]
+
+
+@pytest.mark.django_db
+def test_an_absurdly_overpriced_listing_is_hidden_by_default(exposure_catalog):
+    """The other half: a 206 was live at 5.8 trillion toman. That is noise in
+    every list it appears in, and nobody browsing is looking for it — but
+    ?include_outliers=true still returns it rather than pretending it is gone."""
+    make_ad(exposure_catalog, "odd00002", cohort_flags=["price_outlier_high"])
+
+    assert APIClient().get("/api/ads/").json()["results"] == []
+
+    rows = APIClient().get("/api/ads/?include_outliers=true").json()["results"]
+    assert [r["code"] for r in rows] == ["odd00002"]
+
+
+@pytest.mark.django_db
+def test_newest_route_is_gone(exposure_catalog):
+    make_ad(exposure_catalog, "new00001")
+    assert APIClient().get("/api/analytics/newest/").status_code == 404
