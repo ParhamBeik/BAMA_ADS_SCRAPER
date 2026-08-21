@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 import requests

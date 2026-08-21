@@ -347,13 +347,9 @@ def deal_scores(request):
 
 @api_view(["GET"])
 def deal_score_detail(request, code: str):
-    obj = get_object_or_404(
-        verified_by_ad(DealScoreCache.objects.select_related("ad")).annotate(
-            model_name=F("ad__model__name_fa"), brand_name=F("ad__brand__name_fa")
-        ),
-        ad_id=code,
-    )
-    return Response(_deal_score_row(obj))
+    # Same queryset as the board, so the detail card can never disagree with the
+    # row the reader clicked.
+    return Response(_deal_score_row(get_object_or_404(_deal_score_qs(), ad_id=code)))
 
 
 @api_view(["GET"])

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -117,41 +118,32 @@ class Report:
         return f"pipeline ok={self.ok} duration={self.duration_s:.1f}s {flags}"
 
 
-class record_job:
+@contextmanager
+def record_job(name: str, triggered_by: str = JobRun.Trigger.SCHEDULER):
     """Persist one JobRun row around a unit of work. Yields the row.
 
     ``CrawlBlocked`` is recorded as SKIPPED, not FAILED: it is a back-off this
     system chose, and lumping it in with faults is what made the health page read
-    "245 failed run(s)" during a block with exactly one cause.
+    "245 failed run(s)" during a block with exactly one cause. Nothing is
+    swallowed — the caller still sees the exception.
     """
-
-    def __init__(self, name: str, triggered_by: str = JobRun.Trigger.SCHEDULER):
-        self.name = name
-        self.triggered_by = triggered_by
-        self.row: JobRun | None = None
-        self._start = 0.0
-
-    def __enter__(self) -> JobRun:
-        self._start = time.monotonic()
-        self.row = JobRun.objects.create(
-            name=self.name, status=JobRun.Status.RUNNING,
-            triggered_by=self.triggered_by, started_at=timezone.now(),
-        )
-        return self.row
-
-    def __exit__(self, exc_type, exc, tb):
-        self.row.duration_s = time.monotonic() - self._start
-        self.row.finished_at = timezone.now()
-        if isinstance(exc, CrawlBlocked):
-            self.row.status = JobRun.Status.SKIPPED
-            self.row.detail = str(exc)[:4000]
-        elif exc is not None:
-            self.row.status = JobRun.Status.FAILED
-            self.row.error = str(exc)[:4000]
-        elif self.row.status == JobRun.Status.RUNNING:
-            self.row.status = JobRun.Status.OK
-        self.row.save()
-        return False  # never swallow
+    start = time.monotonic()
+    row = JobRun.objects.create(name=name, status=JobRun.Status.RUNNING,
+                                triggered_by=triggered_by, started_at=timezone.now())
+    try:
+        yield row
+    except CrawlBlocked as exc:
+        row.status, row.detail = JobRun.Status.SKIPPED, str(exc)[:4000]
+        raise
+    except Exception as exc:  # noqa: BLE001 — re-raised immediately
+        row.status, row.error = JobRun.Status.FAILED, str(exc)[:4000]
+        raise
+    finally:
+        if row.status == JobRun.Status.RUNNING:
+            row.status = JobRun.Status.OK
+        row.duration_s = time.monotonic() - start
+        row.finished_at = timezone.now()
+        row.save()
 
 
 def _retry(fn, *, attempts: int, base_delay: float):

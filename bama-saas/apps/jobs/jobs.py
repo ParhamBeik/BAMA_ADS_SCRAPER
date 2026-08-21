@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import statistics
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import timedelta
 
 from django.db import transaction
@@ -99,13 +99,6 @@ def mark_inactive(*, days: int | None = None,
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class EpisodeReport:
-    opened: int = 0
-    closed: int = 0
-    reopened: int = 0
-
-
 @transaction.atomic
 def sync_episodes(*, limit: int | None = None) -> dict:
     """Bring episodes in line with the current state of every ad.
@@ -116,7 +109,7 @@ def sync_episodes(*, limit: int | None = None) -> dict:
     is a conclusion no single observation can reach. Runs *after* removal
     marking for the same reason.
     """
-    report = EpisodeReport()
+    report = {"opened": 0, "reopened": 0, "closed": 0}
     now = timezone.now()
     open_by_ad = {e.ad_id: e for e in ListingEpisode.objects.filter(ended_at__isnull=True)}
     known = set(ListingEpisode.objects.values_list("ad_id", flat=True))
@@ -143,9 +136,9 @@ def sync_episodes(*, limit: int | None = None) -> dict:
                     first_price=ad.current_price, last_price=ad.current_price,
                 ))
                 if seen_before:
-                    report.reopened += 1
+                    report["reopened"] += 1
                 else:
-                    report.opened += 1
+                    report["opened"] += 1
             elif episode.last_price != ad.current_price:
                 episode.last_price = ad.current_price
                 to_update.append(episode)
@@ -153,7 +146,7 @@ def sync_episodes(*, limit: int | None = None) -> dict:
             episode.ended_at = ad.removed_at or ad.last_seen_at or now
             episode.last_price = ad.current_price
             to_update.append(episode)
-            report.closed += 1
+            report["closed"] += 1
         elif ad.code not in known:
             # Already removed before episodes existed. Its whole life is still
             # derivable, and without this the first backfill would discard every
@@ -164,14 +157,14 @@ def sync_episodes(*, limit: int | None = None) -> dict:
                 ended_at=ad.removed_at or ad.last_seen_at or now,
                 first_price=ad.current_price, last_price=ad.current_price,
             ))
-            report.closed += 1
+            report["closed"] += 1
 
     if to_create:
         ListingEpisode.objects.bulk_create(to_create, batch_size=500)
     if to_update:
         ListingEpisode.objects.bulk_update(to_update, ["ended_at", "last_price"], batch_size=500)
 
-    return {"opened": report.opened, "reopened": report.reopened, "closed": report.closed}
+    return report
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +173,7 @@ def sync_episodes(*, limit: int | None = None) -> dict:
 
 
 @transaction.atomic
-def daily_snapshot(*, min_count: int = 1) -> dict:
+def daily_snapshot() -> dict:
     """Rebuild today's per-cohort inventory rows.
 
     Idempotent for today: drops today's rows and rebuilds. Aggregated in Python
@@ -215,7 +208,7 @@ def daily_snapshot(*, min_count: int = 1) -> dict:
             min_price=min(prices), max_price=max(prices),
         )
         for (model_id, variant_id, year), g in groups.items()
-        if len((prices := g["prices"])) >= min_count
+        if (prices := g["prices"])
     ]
     if objs:
         DailyInventorySnapshot.objects.bulk_create(objs, batch_size=500)
@@ -227,12 +220,15 @@ def daily_snapshot(*, min_count: int = 1) -> dict:
     }
 
 
-def market_index(*, min_cohorts: int = 5) -> dict:
+MIN_SCOPE_COHORTS = 5
+
+
+def market_index() -> dict:
     """Rebuild the matched-cohort index for the market and every eligible scope.
 
     Must run after ``daily_snapshot``: it is chained arithmetic over exactly the
     rows that job writes. Per-brand and per-model series are only built where
-    there is something to measure — below ``min_cohorts`` an "index" would be one
+    there is something to measure — below ``MIN_SCOPE_COHORTS`` an "index" would be one
     or two cars pretending to be a market.
     """
     def eligible(field: str) -> list:
@@ -249,7 +245,7 @@ def market_index(*, min_cohorts: int = 5) -> dict:
             DailyInventorySnapshot.objects
             .filter(date=latest, median_price__isnull=False, model_id__isnull=False)
             .exclude(**{f"{field}__isnull": True})
-            .values(field).annotate(n=Count("id")).filter(n__gte=min_cohorts)
+            .values(field).annotate(n=Count("id")).filter(n__gte=MIN_SCOPE_COHORTS)
             .values_list(field, flat=True)
         )
 
@@ -321,6 +317,10 @@ def notify(*, dry_run: bool = False) -> dict:
 # attempts, which is why removal detection stalled for days.
 
 
+# How far past the known ceiling to look when coverage is already complete.
+PROBE_PAGES = 5
+
+
 def _budgeted(ranges: list[tuple[int, int]], budget: int) -> list[tuple[int, int]]:
     """Trim page ranges to at most ``budget`` pages, truncating the last one.
 
@@ -343,7 +343,6 @@ def _budgeted(ranges: list[tuple[int, int]], budget: int) -> list[tuple[int, int
 
 
 def coverage(*, since_hours: float = 24.0, max_pages: int | None = None,
-             max_rank: int | None = None, probe_pages: int = 5,
              dry_run: bool = False, **fetch_opts) -> dict:
     """Refetch the feed ranges nobody covered in the recent window."""
     from django.conf import settings
@@ -351,14 +350,13 @@ def coverage(*, since_hours: float = 24.0, max_pages: int | None = None,
     if max_pages is None:
         max_pages = settings.BAMA_COVERAGE_CHUNK_PAGES
     since = timezone.now() - timedelta(hours=since_hours)
-    if max_rank is None:
-        max_rank = known_feed_depth()
+    max_rank = known_feed_depth()
     gaps = find_gaps(since=since, max_rank=max_rank)
 
     if gaps:
         ranges = _budgeted(plan_backfill(gaps), max_pages)
         plan = f"{len(gaps)} rank gap(s) -> {sum(hi - lo + 1 for lo, hi in ranges)} page(s)"
-    elif not probe_pages or max_rank is None:
+    elif max_rank is None:
         return {"gaps": 0, "pages": 0, "detail": f"no coverage gaps in the last {since_hours:g}h"}
     else:
         # Coverage is complete, so the only thing left worth learning is whether
@@ -366,7 +364,7 @@ def coverage(*, since_hours: float = 24.0, max_pages: int | None = None,
         # page (r-1)//PAGE_SIZE, so the next unread page is max_rank//PAGE_SIZE,
         # not +1 (an earlier +1 skipped a full page on every probe).
         next_page = max_rank // PAGE_SIZE
-        ranges = [(next_page, next_page + probe_pages - 1)]
+        ranges = [(next_page, next_page + PROBE_PAGES - 1)]
         plan = f"no gaps; probing pages {ranges[0][0]}-{ranges[0][1]} past the ceiling"
 
     if dry_run:
@@ -400,11 +398,11 @@ PRUNE_DEFAULT_DAYS = 30
 _PRUNE_BATCH = 5000
 
 
-def _batched_delete(qs, *, batch: int = _PRUNE_BATCH) -> int:
+def _batched_delete(qs) -> int:
     deleted = 0
     pk_name = qs.model._meta.pk.name
     while True:
-        ids = list(qs.values_list(pk_name, flat=True)[:batch])
+        ids = list(qs.values_list(pk_name, flat=True)[:_PRUNE_BATCH])
         if not ids:
             break
         n, _ = qs.model.objects.filter(pk__in=ids).delete()
@@ -648,6 +646,5 @@ def health() -> dict:
     checks = run_checks()
     return {
         "ok": all(c.ok for c in checks),
-        "checks": [{"name": c.name, "ok": c.ok, "detail": c.detail, "data": c.data}
-                   for c in checks],
+        "checks": [asdict(c) for c in checks],
     }

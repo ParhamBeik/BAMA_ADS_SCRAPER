@@ -491,13 +491,6 @@ def iter_pages(session, *, max_ads: int, page_pause: float, request_timeout: int
         time.sleep(page_pause)
 
 
-def iter_ads(session, **kwargs) -> Iterator[tuple[dict[str, Any], int, int]]:
-    """Yield ``(ad, page_index, rank)``, flattening :func:`iter_pages`."""
-    for page, rows in iter_pages(session, **kwargs):
-        for ad, rank in rows:
-            yield ad, page, rank
-
-
 # ===========================================================================
 # The run
 # ===========================================================================

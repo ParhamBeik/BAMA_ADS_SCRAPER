@@ -52,10 +52,6 @@ MAX_KM_PER_YEAR = 100_000
 # A model year this far ahead of today is a parser artefact, not a pre-order.
 MAX_YEARS_AHEAD = 2
 
-# Bump on any change below, so a backfill can tell which rows were judged by
-# which generation of the rule set.
-RULE_VERSION = 3
-
 
 @dataclass(frozen=True)
 class Rejection:
