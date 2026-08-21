@@ -61,9 +61,7 @@ services:
     restart: unless-stopped
     logging: *logging
     environment: *django-env
-    volumes:
-      - staticfiles:/app/staticfiles
-      - ./data:/data:ro
+    volumes: [staticfiles:/app/staticfiles]
     depends_on:
       postgres: { condition: service_healthy }
     # ensure_seed_users, not createsuperuser: a redeploy with a changed password
@@ -103,7 +101,6 @@ services:
     restart: unless-stopped
     logging: *logging
     environment: *django-env
-    volumes: [./data:/data:ro]
     depends_on:
       django: { condition: service_healthy }
     command: sh deploy/worker.sh

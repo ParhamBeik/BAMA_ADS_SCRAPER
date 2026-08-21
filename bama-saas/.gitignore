@@ -15,8 +15,6 @@ logs/
 .env
 .env.production
 !deploy/.env.production.example
-docs/audit/__pycache__/
-docs/audit/backups/
 backups/
 
 # Local seed data (SQLite snapshot; large, regenerable)
@@ -28,4 +26,3 @@ postgres_data/
 # Frontend build artefacts
 ui/web/node_modules/
 ui/web/dist/
-ui/web/openapi.json

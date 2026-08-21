@@ -43,9 +43,7 @@ services:
     logging: *logging
     env_file: [{ path: .env, required: false }]
     environment: *django-env
-    volumes:
-      - .:/app
-      - ./data:/data:ro
+    volumes: [.:/app]
     ports: ["8001:8000"]
     depends_on:
       postgres: { condition: service_healthy }
@@ -85,9 +83,7 @@ services:
     logging: *logging
     env_file: [{ path: .env, required: false }]
     environment: *django-env
-    volumes:
-      - .:/app
-      - ./data:/data:ro
+    volumes: [.:/app]
     depends_on:
       # Waits for django, not postgres: django owns `migrate`, and the worker
       # must not fetch against a half-migrated schema.

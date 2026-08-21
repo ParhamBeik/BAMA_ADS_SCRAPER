@@ -1,19 +1,39 @@
 # Bama — personal deal finder
 
-Local Docker Compose tool for bama.ir listings. Not a public SaaS: no login,
-JWT, subscriptions, or multi-user alerts. One optional local Telegram deal
-notifier is disabled by default and configured from the deal board; Django admin
-inspects records, while `/control` is crawl health + jobs only.
-
-Analytics that remain: **fair price**, the **deal board** (min 8 peers; asking
-price at least 50% of the peer median), the **matched-cohort market index**,
-and **Kaplan–Meier time-to-sell**. PostgreSQL only — SQLite is not supported.
+Crawls bama.ir listings and answers three questions about them: what is this car
+worth (**fair price**), which listings are underpriced against their own cohort
+(**deal board**), and did the market actually move (**matched-cohort index**,
+**Kaplan–Meier time-to-sell**). Session login, one operator screen, an optional
+Telegram notifier. PostgreSQL only — SQLite is not supported.
 
 ## Stack
 
-Django 5.2, djangorestframework, **drf-spectacular**, django-filter,
-django-cors-headers, dj-database-url, `psycopg[binary]`, numpy, jdatetime,
-requests, gunicorn. Python ≥ 3.11. UI: React + Vite + TypeScript.
+Django 5.2 + DRF, PostgreSQL 16, `psycopg[binary]`, django-filter,
+django-cors-headers, dj-database-url, jdatetime, requests, gunicorn.
+Python ≥ 3.11. UI: React 19 + Vite + TypeScript. No Celery, no Redis, no message
+broker: the scheduler is a shell loop plus `flock`.
+
+## Layout
+
+```
+bama-saas/
+├── config/settings.py       one settings file; DJANGO_DEBUG=1 picks local
+├── apps/
+│   ├── accounts/            user, session auth, saved cars
+│   ├── core/                models, views, serializers + the analytics:
+│   │                        pricing.py quality.py research.py notify.py
+│   └── jobs/                the crawler side:
+│                            parsing.py fetcher.py ingest.py verify.py
+│                            jobs.py pipeline.py
+├── ui/web/                  React + Vite + TypeScript
+├── deploy/                  worker.sh (the scheduler), backup, VPS deploy
+├── tests/                   pytest-django, 8 files
+├── docker-compose.yml       local: postgres, django, worker, vite
+└── docker-compose.prod.yml  VPS: postgres, gunicorn, worker, nginx
+```
+
+One file per concern. `apps/core` is what the API serves; `apps/jobs` is what
+fills it. `parsing.py` is the only module with no Django import.
 
 ## Screens
 
@@ -24,194 +44,141 @@ requests, gunicorn. Python ≥ 3.11. UI: React + Vite + TypeScript.
 | `/listing/:code` | Listing detail + fair price |
 | `/market` | Market overview / index |
 | `/research/:modelId` | Kaplan–Meier time-to-sell + year retention |
-| `/saved` | Saved cars (user-less favorites) |
-| `/control` | Crawl health + job triggers |
+| `/saved` | Saved cars |
+| `/control` | Crawl health + job triggers (staff only) |
 
-## Layout
-
-```
-bama-saas/
-├── config/                 settings.base/dev/prod, urls, wsgi, asgi
-├── apps/
-│   ├── accounts/           Django admin User + Favorite (saved cars)
-│   ├── core/               catalog, history, prices, remaining analytics
-│   ├── jobs/               management commands + ingestion (no models)
-│   └── parsing/            zero-Django Bama payload rules
-├── ui/web/                 React + Vite + TypeScript
-├── docs/
-├── deploy/                 local backup/restore + compose worker loop
-├── tests/
-├── manage.py
-├── docker-compose.yml      Postgres, Django, worker, Vite frontend
-├── Dockerfile
-└── requirements.txt
-```
-
-## Docker (the usual path)
-
-Requires Compose v2. From `bama-saas/`:
+## Running it
 
 ```bash
-docker compose up --build          # add --profile dev for pgadmin on :5050
+docker compose up --build
 ```
 
-Compose starts PostgreSQL, Django, the worker, and the Vite dev server.
-Open <http://localhost:5174>. Django is on <http://localhost:8001>
-(`migrate` + `ensure_dev_admin` + `runserver`). The frontend bind-mounts
-`ui/web/` and proxies `/api` to Django.
-
-Frontend only (still brings up Django + Postgres):
-
-```bash
-docker compose up --build frontend
-```
+Starts PostgreSQL, Django (`migrate` → `ensure_seed_users` → `runserver`), the
+worker loop, and Vite. UI on <http://localhost:5174>, API on
+<http://localhost:8001>, Django admin on <http://localhost:8001/admin/>.
 
 Two host-port traps:
 
-- **Postgres publishes on 5433, not 5432.** Override with `POSTGRES_HOST_PORT`.
-  Inside the network the port is always 5432.
-- **`SECRET_KEY` must be non-empty.** An empty env var overrides the dev
-  fallback. Compose supplies an insecure default; set a real one in `.env`
-  if you care.
+- **Postgres publishes on 5433, not 5432.** A native PostgreSQL install usually
+  owns 5432, and a host-run `manage.py` pointed there would silently read a
+  different database. Override with `POSTGRES_HOST_PORT`; inside the compose
+  network the port is always 5432.
+- **`SECRET_KEY` must be non-empty.** An empty env var overrides the fallback.
 
-The compose `postgres_data` volume is a **separate database** from any native
-PostgreSQL on the host. There is no prod compose file and no public deploy.
-
-## Host setup (optional)
+Without Docker:
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+python -m venv .venv && source .venv/bin/activate && pip install -e '.[test]'
 export DATABASE_URL='postgresql://postgres:postgres@localhost:5433/bama_saas'
-python manage.py migrate
-python manage.py ensure_dev_admin   # or createsuperuser
-python manage.py runserver
+python manage.py migrate && python manage.py ensure_seed_users
+DJANGO_DEBUG=1 python manage.py runserver
 ```
 
-Swagger: <http://localhost:8000/api/docs/>. Admin:
-<http://localhost:8000/admin/>. Reads are `AllowAny`.
+`DJANGO_DEBUG` is unset by default and the default is the *hardened* profile —
+HTTPS redirect, HSTS, throttles, login required. A deployed process that forgets
+an env var must not fail open.
 
-For live data: `python manage.py fetch_live --max-ads 1000`.
+## The one command
 
-## Management commands
+```bash
+python manage.py bama <cadence|job> [--json] [--dry-run] [options]
+```
 
-All via `python manage.py <command>`.
+Cadences bundle jobs; a job name runs that job alone.
 
-| Command | Description |
-| --- | --- |
-| `migrate` | Apply Django migrations. |
-| `ensure_dev_admin` | Seed the local Django-admin superuser. |
-| `runserver` | Dev server on `:8000`. |
-| `fetch_live [--mode delta\|full\|backfill]` | Stream live ads from bama.ir. `delta` (default) stops after N stale pages; `full` walks the feed and records `reached_end`; `backfill` refetches a page range. |
-| `crawl_gaps [--since-hours 24]` | Refetch rank ranges no run has covered recently. |
-| `mark_inactive_ads` | Flip ads absent from the last two completed sweeps to `REMOVED`. |
-| `sync_episodes` | Open/close `ListingEpisode` rows. |
-| `daily_snapshot` | Today's `DailyInventorySnapshot`. |
-| `build_market_index` | Rebuild the matched-cohort price index. |
-| `compute_deal_scores [--model]` | Rebuild the deal board (fair-price discount, min 8 peers). |
-| `notify_deals [--dry-run]` | Send eligible, previously unseen deals through the optional local notifier. |
-| `crawl_health [--json]` | Sweep freshness / failed runs / reject spikes / gaps. Exit 1 when unhealthy. |
-| `prune_history` | Drop old observations / coverage / job runs. |
-| `reap_orphan_runs` | Clear leftover `RUNNING` FetchRun / JobRun rows. |
-| `run_pipeline [--cadence hot\|warm\|full]` | Orchestrate a worker tick. Each step records a `JobRun`. |
+| Cadence | Jobs | Worker interval |
+| --- | --- | --- |
+| `hot` | fetch → mark_inactive → deal_scores → notify | 15 min |
+| `coverage` | coverage | 10 min |
+| `warm` | episodes → snapshot → market_index | 30 min |
+| `maintenance` | deal_scores → prune → health | 6 h |
+| `full` | every hot + warm step, full deal rebuild | on demand |
 
-## Background worker
+Jobs: `fetch`, `mark_inactive`, `episodes`, `snapshot`, `market_index`,
+`deal_scores`, `notify`, `coverage`, `prune`, `health`, `reap_orphans`.
+Every step writes a `JobRun` row, so "did last night's snapshot run?" is a
+query rather than a log excavation. A step whose declared prerequisite failed is
+recorded as `skipped`, never allowed to publish a number computed from stale
+input.
 
-The compose `worker` service runs `deploy/worker/run_worker.sh` (no Celery).
-Do not also install host cron: two fetchers against one database.
+`deploy/worker.sh` is the scheduler: PID 1 of the compose `worker` service, or
+`worker.sh hot` from host cron. Never both — two fetchers double the request
+rate against bama.ir.
 
-| Cadence | Job |
-| --- | --- |
-| every 5 min | delta fetch → mark_inactive → incremental deal scores → optional notifier |
-| every 30 min | episodes → daily_snapshot → market_index |
-| every 6 h | full fetch → crawl_gaps → warm pipeline → full deal scores → prune_history → crawl_health |
-
-The 5-minute tick only proves the newest pages are unchanged. The 6-hourly
-sweep walks every page, writes `PageCoverage`, and sets `reached_end`.
+There is no full-feed sweep. Coverage accumulates from bounded chunks, because
+the old ~936-page sweep only completed 11 times in 28 attempts and removal
+detection cannot depend on a job that usually dies halfway.
 
 ## API
 
-Mounted under `/api/` (`config/urls.py`), documented by drf-spectacular:
-`GET /api/schema/`, `/api/docs/`, `/api/redoc/`. Health: `/api/health/`,
-`/api/db/health/`.
+Everything under `/api/`. Health: `/api/health/`, `/api/db/health/`.
 
-**Catalog** — `GET /api/brands/`, `/api/brands/<slug>/models/`,
-`/api/models/<pk>/variants/`, `/api/ads/` (filterable), `/api/ads/<code>/`.
-Ad responses are curated columns; `raw_payload` is
-`GET /api/admin/ads/<code>/provenance/` (Django-admin inspection, not a
-public field).
+- **Auth** — `/api/auth/{me,register,login,logout}/`
+- **Catalog** — `/api/brands/`, `/api/brands/<slug>/models/`,
+  `/api/models/<pk>/variants/`, `/api/ads/`, `/api/ads/<code>/`
+- **Market** — `/api/markets/`, `/api/ads/<code>/price-history/`,
+  `/api/ads/<code>/fair-price/`
+- **Analytics** — `/api/analytics/deal-scores/[<code>/]`,
+  `/api/analytics/market-index/?scope=market|brand|model&id=&days=`,
+  `/api/analytics/overview/`
+- **Research** — `/api/research/{liquidity,depreciation}/<model_id>/`
+- **Saved cars** — `/api/favorites/`, session-scoped to the user
+- **Notifier** — `/api/notifier-settings/` (singleton, disabled by default)
+- **Operator** (staff only) — `POST /api/admin/jobs/{fetch,refresh-analytics,deal-scores}/`
+  (202, runs in a thread), `GET /api/admin/jobs/{overview,crawl-health}/`
+  (503 when unhealthy), `GET /api/admin/health/`,
+  `GET /api/admin/ads/<code>/provenance/`
 
-**Market / analytics**
-- `GET /api/markets/`
-- `GET /api/ads/<code>/price-history/`
-- `GET /api/ads/<code>/fair-price/`
-- `GET /api/analytics/deal-scores/` and `/api/analytics/deal-scores/<code>/`
-- `GET /api/analytics/market-index/?scope=market|brand|model&id=&days=`
-- `GET /api/analytics/overview/`
-- `GET /api/research/liquidity/<model_id>/` — Kaplan–Meier time-to-sell
-- `GET /api/research/price-position/<model_id>/`
-- `GET /api/research/depreciation/<model_id>/` — year-over-year retention
-
-**Saved cars** — `GET/POST /api/favorites/`, `DELETE /api/favorites/<code>/`.
-Session-authenticated and scoped to the current user. The configured demo
-account can use normal saved-car writes; staff-only job/provenance endpoints
-remain separate.
-
-**Optional notifier** — `GET/PATCH /api/notifier-settings/`. The singleton is
-disabled by default; the worker evaluates it after each deal-score refresh and
-sends at most ten qualifying, previously unseen listings per run.
-
-**Control** — `POST /api/admin/jobs/{fetch,refresh-analytics,deal-scores}/`
-(202, runs in a thread). `GET /api/admin/jobs/overview/`,
-`GET /api/admin/jobs/crawl-health/` (503 when unhealthy),
-`GET /api/admin/health/`.
+Ad responses are curated columns. `raw_payload` is operator-only — it is the
+whole scraped record, not a public field.
 
 ```bash
 curl -s 'http://localhost:8001/api/analytics/deal-scores/?limit=20' | jq
-curl -s 'http://localhost:8001/api/ads/CODE/fair-price/' | jq
 curl -s 'http://localhost:8001/api/analytics/market-index/?days=90' | jq
 ```
 
 ## Measuring market movement
 
 A median over live listings answers "what does a car cost today", not "did
-prices move" — mix shifts move the median. `apps/core/services/index.py`
-never compares different cars:
+prices move" — a shift in what is *listed* moves the median on its own. The
+index never compares different cars (`apps/core/research.py`):
 
 1. `r_c = median_d / median_prev - 1` per (model, variant, year_jalali) cohort
-2. `R_d = Σ(r_c · n_c) / Σ n_c` weighted by the smaller side's ad count
+2. `R_d = Σ(r_c · n_c) / Σ n_c`, weighted by the smaller side's ad count
 3. `index_d = index_prev · (1 + R_d)`, base 100
 
 A cohort present on only one of two dates shifts weights but contributes no
 return. Input is `DailyInventorySnapshot`.
 
-## Crawl health
-
-```bash
-python manage.py crawl_health
-curl -s localhost:8001/api/admin/jobs/crawl-health/
-```
-
-Checks: no completed sweep within 13 h, any `FAILED` run in 24 h, ingest-reject
-spikes, uncovered rank ranges, pages fetched with zero ads stored.
-
 ## Data integrity
 
-- **Cohort key is `year_jalali`, never raw `Ad.year`.** Bama publishes years
-  in either calendar; `Ad.year` is provenance only.
-- **Zero kilometres is 0, not NULL.** `"صفر کیلومتر"` is ~33% of ads.
-- **Row verify then quarantine.** `apps/jobs/services/verify.py` on ingest.
-  Hard failures write `IngestReject` and delete the `Ad`. Reads go through
-  `quality.verified` / `verified_by_ad` / `without_cohort_outliers`.
-- **Deal board vs fair price are the same number.** Min 8 peers; asking below
-  half the peer median is dropped as a deposit/typo.
+- **The cohort key is `year_jalali`, never raw `Ad.year`.** Bama publishes model
+  years in either calendar; `Ad.year` is provenance only.
+- **Zero kilometres is `0`, not NULL.** `"صفر کیلومتر"` is ~33% of ads.
+- **Verify, then quarantine.** Every ingest runs `apps/jobs/verify.py`. Soft
+  rules set `Ad.quality_flags`; a hard failure writes an `IngestReject` and
+  deletes the `Ad`. Analytics reads go through `apps/core/quality.py`.
+- **Removal is proven by coverage, not elapsed time.** An ad is `REMOVED` only
+  after being absent from two complete coverage windows.
+- **The deal board and fair price are the same number.** Minimum 8 peers; an
+  asking price below half the peer median is dropped as a down payment or typo.
+  Installment ads are excluded — their "price" is a deposit, and left in they
+  were 74% of the top deals.
 
 ## Frontend
 
-`ui/web/` — seven screens above. `npm run api:types` regenerates
-`src/api/schema.d.ts` from the OpenAPI schema. Filter state lives in the URL.
-`<Provenance>` renders `as_of` / coverage; `<Async>` treats "unavailable"
-(too little data) as an answer, not an error.
+```bash
+cd ui/web && npm install
+npm run dev        # proxies /api to http://localhost:8001
+npm run build      # tsc -b && vite build
+npm run typecheck
+```
+
+Filter state lives in the URL, so every view is shareable and the back button
+works. `<Provenance>` renders `as_of` + coverage on every research answer.
+`<Async>` treats *unavailable* — the backend refusing to compute from too little
+data — as a real answer, not an error, and never as an empty chart. A survival
+curve drawn across a coverage hole reads crawler downtime as cars selling.
 
 ## Tests
 
@@ -219,7 +186,6 @@ spikes, uncovered rank ranges, pages fetched with zero ads stored.
 pytest
 ```
 
-`test_parsing.py` / `test_normalize.py` are pure-Python. Remaining coverage:
-verify, catalog guard, importer, crawler (pagination / coverage / delta /
-resilience), market index, fair price / retention, lifecycle, pipeline,
-API exposure, crawl health.
+Eight files, one per subject: `test_parsing` (pure Python, no DB), `test_verify`,
+`test_ingest`, `test_fetcher`, `test_jobs`, `test_pricing`, `test_research`,
+`test_api`. Shared fixtures are in `conftest.py`.

@@ -1,112 +1,80 @@
-# Bama SaaS Agent Notes
+# Agent notes
 
-Local market-intelligence app. Django 5.2 / DRF, PostgreSQL
-only (GIN, `django.contrib.postgres`). `ui/web/` is the product UI (React +
-Vite), session-authenticated with a staff-only Control screen. Schema lives in Django models and is migrated
-via Django migrations only.
+`README.md` describes what the app is and how to run it. This file is only the
+things that are expensive to rediscover and cheap to break. Update it when one
+of these decisions changes.
 
-**Standalone.** No code or path dependency on any other repo. Payload rules
-live in `apps/parsing/` — zero-Django (`extract_ad`, `parse_publish_time`/
-Jalali, `payload_hashes`, `diff_payloads`, `pure_ad`, `unpack_payload`). The
-live fetcher (`apps/jobs/services/fetcher.py`) has its own HTTP helpers. Seed
-data is `data/bama.db` (gitignored).
+## Shape
 
-Keep these architecture decisions intact:
+One module per concern, no `services/` packages, no per-command modules:
 
-- **Normalized dimensions + JSONB snapshot.** `Brand→Model→Variant`, `City`,
-  `Dealer` are lookup tables. `Ad` is the current-snapshot row (pk=`code`)
-  with hot denormalized columns plus `raw_payload` JSONB. Indexes: `(model,
-  variant, year)`, `(model, current_price)`, GIN on `raw_payload`.
-- **Append-only provenance.** `AdVersion` (semantic-hash dedup),
-  `AdObservation` (one per run/ad), `AdChangeEvent` (only on a genuinely new
-  version). Re-import is idempotent for `Ad`/`AdVersion`/`PriceObservation`;
-  only `AdObservation` grows.
-- **Change-only price history.** `core.PriceObservation`: one row per actual
-  price change, not per sighting. Table names are `catalog_ad` /
-  `history_adobservation` (not `core_*`).
-- **`apps/parsing/` is authoritative** for payload rules; persistence is the
-  consuming app's job. `extract_ad → parse_publish_time → ingest_ad` backs
-  `fetch_live`.
-- **Calendar-normalized model year.** `Ad.year` is provenance and is never a
-  grouping or range-filter key. Cohorts and `?year=` use `Ad.year_jalali`
-  (index `ad_market_jy_idx`). The `+621` offset in `apps/parsing/normalize.py`
-  is for *model years* only.
+- `apps/core/` — `models.py` (all 15 models, four commented sections),
+  `views.py`, `serializers.py`, `filters.py`, plus the analytics:
+  `pricing.py` (fair price + deal board), `quality.py` (the read-side filters),
+  `research.py` (index, survival, depreciation), `notify.py`.
+- `apps/jobs/` — `parsing.py` (no Django import), `fetcher.py` (HTTP + crawl
+  gate + coverage arithmetic), `ingest.py`, `verify.py`, `jobs.py` (one function
+  per job, each returning a dict), `pipeline.py` (which jobs, in what order),
+  `management/commands/bama.py` (the only command).
+- `config/settings.py` — one file. `DJANGO_DEBUG=1` selects the local profile;
+  the default is hardened, so a missing env var cannot fail open.
+
+`db_table` is pinned on every model (`catalog_*`, `history_*`, `market_*`,
+`analytics_*`). Moving a model between files is therefore free — the physical
+schema is independent of the Python layout. Do not remove those pins.
+
+## Domain invariants
+
+- **`Ad.year` is provenance, never a key.** Bama publishes model years in both
+  calendars, so raw `year` mixes 1399 and 2025 in one column. Cohorts and
+  `?year=` use `year_jalali` (index `ad_market_jy_idx`). The `+621` offset in
+  `parsing.py` applies to *model years* only, never to a timestamp.
 - **Zero is a value.** `detail.mileage` is `"صفر کیلومتر"` for ~33% of ads.
-  Use `parse_mileage` (returns `0`), never `parse_int(positive=True)`.
-- **Verify, then quarantine.** `apps/jobs/services/verify.py` on every ingest.
-  Soft rule ids → `Ad.quality_flags`. A hard failure writes `IngestReject`,
-  returns `(None, False, False)`, and deletes any existing `Ad` with that
-  code. Analytics reads only through `apps.core.services.quality.verified`
-  (excludes `verify.HARD_RULE_IDS`). Soft flags must not drop otherwise-good
-  data.
-- **Fair price is the deal board.** `apps/core/services/fair_price.py`
-  (`MIN_PEERS=8`, bucket-median mileage adj, no OLS). Deal scores are
-  `discount_pct` against that baseline. Asking below half the peer median is
-  dropped as a deposit/typo (`MIN_ASK_VS_MEDIAN`), as are حواله titles and
-  the 10M-toman sentinel. Age is reported, not multiplied in.
-- **Provenance, not inspect.** `GET /api/admin/ads/<code>/provenance/` is the
-  unabridged record and is staff-only. Public `/api/ads/` stays curated. Worker boot runs
-  `reap_orphan_runs`.
+  Use `parse_mileage` (returns `0`), never a positive-only parser.
+- **Verify, then quarantine.** Every ingest runs the rules in `verify.py`. Soft
+  rule ids land in `Ad.quality_flags` and must not drop otherwise-good data; a
+  hard failure (`HARD_RULE_IDS`) writes an `IngestReject` and deletes the `Ad`.
+  Analytics reads go through `quality.verified` / `verified_by_ad` /
+  `without_cohort_outliers` — never a raw `Ad.objects` queryset.
+- **Fair price *is* the deal board.** `MIN_PEERS = 8`, bucket-median mileage
+  adjustment, no regression. Below 8 peers it refuses to answer rather than
+  quoting a median of three cars. `MIN_ASK_VS_MEDIAN = 0.5` drops asks below
+  half the peer median as deposits or typos, as do حواله titles and the
+  10M-toman sentinel. Age is reported, not multiplied in.
+- **Installment ads are not cheap cars.** Their lump-sum price field holds a
+  down payment. Anything ranked by price gap must exclude them
+  (`quality.price_basis_unclear`) or the top of the board is entirely artifact —
+  it was 74% of the top 200 rows.
+- **Append-only provenance.** `AdVersion` dedups on the *semantic* hash
+  (volatile payload paths excluded), `AdObservation` is one row per run per ad,
+  `PriceObservation` is one row per actual price change, not per sighting.
+  Re-import is idempotent for everything except `AdObservation`.
 
-Crawl invariants (`apps/jobs/services/fetcher.py`) — do not simplify away:
+## Crawl invariants
 
-- **`pageIndex` is 0-based.** `FIRST_PAGE = 0`.
-- Feed is strictly recency-ordered, `rank = 30*page + 1..30`, ends on an
-  empty page. No total-count field.
-- Insertions push ads to higher ranks (harmless re-reads). Deletions pull
-  ads to lower ranks past pages already read (**silent loss**). That is why
-  `PageCoverage` and `crawl_gaps` exist.
-- **Delta never resumes from a checkpoint** — always restart at page 0.
-  Only `full`/`backfill` resume.
+- **`pageIndex` is 0-based** (`FIRST_PAGE = 0`), 30 ads per page.
+- The feed is strictly recency-ordered, `rank = 30 * page + 1..30`, and ends on
+  an empty page. There is no total-count field, which is why coverage has to be
+  reconstructed from rank intervals.
+- Insertions push ads to *higher* ranks — a harmless re-read. Deletions pull ads
+  to *lower* ranks, past pages already read, which is silent loss. `PageCoverage`
+  and the `coverage` job exist for exactly that.
+- **Delta never resumes from a checkpoint**; it always restarts at page 0. Only
+  `full` and `backfill` resume.
+- **Removal is proven, not guessed.** An ad goes `REMOVED` only after two
+  complete coverage windows without it (`COVERAGE_WINDOW_HOURS = 24`). Elapsed
+  wall-clock time is not evidence.
+- **A 403 is an IP block, not a rate limit.** The crawl gate opens a cooldown
+  breaker rather than probing; slowing the crawl does not help and refetching
+  during a block poisons coverage.
 
-Settings: `config/settings/base.py` (shared, `AllowAny`), `dev.py` (Django
-admin and seeded demo account), `prod.py` (HSTS/secure cookies + anon
-throttle). `manage.py` defaults to `config.settings.dev`. There is no JWT,
-subscription, or per-user alert surface; the optional local Telegram notifier
-is a singleton edited through `/api/notifier-settings/`.
+## Pipeline
 
-## Worker cadences
+Steps are deliberately independent: a flaky fetch must not stop the cheap local
+steps from keeping analytics fresh. The exceptions are declared in `DEPENDS_ON`
+— `market_index` after `snapshot`, because a chained index extended over a
+missing snapshot reports the crawler's downtime as a market move. A step whose
+prerequisite failed is recorded `skipped`, which is distinct from both success
+and silence.
 
-- **HOT** (~5 min): `fetch_live` delta + `mark_inactive` + incremental
-  `refresh_cohort_deal_scores` for models sighted in that fetch + optional
-  `notify_deals`.
-- **WARM** (~30 min): `sync_episodes` + `daily_snapshot` + `build_market_index`.
-- **COLD** (~6 h maintenance): gap repair follow-up + full deal-score rebuild +
-  `prune_history` (90-day observations / coverage / job runs; the rolling
-  coverage window remains authoritative for removal detection).
-- No Celery/Redis. One compose `worker` loop (or host cron, never both).
-  `notify_deals` is disabled until its singleton settings row is configured.
-
-## Layout
-
-- `config/` — `settings/{base,dev,prod}.py`, `urls.py`, `wsgi.py`, `asgi.py`.
-- `apps/core/{models,serializers,views}/` — catalog / history / market·price
-  / analytics; `filters.py`, `urls.py`.
-- `apps/accounts/` — email session auth, seeded admin/demo users, and per-user
-  favorites.
-- `apps/<app>/services/` — `core/services/{fair_price,deal_score,quality,
-  index,liquidity,retention}.py`, `jobs/services/{ingest,fetcher,dimensions,
-  pipeline,episodes,verify,health}.py`.
-- `apps/jobs/management/commands/` — `fetch_live`, `crawl_gaps`,
-  `crawl_health`, `compute_deal_scores`, `notify_deals`, `mark_inactive_ads`,
-  `daily_snapshot`, `build_market_index`, `sync_episodes`, `prune_history`,
-  `run_pipeline`, `reap_orphan_runs`.
-- `apps/parsing/` — pure-Python, no ORM.
-- `tests/` — pytest-django; `test_parsing.py` has no DB dependency.
-
-## API (surviving)
-
-- Catalog: `/api/brands/`, `/api/ads/`, models/variants.
-- Market: `/api/markets/`, `/api/ads/<code>/price-history/`.
-- Analytics: `/api/analytics/deal-scores/`, `/api/analytics/market-index/`,
-  `/api/analytics/overview/`.
-- Research: `/api/research/{liquidity,price-position,depreciation}/<model_id>/`,
-  `/api/ads/<code>/fair-price/`.
-- Saved: `/api/favorites/`.
-- Operator: `/api/admin/jobs/{fetch,refresh-analytics,deal-scores,crawl-health,overview}/`,
-  `/api/admin/ads/<code>/provenance/`, `/api/admin/health/`.
-- Notifier: `/api/notifier-settings/` (local singleton; no per-user alert API).
-- Docs: `/api/schema/`, `/api/docs/`, `/api/redoc/`. Health: `/api/health/`,
-  `/api/db/health/`.
-
-Update this file when the backend architecture changes.
+Every step records a `JobRun` either way. Only the network fetch is retried.
