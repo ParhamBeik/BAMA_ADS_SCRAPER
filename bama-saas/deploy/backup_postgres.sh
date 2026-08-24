@@ -2,10 +2,17 @@
 set -Eeuo pipefail
 
 project_dir="${PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-env_file="${ENV_FILE:-${project_dir}/.env}"
+# Prod by default: this script only ever runs on the VPS, and pointing it at the
+# dev compose file makes `exec postgres` miss the running container entirely —
+# a backup job that silently backs up nothing is worse than no backup job.
+compose_file="${COMPOSE_FILE:-${project_dir}/docker-compose.prod.yml}"
+env_file="${ENV_FILE:-${project_dir}/.env.production}"
 backup_dir="${BACKUP_DIR:-/var/backups/bama}"
+# The schema has 33 tables today. The floor is a sanity bar against a truncated
+# or wrong-database archive, not a schema assertion — leave room to add apps.
+MIN_EXPECTED_TABLES="${MIN_EXPECTED_TABLES:-20}"
 passphrase_file="${BACKUP_PASSPHRASE_FILE:?set BACKUP_PASSPHRASE_FILE to a mode-400 or mode-600 file outside the repository}"
-compose=(docker compose --project-directory "${project_dir}" -f "${project_dir}/docker-compose.yml")
+compose=(docker compose --project-directory "${project_dir}" -f "${compose_file}")
 if [[ -r "${env_file}" ]]; then
   compose+=(--env-file "${env_file}")
 fi
@@ -25,9 +32,47 @@ trap 'rm -f "${partial}"' EXIT
   | openssl enc -aes-256-cbc -salt -pbkdf2 -iter 310000 \
       -pass "file:${passphrase_file}" -out "${partial}"
 mv "${partial}" "${destination}"
-openssl enc -d -aes-256-cbc -pbkdf2 -iter 310000 \
-  -pass "file:${passphrase_file}" -in "${destination}" \
-  | "${compose[@]}" exec -T postgres pg_restore --list >/dev/null
+
+# Verify by reading the archive back through the passphrase we just used. Two
+# checks, because neither alone is enough — measured, not assumed:
+#
+#   1. Full decrypt to /dev/null. A truncated file fails the final CBC padding
+#      block ("bad decrypt"), which is what a disk filling up mid-dump looks
+#      like. Costs under a second for 300MB.
+#   2. TOC listing. Proves the plaintext is a real archive of *this* database
+#      and not, say, a valid dump of the wrong container.
+#
+# ponytail: what this still does NOT catch is a single flipped byte in the
+# middle — CBC is malleable, so corruption there decrypts clean and only shows
+# up when you actually restore (tested: exit 0). The .sha256 alongside guards
+# bit-rot after the fact. If that gap ever matters, the upgrade is a nightly
+# restore into a scratch database; it costs minutes rather than seconds.
+
+if ! openssl enc -d -aes-256-cbc -pbkdf2 -iter 310000 \
+     -pass "file:${passphrase_file}" -in "${destination}" >/dev/null 2>&1; then
+  echo "Verification failed: ${destination} does not decrypt cleanly end to end" >&2
+  echo "(truncated or corrupt). Left in place for inspection." >&2
+  exit 1
+fi
+
+# Judged on output, not exit status, deliberately: `pg_restore --list` reads the
+# header and TOC and then exits, which slams the pipe shut on the openssl still
+# streaming 300MB behind it. Under `pipefail` that surfaces as a failed backup
+# when in fact the archive is fine, so `set +o pipefail` is scoped to this one
+# subshell and the real check is on what came out the far end.
+toc="$(set +o pipefail
+  openssl enc -d -aes-256-cbc -pbkdf2 -iter 310000 \
+    -pass "file:${passphrase_file}" -in "${destination}" 2>/dev/null \
+  | "${compose[@]}" exec -T postgres pg_restore --list 2>/dev/null)"
+
+tables="$(grep -c 'TABLE DATA' <<<"${toc}" || true)"
+if ((tables < MIN_EXPECTED_TABLES)) || ! grep -q 'TABLE DATA public accounts_user' <<<"${toc}"; then
+  echo "Verification failed: decrypted archive lists ${tables} tables and no" >&2
+  echo "accounts_user; expected at least ${MIN_EXPECTED_TABLES}. Keeping" >&2
+  echo "${destination} unchecksummed for inspection." >&2
+  exit 1
+fi
+
 sha256sum "${destination}" > "${destination}.sha256"
 
 mapfile -t old_backups < <(find "${backup_dir}" -maxdepth 1 -type f -name 'daily-*.dump.enc' -print | sort -r)
