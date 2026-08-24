@@ -9,5 +9,22 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+compose() {
+    docker compose -f docker-compose.prod.yml --env-file .env.production "$@"
+}
+
+# Build first, so a compile/asset error fails the deploy while the previous
+# containers are still serving traffic.
+compose build
+
+# Migrate as a one-off *before* replacing anything. The django service also
+# migrates on start, but by then the old container is already gone — a bad
+# migration leaves it crash-looping with nothing serving. Running it here means
+# `set -e` aborts the deploy and the running stack is left untouched.
+# --wait blocks until the healthcheck passes, so migrate cannot race the
+# database still doing crash recovery.
+compose up -d --wait postgres
+compose run --rm --no-deps django python manage.py migrate --noinput
+
+compose up -d
 docker image prune -f

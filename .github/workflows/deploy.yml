@@ -1,0 +1,75 @@
+# Continuous deployment to the VPS.
+#
+# Flow: push to main -> ci.yml runs in full -> if and only if it is green, SSH to
+# the VPS and trigger the pull-and-restart wrapper that already lives there.
+#
+# The VPS holds its own git checkout at /opt/apps/BAMA_ADS_SCRAPER with a
+# read-only deploy key, so this workflow ships no code — it only says "go". That
+# keeps the artifact GitHub authenticates for (a git ref) identical to the one
+# the server builds from.
+#
+# The SSH key here can do exactly one thing: the `deploy` user's authorized_keys
+# entry pins `command="sudo /opt/apps/deploy_bama.sh"`, so even a stolen key
+# cannot open a shell, forward a port, or read the database.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Two pushes in quick succession must not build the same checkout at once —
+# `git reset --hard` from one would land under the other's `docker compose build`.
+# Not cancel-in-progress: aborting a half-finished deploy is worse than queueing.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: ci
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Trigger the VPS pull-and-restart
+        env:
+          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # Pin the host key instead of StrictHostKeyChecking=no, so a MITM
+          # between the runner and the VPS fails the deploy rather than
+          # silently succeeding against someone else's box.
+          printf '%s\n' "${{ secrets.VPS_HOST_KEY }}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          # The forced command on the server side ignores whatever we send, so
+          # the remote command below is documentation, not the instruction.
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes \
+              -o UserKnownHostsFile=~/.ssh/known_hosts \
+              "$VPS_USER@$VPS_HOST" 'sudo /opt/apps/deploy_bama.sh'
+
+      # A deploy that "succeeded" but left the stack down is the failure mode
+      # worth catching: compose returns 0 as soon as the containers are created,
+      # long before Django can answer.
+      - name: Smoke-test the running stack
+        env:
+          HEALTH_URL: ${{ secrets.VPS_HEALTH_URL }}
+        run: |
+          set -euo pipefail
+          for endpoint in "api/health/" "api/db/health/"; do
+            url="${HEALTH_URL%/}/$endpoint"
+            echo "probing $url"
+            for attempt in $(seq 1 30); do
+              code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$url" || echo 000)
+              [ "$code" = "200" ] && { echo "  ok after ${attempt}x3s"; break; }
+              [ "$attempt" -eq 30 ] && { echo "  FAILED: last status $code"; exit 1; }
+              sleep 3
+            done
+          done

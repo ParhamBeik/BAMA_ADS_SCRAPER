@@ -8,7 +8,13 @@ pruning all read as ground truth.
 from django.contrib import admin
 
 from apps.core.models import (
-    Ad, FetchRun, IngestReject, JobRun, ListingEpisode, NotifierSettings, PageCoverage,
+    Ad,
+    FetchRun,
+    IngestReject,
+    JobRun,
+    ListingEpisode,
+    NotifierSettings,
+    PageCoverage,
 )
 
 

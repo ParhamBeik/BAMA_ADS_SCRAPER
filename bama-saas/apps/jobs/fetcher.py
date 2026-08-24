@@ -24,10 +24,11 @@ import os
 import random
 import signal
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
-from typing import Any, Iterator
+from typing import Any
 
 import requests
 from django.conf import settings
@@ -642,7 +643,8 @@ def _fetch_live(*, mode: str = "delta", max_ads: int | None = None,
         # silent loss this design exists to eliminate. Re-reading a few cheap
         # pages is the correct trade; the deep pages an aborted delta missed are
         # recovered by gap repair, which is what that exists for.
-        start_page = FIRST_PAGE if mode == FetchRun.Mode.DELTA else (_resume_page(mode) or FIRST_PAGE)
+        start_page = (FIRST_PAGE if mode == FetchRun.Mode.DELTA
+                      else (_resume_page(mode) or FIRST_PAGE))
     start_page = max(int(start_page), 0)
     if mode == FetchRun.Mode.BACKFILL and end_page is None:
         end_page = start_page
@@ -804,8 +806,9 @@ def _fetch_live(*, mode: str = "delta", max_ads: int | None = None,
         run.resume_from_page = resume_page
         run.finished_at = djtz.now()
         run.save()
-        logger.exception("event=bama_fetch_failed run_id=%s mode=%s page=%d error=%s duration_s=%.1f",
-                         run.pk, mode, resume_page, exc, time.monotonic() - started)
+        logger.exception(
+            "event=bama_fetch_failed run_id=%s mode=%s page=%d error=%s duration_s=%.1f",
+            run.pk, mode, resume_page, exc, time.monotonic() - started)
         reset_cache()
         raise
     finally:

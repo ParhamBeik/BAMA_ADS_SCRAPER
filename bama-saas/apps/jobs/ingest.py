@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone as dt_timezone
+from datetime import datetime
+from datetime import timezone as dt_timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -17,12 +18,27 @@ from django.db import IntegrityError, transaction
 from django.utils.text import slugify
 
 from apps.core.models import (
-    Ad, AdObservation, AdVersion, Brand, City, Dealer, FetchRun, IngestReject,
-    Model, PriceDropEvent, PriceObservation, Variant,
+    Ad,
+    AdObservation,
+    AdVersion,
+    Brand,
+    City,
+    Dealer,
+    FetchRun,
+    IngestReject,
+    Model,
+    PriceDropEvent,
+    PriceObservation,
+    Variant,
 )
 from apps.jobs.parsing import (
-    SEMANTIC_HASH_VERSION, fingerprint, normalize_model_year, parse_int,
-    parse_mileage, payload_hashes, pure_ad,
+    SEMANTIC_HASH_VERSION,
+    fingerprint,
+    normalize_model_year,
+    parse_int,
+    parse_mileage,
+    payload_hashes,
+    pure_ad,
 )
 from apps.jobs.verify import verify_extracted
 

@@ -23,9 +23,9 @@ from __future__ import annotations
 
 import statistics
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from statistics import median
-from typing import Iterable
 
 from django.utils import timezone
 

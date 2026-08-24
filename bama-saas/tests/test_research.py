@@ -27,8 +27,8 @@ from apps.core.research import (
     BASE_VALUE,
     MIN_COHORT_ADS,
     build_index,
-    compute_index,
     cohort_series,
+    compute_index,
 )
 
 D0 = date(2026, 8, 1)

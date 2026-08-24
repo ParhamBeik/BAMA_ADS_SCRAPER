@@ -22,6 +22,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=8.2", "pytest-django>=4.8"]
+dev = ["pytest>=8.2", "pytest-django>=4.8", "ruff>=0.6"]
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -32,3 +33,22 @@ DJANGO_SETTINGS_MODULE = "config.settings"
 python_files = ["test_*.py"]
 testpaths = ["tests"]
 filterwarnings = ["ignore::DeprecationWarning"]
+
+# 100, not the default 88: the house style leans on long log-format strings and
+# ORM chains that read worse when broken, and reflowing them is pure churn.
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+exclude = ["**/migrations/*", ".venv", "ui"]
+
+[tool.ruff.lint]
+# E/F correctness, I import order, UP dead idioms, B likely bugs.
+select = ["E", "F", "I", "UP", "B"]
+# `datetime.timezone.utc` -> `datetime.UTC` is a 37-site rename that changes no
+# behaviour, and `timezone` is already imported alongside `datetime` everywhere
+# it appears. Not worth the diff.
+ignore = ["UP017"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests deliberately build long literal payloads and assert on them.
+"tests/*" = ["E501"]

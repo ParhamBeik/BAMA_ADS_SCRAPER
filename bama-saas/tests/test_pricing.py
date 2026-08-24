@@ -15,8 +15,15 @@ from apps.core import notify as N
 from apps.core import pricing as FP
 from apps.core import research as R
 from apps.core.models import (
-    Ad, Brand, City, DealScoreCache, ListingEpisode, Model, NotifiedAd,
-    NotifierSettings, Variant,
+    Ad,
+    Brand,
+    City,
+    DealScoreCache,
+    ListingEpisode,
+    Model,
+    NotifiedAd,
+    NotifierSettings,
+    Variant,
 )
 from apps.core.pricing import compute_deal_scores
 from apps.core.quality import condition_discounted, price_basis_unclear
@@ -487,7 +494,8 @@ def test_a_thin_cohort_is_never_announced(notifier_catalog, cfg):
 
 
 @pytest.mark.django_db
-def test_an_installment_ad_is_never_announced(notifier_catalog, cfg):
+def test_a_bare_deposit_phrase_ad_is_never_announced(notifier_catalog, cfg):
+    """The short form of the down-payment disclaimer, without "اقساط"."""
     row = make_scored(notifier_catalog, "deposit01", discount=60.0, peers=30)
     row.ad.description = "مبلغ فوق پیش پرداخت است"
     row.ad.save(update_fields=["description"])

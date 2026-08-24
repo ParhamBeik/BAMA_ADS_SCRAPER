@@ -15,18 +15,30 @@ import requests
 from django.utils import timezone
 
 from apps.core.models import (
-    Ad, AdObservation, AdVersion, Brand, FetchRun, IngestReject, JobRun, Model,
+    Ad,
+    AdObservation,
+    AdVersion,
+    Brand,
+    FetchRun,
+    IngestReject,
+    JobRun,
+    Model,
     PageCoverage,
 )
 from apps.jobs import fetcher
 from apps.jobs import pipeline as P
-
-NOW = timezone.now()
 from apps.jobs.fetcher import known_feed_depth
 from apps.jobs.jobs import (
-    REJECT_SPIKE_MIN_COUNT, check_failed_runs, check_ingest_progress,
-    check_reject_spike, check_sweep_freshness, prune, run_checks,
+    REJECT_SPIKE_MIN_COUNT,
+    check_failed_runs,
+    check_ingest_progress,
+    check_reject_spike,
+    check_sweep_freshness,
+    prune,
+    run_checks,
 )
+
+NOW = timezone.now()
 
 
 @pytest.fixture

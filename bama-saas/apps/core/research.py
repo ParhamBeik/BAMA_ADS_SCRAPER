@@ -19,7 +19,9 @@ from __future__ import annotations
 import statistics
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import date as date_cls, datetime, time, timezone as dt_timezone
+from datetime import date as date_cls
+from datetime import datetime, time
+from datetime import timezone as dt_timezone
 
 from django.conf import settings
 from django.utils import timezone
@@ -225,7 +227,7 @@ class SurvivalCurve:
 
     def probability_still_listed(self, day: float) -> float:
         current = 1.0
-        for t, s in zip(self.times, self.survival):
+        for t, s in zip(self.times, self.survival, strict=True):
             if t > day:
                 break
             current = s
@@ -237,7 +239,7 @@ class SurvivalCurve:
         None when the curve never reaches it: with most listings still open, the
         honest answer is "longer than we have watched", not an extrapolation.
         """
-        for t, s in zip(self.times, self.survival):
+        for t, s in zip(self.times, self.survival, strict=True):
             if s <= 0.5:
                 return t
         return None
@@ -250,7 +252,7 @@ class SurvivalCurve:
             "median_days": self.median_days(),
             "curve": [
                 {"day": t, "still_listed": round(s, 4), "at_risk": r}
-                for t, s, r in zip(self.times, self.survival, self.at_risk)
+                for t, s, r in zip(self.times, self.survival, self.at_risk, strict=True)
             ],
         }
 

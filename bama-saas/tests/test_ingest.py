@@ -13,11 +13,18 @@ import pytest
 from django.utils import timezone as djtz
 
 from apps.core.models import (
-    Ad, Brand, City, DealScoreCache, FetchRun, Model, PageCoverage,
-    PriceObservation, Variant,
+    Ad,
+    Brand,
+    City,
+    DealScoreCache,
+    FetchRun,
+    Model,
+    PageCoverage,
+    PriceObservation,
+    Variant,
 )
 from apps.core.pricing import compute_deal_scores
-from apps.jobs.ingest import ingest_ad, reset_cache, reset_price_cache, resolve_dimensions
+from apps.jobs.ingest import ingest_ad, reset_cache, reset_price_cache
 from apps.jobs.jobs import REQUIRED_MISSED_WINDOWS, mark_inactive, sweep_cutoff
 from apps.jobs.parsing import extract_ad, parse_publish_time
 
@@ -373,8 +380,7 @@ def _reset_ingest_caches():
     transaction rolls back those ids no longer exist, and the next test's insert
     fails on the foreign key.
     """
-    from apps.jobs.ingest import reset_cache
-    from apps.jobs.ingest import reset_price_cache
+    from apps.jobs.ingest import reset_cache, reset_price_cache
 
     reset_cache()
     reset_price_cache()

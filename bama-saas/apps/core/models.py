@@ -126,11 +126,16 @@ class Ad(models.Model):
 
     # PROTECT stops a brand/model/variant still referenced by ads from being
     # deleted; dealer/city just clear.
-    brand = models.ForeignKey(Brand, on_delete=models.PROTECT, related_name="ads", null=True, blank=True)
-    model = models.ForeignKey(Model, on_delete=models.PROTECT, related_name="ads", null=True, blank=True)
-    variant = models.ForeignKey(Variant, on_delete=models.PROTECT, related_name="ads", null=True, blank=True)
-    dealer = models.ForeignKey(Dealer, on_delete=models.SET_NULL, related_name="ads", null=True, blank=True)
-    city = models.ForeignKey(City, on_delete=models.SET_NULL, related_name="ads", null=True, blank=True)
+    brand = models.ForeignKey(Brand, on_delete=models.PROTECT, related_name="ads",
+                              null=True, blank=True)
+    model = models.ForeignKey(Model, on_delete=models.PROTECT, related_name="ads",
+                              null=True, blank=True)
+    variant = models.ForeignKey(Variant, on_delete=models.PROTECT, related_name="ads",
+                                null=True, blank=True)
+    dealer = models.ForeignKey(Dealer, on_delete=models.SET_NULL, related_name="ads",
+                               null=True, blank=True)
+    city = models.ForeignKey(City, on_delete=models.SET_NULL, related_name="ads",
+                             null=True, blank=True)
 
     title = models.CharField(max_length=400, blank=True)
 
@@ -386,7 +391,8 @@ class AdVersion(models.Model):
         db_table = "history_adversion"
         ordering = ("first_observed_at",)
         constraints = [
-            models.UniqueConstraint(fields=("ad", "semantic_hash"), name="uq_adversion_ad_semantic"),
+            models.UniqueConstraint(fields=("ad", "semantic_hash"),
+                                    name="uq_adversion_ad_semantic"),
         ]
 
     def __str__(self) -> str:

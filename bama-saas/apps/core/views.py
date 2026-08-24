@@ -29,14 +29,27 @@ from rest_framework.response import Response
 from apps.core import pricing, research
 from apps.core.filters import AdFilter
 from apps.core.models import (
-    Ad, Brand, DealScoreCache, MarketIndex, Model, NotifierSettings,
-    PageCoverage, PriceObservation, Variant,
+    Ad,
+    Brand,
+    DealScoreCache,
+    MarketIndex,
+    Model,
+    NotifierSettings,
+    PageCoverage,
+    PriceObservation,
+    Variant,
 )
 from apps.core.quality import (
-    condition_discounted, verified, verified_by_ad, without_high_outliers,
+    condition_discounted,
+    verified,
+    verified_by_ad,
+    without_high_outliers,
 )
 from apps.core.serializers import (
-    AdSerializer, BrandSerializer, ModelSerializer, NotifierSettingsSerializer,
+    AdSerializer,
+    BrandSerializer,
+    ModelSerializer,
+    NotifierSettingsSerializer,
     VariantSerializer,
 )
 from apps.jobs.fetcher import COVERAGE_WINDOW_HOURS, consecutive_blocks, find_gaps, known_feed_depth
@@ -248,8 +261,10 @@ def _opt(params, key, cast):
         return None
     try:
         return cast(raw)
-    except (TypeError, ValueError):
-        raise ValueError(f"{key} must be {'an integer' if cast is int else 'a number'}")
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{key} must be {'an integer' if cast is int else 'a number'}"
+        ) from exc
 
 
 def _deal_score_row(obj):

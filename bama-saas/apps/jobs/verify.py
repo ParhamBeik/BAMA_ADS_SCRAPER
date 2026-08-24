@@ -17,12 +17,16 @@ the single read-side chokepoint.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any
 
 from apps.jobs.parsing import (
-    normalize_model_year, parse_int, parse_mileage, parse_publish_time,
+    normalize_model_year,
+    parse_int,
+    parse_mileage,
+    parse_publish_time,
 )
 
 # Bama ad codes are short lowercase alphanumerics, e.g. "6mnwbfv5".
@@ -155,7 +159,8 @@ def _year_implausible_future(extracted, payload):
         return None
     limit = _now_year() + MAX_YEARS_AHEAD
     if gregorian > limit:
-        return Rejection("year_implausible_future", f"model year {gregorian} is beyond {limit}", False)
+        return Rejection("year_implausible_future",
+                         f"model year {gregorian} is beyond {limit}", False)
 
 
 def _mileage_implausible(extracted, payload):
@@ -176,7 +181,8 @@ def _mileage_zero_on_old_car(extracted, payload):
         return None
     age = _now_year() - gregorian
     if age > ZERO_KM_MAX_AGE_YEARS:
-        return Rejection("mileage_zero_on_old_car", f"0 km on a {age}-year-old car ({gregorian})", False)
+        return Rejection("mileage_zero_on_old_car",
+                         f"0 km on a {age}-year-old car ({gregorian})", False)
 
 
 def _mileage_implausible_for_age(extracted, payload):

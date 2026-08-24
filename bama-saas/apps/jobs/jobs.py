@@ -17,16 +17,29 @@ from django.db.models import Count, F, Sum
 from django.utils import timezone
 
 from apps.core.models import (
-    Ad, AdObservation, DailyInventorySnapshot, FetchRun, IngestReject, JobRun,
-    ListingEpisode, MarketIndex, PageCoverage,
+    Ad,
+    AdObservation,
+    DailyInventorySnapshot,
+    FetchRun,
+    IngestReject,
+    JobRun,
+    ListingEpisode,
+    MarketIndex,
+    PageCoverage,
 )
 from apps.core.notify import notify_deals
 from apps.core.pricing import compute_deal_scores, refresh_cohort_deal_scores
 from apps.core.quality import verified
 from apps.core.research import build_index
 from apps.jobs.fetcher import (
-    COVERAGE_WINDOW_HOURS, PAGE_SIZE, CrawlBlocked, coverage_is_complete,
-    fetch_live, find_gaps, known_feed_depth, plan_backfill,
+    COVERAGE_WINDOW_HOURS,
+    PAGE_SIZE,
+    CrawlBlocked,
+    coverage_is_complete,
+    fetch_live,
+    find_gaps,
+    known_feed_depth,
+    plan_backfill,
 )
 
 # ---------------------------------------------------------------------------

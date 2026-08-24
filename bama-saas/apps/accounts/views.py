@@ -94,10 +94,10 @@ class RegisterView(APIView):
                     email=serializer.validated_data["email"],
                     password=serializer.validated_data["password"],
                 )
-        except IntegrityError:
+        except IntegrityError as exc:
             raise serializers.ValidationError(
                 {"email": "An account with this email already exists."}
-            )
+            ) from exc
         login(request, user)
         return Response(_user_payload(user), status=status.HTTP_201_CREATED)
 

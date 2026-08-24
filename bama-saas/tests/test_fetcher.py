@@ -20,12 +20,15 @@ import requests
 from django.utils import timezone as djtz
 
 from apps.core.models import AdObservation, FetchRun, PageCoverage
+from apps.core.pricing import refresh_cohort_deal_scores
 from apps.jobs import fetcher
 from apps.jobs import fetcher as F
 from apps.jobs import fetcher as crawl_gate
-from apps.core.pricing import refresh_cohort_deal_scores
 from apps.jobs.fetcher import (
-    PAGE_SIZE, CrawlBlocked, fetch_live, coverage_is_complete, find_gaps, known_feed_depth,
+    PAGE_SIZE,
+    CrawlBlocked,
+    fetch_live,
+    find_gaps,
     plan_backfill,
 )
 

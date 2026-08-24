@@ -13,7 +13,8 @@ router.register(r"ads", views.AdViewSet, basename="ad")
 
 urlpatterns = [
     path("brands/<slug:brand_slug>/models/", views.BrandModelsView.as_view(), name="brand-models"),
-    path("models/<int:model_pk>/variants/", views.ModelVariantsView.as_view(), name="model-variants"),
+    path("models/<int:model_pk>/variants/", views.ModelVariantsView.as_view(),
+         name="model-variants"),
 
     path("markets/", views.markets, name="markets"),
     path("ads/<str:code>/price-history/", views.ad_price_history, name="ad-price-history"),

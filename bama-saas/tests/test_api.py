@@ -7,7 +7,7 @@ nothing depends on the seeded 50k-row dev database.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -15,14 +15,18 @@ from rest_framework.test import APIClient
 
 from apps.accounts.models import User
 from apps.core.models import (
-    Ad, Brand, City, DealScoreCache, Dealer, FetchRun, Model, PriceObservation,
+    Ad,
+    Brand,
+    City,
+    Dealer,
+    DealScoreCache,
+    FetchRun,
+    Model,
+    PriceObservation,
     Variant,
 )
 from apps.core.pricing import compute_deal_scores
 from tests.conftest import NOW, UTC
-
-
-UTC = timezone.utc
 
 # A fixed "now" so publish_at / observed_at derived from it are deterministic.
 _NOW = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)

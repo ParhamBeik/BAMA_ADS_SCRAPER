@@ -13,8 +13,14 @@ from datetime import datetime, timezone
 import pytest
 
 from apps.jobs.parsing import (
-    JALALI_GREGORIAN_OFFSET, extract_ad, fingerprint, normalize_model_year,
-    parse_int, parse_mileage, parse_publish_time, payload_hashes,
+    JALALI_GREGORIAN_OFFSET,
+    extract_ad,
+    fingerprint,
+    normalize_model_year,
+    parse_int,
+    parse_mileage,
+    parse_publish_time,
+    payload_hashes,
 )
 
 

@@ -1,0 +1,82 @@
+# Every push and PR. `deploy.yml` refuses to run unless all three jobs here pass,
+# so this file is the definition of "safe to put on the VPS".
+#
+# The three jobs are independent on purpose: a frontend type error and a backend
+# test failure are different problems, and finding both in one run beats fixing
+# one, pushing, and waiting to discover the other.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_call:      # deploy.yml reuses this rather than duplicating the steps
+
+defaults:
+  run:
+    working-directory: bama-saas
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: bama_saas
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/bama_saas
+      DJANGO_SETTINGS_MODULE: config.settings
+      # pytest is in sys.modules during the run, which selects the permissive
+      # profile in config/settings.py. Set explicitly so the intent is visible.
+      DJANGO_DEBUG: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -e ".[test]"
+
+      # A model change without a migration passes every test and then breaks the
+      # deploy, because the container runs `migrate` against a schema that no
+      # longer matches the models. Catch it here instead.
+      - name: Check for missing migrations
+        run: python manage.py makemigrations --check --dry-run
+
+      - run: pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bama-saas/ui/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: bama-saas/ui/web/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      # The prod image runs this exact build; a broken import must fail here,
+      # not halfway through a deploy.
+      - run: npm run build
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install ruff
+      - run: ruff check .

@@ -20,7 +20,6 @@ from apps.jobs import verify as V
 from apps.jobs.ingest import ingest_ad, reset_cache, resolve_dimensions
 from apps.jobs.parsing import extract_ad
 
-
 OBSERVED_AT = datetime(2025, 7, 1, tzinfo=timezone.utc)
 
 
