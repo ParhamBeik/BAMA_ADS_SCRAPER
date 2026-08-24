@@ -926,3 +926,40 @@ def test_a_backfill_range_that_simply_ends_claims_nothing():
     assert run.reached_end is False
     assert run.stop_reason == FetchRun.StopReason.MAX_PAGES
     assert F.known_feed_depth() == 150
+
+
+def test_a_bounded_run_is_held_to_a_tighter_bar_than_a_full_sweep():
+    """The 266-page incident, in its new costume.
+
+    A full sweep walked everything above it and earns the generous bar. A
+    backfill starting mid-feed proves only that its own range ended, which is
+    indistinguishable from a degraded API — so a blip at page 700 of a
+    1133-page feed must not be believed, even though it clears 50%.
+    """
+    assert F.end_of_feed_is_credible(700, 1133) is True                   # full
+    assert F.end_of_feed_is_credible(700, 1133, bounded=True) is False    # backfill
+    # A backfill that genuinely walks off the end lands next to the ceiling;
+    # production saw 1157 against 1159.
+    assert F.end_of_feed_is_credible(1157, 1159, bounded=True) is True
+    # A real but large shrink is still allowed: 5% of the ceiling.
+    assert F.end_of_feed_is_credible(1105, 1159, bounded=True) is True
+    # A tiny feed must not be judged on a proportion alone — one page of
+    # shrinkage is 25% of a four-page feed and entirely normal.
+    assert F.end_of_feed_is_credible(3, 4, bounded=True) is True
+
+
+@pytest.mark.django_db
+def test_a_spurious_mid_feed_empty_page_cannot_collapse_the_ceiling():
+    """The failure this guards: a wrongly-lowered ceiling stops demanding
+    coverage of the deep feed, and mark_inactive is rank-blind — it would
+    retire live ads nobody had re-verified."""
+    _cover(_run(), [40], fetched_at=djtz.now() - timedelta(days=3))
+    assert F.known_feed_depth() == 1230
+
+    # Feed "ends" at page 20 — half the ceiling, and a lie.
+    run = run_with(FakeSession(make_feed(20, "V")), mode="backfill",
+                   start_page=20, end_page=25)
+
+    assert run.reached_end is False
+    assert run.feed_end_rank is None
+    assert F.known_feed_depth() == 1230

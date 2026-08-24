@@ -241,7 +241,14 @@ def link_reposts(*, window_days: int = REPOST_WINDOW_DAYS) -> dict:
     prior = defaultdict(list)
     for code, fp, last_seen in (
         Ad.objects.filter(listing_fingerprint__in={fp for _, fp, _ in candidates},
-                          status=Ad.Status.REMOVED, last_seen_at__isnull=False)
+                          status=Ad.Status.REMOVED,
+                          # Bounded on BOTH sides. Windowing only the candidates
+                          # left the predecessor search running over all history,
+                          # so a listing removed two years ago could be called
+                          # the origin of an ad posted today purely because the
+                          # spec matched — which is a different car, not a
+                          # repost, and REPOST_WINDOW_DAYS says so.
+                          last_seen_at__gte=since)
         .order_by("-last_seen_at")
         .values_list("code", "listing_fingerprint", "last_seen_at")
     ):
@@ -317,6 +324,16 @@ def sync_episodes(*, limit: int | None = None) -> dict:
             elif episode.last_price != ad.current_price:
                 episode.last_price = ad.current_price
                 to_update.append(episode)
+        elif ad.status == Ad.Status.UNVERIFIED:
+            # Deliberately nothing. An episode ends when a listing is *proven*
+            # gone, and UNVERIFIED means the opposite — we lost coverage and
+            # cannot say. Closing it here would stamp an ended_at we never
+            # observed, and those closed episodes are exactly what
+            # _expiry_threshold_days measures, so unproven closures would feed
+            # back into the "likely expired" threshold as if they were evidence.
+            # The episode stays open until mark_inactive resolves the ad either
+            # way.
+            pass
         elif episode is not None:
             episode.ended_at = ad.removed_at or ad.last_seen_at or now
             episode.last_price = ad.current_price
@@ -363,8 +380,15 @@ def daily_snapshot() -> dict:
     DailyInventorySnapshot.objects.filter(date=today).delete()
 
     groups: dict = defaultdict(lambda: {"prices": [], "new": 0})
+    # UNVERIFIED counts as inventory here, unlike on the browse and deal
+    # surfaces. Those answer "can I buy this?", where showing an unconfirmed
+    # listing is the bug. This answers "how big is the market, at what price",
+    # and dropping every ad the crawler temporarily lost sight of would report
+    # our own downtime as an inventory collapse — then market_index, which is
+    # chained arithmetic over these rows, would publish that collapse as a
+    # price move. Same failure DEPENDS_ON exists to prevent.
     rows = verified(Ad.objects).filter(
-        status=Ad.Status.ACTIVE, current_price__gt=0,
+        status__in=(Ad.Status.ACTIVE, Ad.Status.UNVERIFIED), current_price__gt=0,
         publish_at__isnull=False, year_jalali__isnull=False,
     ).values("model_id", "variant_id", "year_jalali", "current_price", "first_seen_at")
     for r in rows:

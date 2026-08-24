@@ -23,7 +23,16 @@ export interface Check {
   ok: boolean;
 }
 
-/** Django's MinimumLengthValidator and NumericPasswordValidator, in the browser. */
+/**
+ * Django's MinimumLengthValidator and NumericPasswordValidator, in the browser.
+ *
+ * These two and no more, because these gate the submit button. A third
+ * "mixes letters with a number or symbol" rule used to live here and had no
+ * counterpart in AUTH_PASSWORD_VALIDATORS, so the form refused passwords the
+ * server would happily have taken — a long all-letters passphrase, which is a
+ * good password, could not be submitted at all. Character-class variety now
+ * feeds the strength meter only, where advice belongs.
+ */
 export function passwordChecks(password: string): Check[] {
   return [
     { id: "length", label: "At least 8 characters", ok: password.length >= 8 },
@@ -32,20 +41,18 @@ export function passwordChecks(password: string): Check[] {
       label: "Not only numbers",
       ok: Boolean(password) && !/^\d+$/.test(password),
     },
-    {
-      id: "variety",
-      label: "Mixes letters with a number or symbol",
-      ok: /[a-zA-Z]/.test(password) && /[\d\W]/.test(password),
-    },
   ];
 }
 
+/** Advisory only — never gates submission. */
 export function strengthOf(password: string, checks: Check[]) {
   if (!password) return null;
-  const passed = checks.filter((c) => c.ok).length;
-  if (passed <= 1) return { label: "Weak", tone: "down" as const, pct: 33 };
-  if (passed < checks.length) return { label: "Good", tone: "warn" as const, pct: 66 };
-  return { label: "Strong", tone: "up" as const, pct: 100 };
+  const required = checks.filter((c) => c.ok).length === checks.length;
+  const roomy = password.length >= 12;
+  const varied = /[a-zA-Z]/.test(password) && /[\d\W]/.test(password);
+  if (!required) return { label: "Weak", tone: "down" as const, pct: 33 };
+  if (roomy || varied) return { label: "Strong", tone: "up" as const, pct: 100 };
+  return { label: "Good", tone: "warn" as const, pct: 66 };
 }
 
 export function AuthLayout({

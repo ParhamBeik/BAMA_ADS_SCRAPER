@@ -9,7 +9,9 @@ Feed facts this module encodes, verified against the live API:
 * The feed ends naturally: the page past the last ad returns an empty list with
   HTTP 200. That empty page is the only proof of full coverage — and a degraded
   API serves exactly the same thing, which is why it is confirmed twice and
-  cross-checked against the last sweep that genuinely finished.
+  cross-checked against the depth the feed is already known to reach. A run that
+  started mid-feed is held to a tighter bar than a full sweep, because it has
+  walked none of the pages above it (see ``end_of_feed_is_credible``).
 * Insertions push ads to higher ranks (a forward sweep re-reads them, which is
   idempotent). Deletions pull ads to *lower* ranks, behind pages already read —
   the one case that silently loses ads, and the reason every page writes a
@@ -352,6 +354,27 @@ EMPTY_PAGE_RECHECK_PAUSE = 2.0
 # consumer then treated three quarters of the market as having vanished.
 MIN_END_OF_FEED_DEPTH_RATIO = 0.5
 
+# The same question for a run that did NOT start at page 0. A full sweep earns
+# the generous bar above by having walked everything before it; a bounded
+# backfill has proven only that its own range ended, which the module docstring
+# already notes is indistinguishable from a degraded API. So it is asked a
+# narrower question: did the feed end roughly where the ceiling said it would?
+#
+# A backfill that genuinely walks off the end lands within a page or two
+# (production: page 1157 against a ceiling of 1159). A spurious empty page
+# mid-feed does not. At the 0.5 bar above, a blip at page 700 of a 1133-page
+# feed would have been believed and the ceiling would have collapsed by 13,000
+# ranks — the 266-page incident in a new costume.
+#
+# Expressed as a shortfall in pages rather than a bare ratio because a ratio
+# alone is wrong at both ends: 5% of a 1,159-page feed is a reasonable 58 pages,
+# but 5% of a 4-page feed is 0.2, which would reject a feed that legitimately
+# shrank by a single page. The floor exists only so a tiny feed is not judged on
+# a proportion; it is deliberately one page, because anything looser lets a
+# shallow delta that ran out of new ads pass for the end of the feed.
+BOUNDED_END_SHORTFALL_RATIO = 0.05
+MIN_BOUNDED_END_SHORTFALL_PAGES = 1
+
 # Delta depth floor. Measured churn is ~1.5 new ads/min; after downtime we scan
 # at least deep enough to cover what landed while we were away.
 CHURN_ADS_PER_MIN = 1.5
@@ -579,17 +602,26 @@ def expected_end_page() -> int | None:
     return None if not depth else (depth - 1) // PAGE_SIZE
 
 
-def end_of_feed_is_credible(depth_reached: int, expected_depth: int | None) -> bool:
+def end_of_feed_is_credible(depth_reached: int, expected_depth: int | None,
+                            *, bounded: bool = False) -> bool:
     """Is an apparent end-of-feed deep enough to believe?
 
     ``depth_reached`` is the absolute page index the feed ended at, not the pages
     this run read — a sweep resuming from a checkpoint reads few pages while
     still reaching the true bottom. A first-ever sweep has nothing to compare
     against and is believed.
+
+    ``bounded`` marks a run that did not start at page 0 and so cannot vouch for
+    everything above it; it is held to the much tighter
+    ``MIN_BOUNDED_END_OF_FEED_RATIO``.
     """
     if not expected_depth:
         return True
-    return depth_reached >= expected_depth * MIN_END_OF_FEED_DEPTH_RATIO
+    if not bounded:
+        return depth_reached >= expected_depth * MIN_END_OF_FEED_DEPTH_RATIO
+    tolerance = max(MIN_BOUNDED_END_SHORTFALL_PAGES,
+                    expected_depth * BOUNDED_END_SHORTFALL_RATIO)
+    return expected_depth - depth_reached <= tolerance
 
 
 def _delta_floor_pages(now: datetime) -> int:
@@ -735,7 +767,9 @@ def _fetch_live(*, mode: str = "delta", max_ads: int | None = None,
                     # without a yardstick.
                     credible = (
                         (expected_depth is not None or mode == FetchRun.Mode.FULL)
-                        and end_of_feed_is_credible(page, expected_depth)
+                        and end_of_feed_is_credible(
+                            page, expected_depth, bounded=mode != FetchRun.Mode.FULL
+                        )
                     )
                     if credible:
                         run.reached_end = True

@@ -17,13 +17,29 @@ compose() {
 # containers are still serving traffic.
 compose build
 
-# Migrate as a one-off *before* replacing anything. The django service also
-# migrates on start, but by then the old container is already gone — a bad
-# migration leaves it crash-looping with nothing serving. Running it here means
-# `set -e` aborts the deploy and the running stack is left untouched.
 # --wait blocks until the healthcheck passes, so migrate cannot race the
 # database still doing crash recovery.
 compose up -d --wait postgres
+
+# Stop the app containers before touching the schema, and accept a few seconds
+# of downtime for it.
+#
+# The obvious ordering — migrate first, then swap containers — leaves the OLD
+# code running against the NEW schema for the length of the swap. That is not
+# theoretical: the deploy that dropped accounts_user.is_demo did exactly this,
+# and Django names every model field explicitly in its SELECTs, including the
+# one the session middleware runs to load request.user. Every authenticated
+# request in that window would have hit an UndefinedColumn error and returned
+# 500. A brief, honest outage beats a burst of errors nobody is watching for.
+#
+# The alternative is expand/contract migrations, which is the right answer for a
+# service that cannot go down. This one can.
+compose stop django worker
+
+# Migrate as a one-off rather than letting the django service do it on start:
+# `set -e` then aborts the deploy on a bad migration, and `compose up -d` below
+# is never reached, so the stack is restarted on the old image instead of
+# crash-looping on the new one.
 compose run --rm --no-deps django python manage.py migrate --noinput
 
 compose up -d

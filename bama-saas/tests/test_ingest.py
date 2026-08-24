@@ -18,6 +18,7 @@ from apps.core.models import (
     City,
     DealScoreCache,
     FetchRun,
+    ListingEpisode,
     Model,
     PageCoverage,
     PriceObservation,
@@ -844,3 +845,79 @@ def test_a_blank_fingerprint_never_matches(catalog):
 
     assert Ad.objects.filter(listing_fingerprint="").count() == 2
     assert link_reposts()["linked"] == 0
+
+
+@pytest.mark.django_db
+def test_an_unverified_ad_keeps_its_episode_open(catalog):
+    """UNVERIFIED means we lost coverage, not that the listing ended.
+
+    Closing the episode here would stamp an ended_at nobody observed — and
+    _expiry_threshold_days measures exactly these closed episodes, so unproven
+    closures would feed back in as evidence for "likely expired".
+    """
+    from apps.jobs.jobs import sync_episodes
+
+    now = djtz.now()
+    ad = _ad(catalog, "open0001", now - timedelta(hours=50))
+    sync_episodes()
+    assert ListingEpisode.objects.get(ad=ad).ended_at is None
+
+    _cover(now - timedelta(hours=2))          # one window only -> unprovable
+    mark_inactive()
+    ad.refresh_from_db()
+    assert ad.status == Ad.Status.UNVERIFIED
+
+    sync_episodes()
+    assert ListingEpisode.objects.get(ad=ad).ended_at is None
+
+    # Once absence IS proven, the episode closes as normal.
+    _cover(now - timedelta(hours=30))
+    mark_inactive()
+    sync_episodes()
+    assert ListingEpisode.objects.get(ad=ad).ended_at is not None
+
+
+@pytest.mark.django_db
+def test_a_crawler_stall_does_not_read_as_an_inventory_collapse(catalog):
+    """UNVERIFIED ads still count as market inventory.
+
+    Dropping them would report our own downtime as a shrinking market, and
+    market_index is chained arithmetic over these rows.
+    """
+    from apps.jobs.jobs import daily_snapshot
+
+    now = djtz.now()
+    for i in range(3):
+        _ad(catalog, f"stall{i:03d}", now - timedelta(hours=50))
+    before = daily_snapshot()["ads"]
+
+    _cover(now - timedelta(hours=2))
+    mark_inactive()
+    assert Ad.objects.filter(status=Ad.Status.UNVERIFIED).count() == 3
+
+    assert daily_snapshot()["ads"] == before
+
+
+@pytest.mark.django_db
+def test_a_long_dead_listing_is_not_called_the_origin_of_a_new_one(catalog):
+    """REPOST_WINDOW_DAYS has to bound both sides of the match.
+
+    Windowing only the candidates left the predecessor search running over all
+    history, so a matching spec from years ago would be linked to a new ad.
+    """
+    now = djtz.now()
+    ancient = _ad(catalog, "old00001", now - timedelta(days=400))
+    Ad.objects.filter(code="old00001").update(
+        status=Ad.Status.REMOVED, listing_fingerprint="samecar",
+        last_seen_at=now - timedelta(days=400),
+    )
+    fresh = _ad(catalog, "new00001", now)
+    Ad.objects.filter(code="new00001").update(
+        listing_fingerprint="samecar", first_seen_at=now - timedelta(days=1),
+    )
+
+    assert link_reposts()["linked"] == 0
+    fresh.refresh_from_db()
+    ancient.refresh_from_db()
+    assert fresh.reposted_from_id is None
+    assert ancient.likely_reason == ""
