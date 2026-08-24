@@ -104,30 +104,24 @@ def catalog(db):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.django_db
-def test_ensure_seed_users_refuses_without_an_admin_password(settings):
+def test_wipe_users_refuses_without_confirmation():
     from django.core.management import call_command
     from django.core.management.base import CommandError
 
-    settings.DEV_ADMIN_EMAIL = "admin@bama.local"
-    settings.DEV_ADMIN_PASSWORD = ""
+    User.objects.create_user(email="someone@example.com", password="StrongPass1!")
     with pytest.raises(CommandError):
-        call_command("ensure_seed_users")
+        call_command("wipe_users")
+    assert User.objects.count() == 1
 
 
 @pytest.mark.django_db
-def test_ensure_seed_users_creates_admin_and_demo(settings):
+def test_wipe_users_clears_every_account():
     from django.core.management import call_command
 
-    settings.DEV_ADMIN_EMAIL = "admin@bama.local"
-    settings.DEV_ADMIN_PASSWORD = "LocalOps-2026"
-    settings.DEMO_USER_EMAIL = "demo@bama.local"
-    settings.DEMO_USER_PASSWORD = "LocalOps-2026-demo"
-    call_command("ensure_seed_users")
-
-    admin = User.objects.get(email="admin@bama.local")
-    demo = User.objects.get(email="demo@bama.local")
-    assert admin.is_staff and admin.is_superuser and not admin.is_demo
-    assert demo.is_demo and not demo.is_staff and demo.check_password("LocalOps-2026-demo")
+    User.objects.create_user(email="a@example.com", password="StrongPass1!")
+    User.objects.create_user(email="b@example.com", password="StrongPass1!")
+    call_command("wipe_users", yes=True)
+    assert User.objects.count() == 0
 
 
 @pytest.mark.django_db
@@ -139,7 +133,6 @@ def test_auth_registration_creates_session_user(api_client):
     )
     assert response.status_code == 201, response.content
     assert response.json()["email"] == "new-user@example.com"
-    assert User.objects.get(email="new-user@example.com").is_demo is False
 
     me = api_client.get("/api/auth/me/")
     assert me.status_code == 200
@@ -638,8 +631,8 @@ def test_admin_fetch_concurrency_guard_is_409(api_client):
 
 
 @pytest.mark.django_db
-def test_demo_user_can_write_favorites_but_not_trigger_admin_job(api_client, catalog):
-    user = User.objects.create_user(email="demo@example.com", password="StrongPass1!", is_demo=True)
+def test_a_non_staff_user_can_save_ads_but_not_trigger_admin_jobs(api_client, catalog):
+    user = User.objects.create_user(email="normal@example.com", password="StrongPass1!")
     api_client.force_authenticate(user=user)
     ad = catalog["ads"][0]
 
@@ -786,3 +779,143 @@ def test_an_absurdly_overpriced_listing_is_hidden_by_default(exposure_catalog):
 def test_newest_route_is_gone(exposure_catalog):
     make_ad(exposure_catalog, "new00001")
     assert APIClient().get("/api/analytics/newest/").status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Signup, sessions, and the token path
+#
+# API level: every fact here is about an HTTP response or a cookie, which is
+# where the contract actually lives.
+# ---------------------------------------------------------------------------
+
+def _register(client, email, password="StrongPass1!"):
+    return client.post("/api/auth/register/", {"email": email, "password": password},
+                       format="json")
+
+
+@pytest.mark.django_db
+def test_the_first_account_is_staff_and_the_second_is_not(api_client):
+    """Bootstrapping by being first, instead of by a password in the env.
+
+    The seeded admin this replaces had its password in a compose variable that
+    nobody rotates and every deploy operator can read.
+    """
+    assert _register(api_client, "owner@example.com").status_code == 201
+    assert User.objects.get(email="owner@example.com").is_staff is True
+
+    api_client.post("/api/auth/logout/")
+    assert _register(api_client, "guest@example.com").status_code == 201
+
+    guest = User.objects.get(email="guest@example.com")
+    assert guest.is_staff is False and guest.is_superuser is False
+
+
+@pytest.mark.django_db
+def test_staff_is_not_regranted_after_a_wipe_and_resignup(api_client):
+    """`wipe_users` empties the table, so the next signup is first again — that
+    is the documented way back in, and it must actually work."""
+    from django.core.management import call_command
+
+    _register(api_client, "owner@example.com")
+    call_command("wipe_users", yes=True)
+
+    assert _register(api_client, "owner@example.com").status_code == 201
+    assert User.objects.get(email="owner@example.com").is_staff is True
+
+
+@pytest.mark.django_db
+def test_the_session_cookie_is_not_readable_by_script(api_client):
+    """The reason the SPA holds no token: an XSS bug cannot read this cookie."""
+    _register(api_client, "owner@example.com")
+    cookie = api_client.cookies["sessionid"]
+
+    assert cookie["httponly"] is True
+    assert cookie["samesite"] == "Lax"
+
+
+@pytest.mark.django_db
+def test_logging_out_ends_the_session(api_client):
+    _register(api_client, "owner@example.com")
+    assert api_client.get("/api/auth/me/").status_code == 200
+
+    assert api_client.post("/api/auth/logout/").status_code == 204
+    assert api_client.get("/api/auth/me/").status_code == 401
+
+
+@pytest.mark.django_db
+def test_logout_everywhere_kills_other_devices(catalog):
+    """A password change is not a revocation; this is."""
+    from rest_framework.test import APIClient
+
+    laptop, phone = APIClient(), APIClient()
+    _register(laptop, "owner@example.com")
+    phone.post("/api/auth/login/",
+               {"email": "owner@example.com", "password": "StrongPass1!"}, format="json")
+    assert phone.get("/api/auth/me/").status_code == 200
+
+    assert laptop.post("/api/auth/logout-everywhere/").json()["sessions_ended"] >= 2
+    assert phone.get("/api/auth/me/").status_code == 401
+
+
+@pytest.mark.django_db
+def test_email_availability_is_reported_before_submit(api_client):
+    User.objects.create_user(email="taken@example.com", password="StrongPass1!")
+
+    taken = api_client.get("/api/auth/email-available/?email=TAKEN@example.com")
+    free = api_client.get("/api/auth/email-available/?email=free@example.com")
+
+    assert taken.json()["available"] is False   # case-insensitive
+    assert free.json()["available"] is True
+    assert api_client.get("/api/auth/email-available/").status_code == 400
+
+
+@pytest.mark.django_db
+def test_a_weak_password_is_refused_by_the_server_not_only_the_form(api_client):
+    """The client-side checklist mirrors these rules; the server owns them."""
+    for password in ("short1A", "12345678", "password"):
+        response = _register(api_client, "weak@example.com", password)
+        assert response.status_code == 400, password
+        assert "password" in response.json()
+    assert not User.objects.filter(email="weak@example.com").exists()
+
+
+@pytest.mark.django_db
+def test_an_api_client_can_get_and_refresh_a_token(api_client, catalog):
+    """JWT exists for clients with nowhere to keep a cookie. It authenticates
+    the same users against the same permissions as the session path."""
+    from rest_framework.test import APIClient
+
+    User.objects.create_user(email="robot@example.com", password="StrongPass1!")
+
+    tokens = api_client.post("/api/auth/token/",
+                             {"email": "robot@example.com", "password": "StrongPass1!"},
+                             format="json").json()
+    assert "access" in tokens and "refresh" in tokens
+
+    bearer = APIClient()
+    bearer.credentials(HTTP_AUTHORIZATION=f"Bearer {tokens['access']}")
+    assert bearer.get("/api/auth/me/").json()["email"] == "robot@example.com"
+
+    refreshed = api_client.post("/api/auth/token/refresh/",
+                                {"refresh": tokens["refresh"]}, format="json")
+    assert refreshed.status_code == 200 and "access" in refreshed.json()
+
+    verified = api_client.post("/api/auth/token/verify/",
+                               {"token": tokens["access"]}, format="json")
+    assert verified.status_code == 200
+
+
+@pytest.mark.django_db
+def test_a_rotated_refresh_token_cannot_be_reused(api_client):
+    """A stolen refresh token is good for exactly one use, and the moment the
+    real client refreshes, the thief's copy is dead."""
+    User.objects.create_user(email="robot@example.com", password="StrongPass1!")
+    tokens = api_client.post("/api/auth/token/",
+                             {"email": "robot@example.com", "password": "StrongPass1!"},
+                             format="json").json()
+
+    assert api_client.post("/api/auth/token/refresh/",
+                           {"refresh": tokens["refresh"]}, format="json").status_code == 200
+    replay = api_client.post("/api/auth/token/refresh/",
+                             {"refresh": tokens["refresh"]}, format="json")
+    assert replay.status_code == 401

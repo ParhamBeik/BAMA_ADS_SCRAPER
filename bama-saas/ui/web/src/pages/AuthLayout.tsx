@@ -1,0 +1,233 @@
+/**
+ * The shell and the field primitives both auth screens share.
+ *
+ * Sign-in and sign-up are separate routes rather than one screen with a toggle:
+ * they are different intents, the browser back button should distinguish them,
+ * and "send me the signup link" should be a URL. What they genuinely share —
+ * the layout, the password field, the rules — lives here.
+ *
+ * The password rules mirror Django's AUTH_PASSWORD_VALIDATORS exactly (see
+ * config/settings.py). Anything the form accepts, the server accepts; the two
+ * checks it cannot do locally (common-password list, similarity to the email)
+ * stay server-side and surface as a normal form error.
+ */
+import { type ReactNode } from "react";
+import { Eye, EyeOff } from "lucide-react";
+import { BrandMark } from "../ui";
+
+export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export interface Check {
+  id: string;
+  label: string;
+  ok: boolean;
+}
+
+/** Django's MinimumLengthValidator and NumericPasswordValidator, in the browser. */
+export function passwordChecks(password: string): Check[] {
+  return [
+    { id: "length", label: "At least 8 characters", ok: password.length >= 8 },
+    {
+      id: "not-numeric",
+      label: "Not only numbers",
+      ok: Boolean(password) && !/^\d+$/.test(password),
+    },
+    {
+      id: "variety",
+      label: "Mixes letters with a number or symbol",
+      ok: /[a-zA-Z]/.test(password) && /[\d\W]/.test(password),
+    },
+  ];
+}
+
+export function strengthOf(password: string, checks: Check[]) {
+  if (!password) return null;
+  const passed = checks.filter((c) => c.ok).length;
+  if (passed <= 1) return { label: "Weak", tone: "down" as const, pct: 33 };
+  if (passed < checks.length) return { label: "Good", tone: "warn" as const, pct: 66 };
+  return { label: "Strong", tone: "up" as const, pct: 100 };
+}
+
+export function AuthLayout({
+  eyebrow,
+  heading,
+  intro,
+  children,
+  footer,
+}: {
+  eyebrow: string;
+  heading: string;
+  intro: string;
+  children: ReactNode;
+  footer: ReactNode;
+}) {
+  return (
+    <main className="auth-shell">
+      <section className="auth-visual" aria-hidden="true">
+        <div className="auth-brand">
+          <BrandMark size={30} />
+          <span>Bama Market</span>
+        </div>
+        <div className="auth-visual-copy">
+          <p className="auth-eyebrow">Market intelligence, without the noise</p>
+          <h1>Find the listings worth your attention.</h1>
+          <p>
+            Track clean market signals, compare fair prices, and move from search
+            to decision with confidence.
+          </p>
+        </div>
+        <dl className="auth-facts">
+          <div>
+            <dt>Listings tracked</dt>
+            <dd>34,000+</dd>
+          </div>
+          <div>
+            <dt>Refreshed</dt>
+            <dd>Every 15 min</dd>
+          </div>
+          <div>
+            <dt>Price history</dt>
+            <dd>Per listing</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section className="auth-card" aria-labelledby="auth-title">
+        <div className="auth-card-inner">
+          <div className="auth-brand auth-brand-compact">
+            <BrandMark size={24} />
+            <span>Bama Market</span>
+          </div>
+          <div className="auth-card-header">
+            <p className="auth-eyebrow">{eyebrow}</p>
+            <h2 id="auth-title">{heading}</h2>
+            <p>{intro}</p>
+          </div>
+          {children}
+          <p className="auth-footer">{footer}</p>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+export function EmailField({
+  value,
+  onChange,
+  onBlur,
+  touched,
+  hint,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onBlur: () => void;
+  touched: boolean;
+  /** Shown under the field once touched — availability, or a format complaint. */
+  hint?: { text: string; tone: "up" | "down" | "muted" } | null;
+}) {
+  // Only complain once the field has been left. Validating on every keystroke
+  // marks "p@" invalid while the user is still typing their own address.
+  const invalid = touched && Boolean(value) && !EMAIL_RE.test(value.trim());
+  return (
+    <label className="auth-field" htmlFor="auth-email">
+      <span>Email address</span>
+      <input
+        id="auth-email"
+        type="email"
+        autoComplete="username"
+        autoFocus
+        required
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onBlur={onBlur}
+        placeholder="you@example.com"
+        aria-invalid={invalid}
+        aria-describedby={hint ? "auth-email-hint" : undefined}
+      />
+      {touched && hint && (
+        <small id="auth-email-hint" className={hint.tone}>
+          {hint.text}
+        </small>
+      )}
+    </label>
+  );
+}
+
+export function PasswordField({
+  id,
+  label,
+  value,
+  onChange,
+  show,
+  onToggle,
+  autoComplete,
+  placeholder,
+  describedBy,
+  invalid,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  show: boolean;
+  onToggle: () => void;
+  autoComplete: string;
+  placeholder: string;
+  describedBy?: string;
+  invalid?: boolean;
+}) {
+  return (
+    <label className="auth-field" htmlFor={id}>
+      <span>{label}</span>
+      <div className="auth-input-wrap">
+        <input
+          id={id}
+          type={show ? "text" : "password"}
+          required
+          autoComplete={autoComplete}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          aria-invalid={invalid}
+          aria-describedby={describedBy}
+        />
+        <button
+          className="auth-icon-button"
+          type="button"
+          onClick={onToggle}
+          // The label states the action, not the state: a screen reader user
+          // pressing this needs to know what happens, not what is.
+          aria-label={show ? `Hide ${label.toLowerCase()}` : `Show ${label.toLowerCase()}`}
+          aria-pressed={show}
+        >
+          {show ? <EyeOff size={17} /> : <Eye size={17} />}
+        </button>
+      </div>
+    </label>
+  );
+}
+
+export function Requirements({ checks, id }: { checks: Check[]; id: string }) {
+  return (
+    <div className="auth-requirements" id={id}>
+      <strong>Password requirements</strong>
+      <ul>
+        {checks.map((check) => (
+          <li key={check.id} className={check.ok ? "complete" : ""}>
+            <span aria-hidden="true">{check.ok ? "✓" : "○"}</span>
+            {check.label}
+            <span className="sr-only">{check.ok ? " — met" : " — not met yet"}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+export function FormError({ message }: { message: string | null }) {
+  return (
+    <div className="auth-error-slot" role="alert" aria-live="polite">
+      {message && <div className="auth-error">{message}</div>}
+    </div>
+  );
+}

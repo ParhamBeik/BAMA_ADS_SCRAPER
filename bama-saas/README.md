@@ -53,7 +53,7 @@ fills it. `parsing.py` is the only module with no Django import.
 docker compose up --build
 ```
 
-Starts PostgreSQL, Django (`migrate` → `ensure_seed_users` → `runserver`), the
+Starts PostgreSQL, Django (`migrate` → `runserver`), the
 worker loop, and Vite. UI on <http://localhost:5174>, API on
 <http://localhost:8001>, Django admin on <http://localhost:8001/admin/>.
 
@@ -70,9 +70,14 @@ Without Docker:
 ```bash
 python -m venv .venv && source .venv/bin/activate && pip install -e '.[test]'
 export DATABASE_URL='postgresql://postgres:postgres@localhost:5433/bama_saas'
-python manage.py migrate && python manage.py ensure_seed_users
+python manage.py migrate
 DJANGO_DEBUG=1 python manage.py runserver
 ```
+
+There are no seeded logins. Open the UI, create an account, and the first one on
+an empty database gets staff rights (the Control page and Django admin);
+everyone after it is an ordinary user. `manage.py wipe_users --yes` empties the
+table if you want to start again.
 
 `DJANGO_DEBUG` is unset by default and the default is the *hardened* profile —
 HTTPS redirect, HSTS, throttles, login required. A deployed process that forgets

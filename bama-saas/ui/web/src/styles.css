@@ -3,13 +3,19 @@
  *
  * Every colour below is defined for both schemes and referenced only through a
  * variable, so "does this work in light mode" stops being a per-component
- * question. The names carry over from the old app.css so the mapping is
- * traceable.
+ * question.
  *
  * Semantic colours are separated from surface colours on purpose: green and red
  * mean direction (up, down) and must not be reused for decoration, or a chart
  * legend stops meaning anything. Amber is reserved for confidence and staleness
  * warnings, which is the one thing this product must never let a user miss.
+ * That is also why the accent is blue — it has to be able to sit next to all
+ * three without competing with any of them.
+ *
+ * `up` and `warn` are one step darker than their poster shades (#059669,
+ * #D97706). Both are used as small text as well as fills, and at those values
+ * they land at 3.8:1 and 3.2:1 on white — under the 4.5:1 needed to be legible.
+ * The hue is indistinguishable; the readability is not.
  */
 
 :root {
@@ -22,23 +28,19 @@
      number that can be checked against its components looks like one. */
   --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
 
-  /* Ledger paper, not admin-template white — this product's whole job is
-     showing its arithmetic, so the surfaces read closer to an invoice book
-     than a generic SaaS shell. */
-  --bg: #eef0e8;
-  --panel: #fbfcf6;
-  --panel-2: #e7e9dd;
-  --border: #d7dac9;
-  --text: #1b1d16;
-  --muted: #6a6d5c;
-  /* Stamp amber: a price-tag/grease-pencil accent, not the default admin blue. */
-  --accent: #c97a1a;
-  --accent-soft: #f6e3c8;
-  --up: #1f7a4d;
-  --down: #b23b2e;
-  --warn: #ad6a11;
-  --warn-soft: #f3e2bd;
-  --shadow: 0 1px 2px rgb(27 29 22 / 6%), 0 1px 3px rgb(27 29 22 / 10%);
+  --bg: #f7f9fc;
+  --panel: #ffffff;
+  --panel-2: #eef2f7;
+  --border: #e2e8f0;
+  --text: #0f172a;
+  --muted: #64748b;
+  --accent: #2563eb;
+  --accent-soft: #dbeafe;
+  --up: #047857;
+  --down: #dc2626;
+  --warn: #b45309;
+  --warn-soft: #fef3c7;
+  --shadow: 0 1px 2px rgb(15 23 42 / 4%), 0 1px 3px rgb(15 23 42 / 8%);
   /* A later block styles .listing-card/.btn/.brand-chip with var(--card), which
      was never defined — those surfaces rendered transparent in both themes.
      Aliased rather than rewritten at each use so the two :root blocks stay the
@@ -47,23 +49,37 @@
 }
 
 :root[data-theme="dark"] {
-  --bg: #14150f;
-  --panel: #1d1f17;
-  --panel-2: #262819;
-  --border: #34362a;
-  --text: #edede3;
-  --muted: #9a9c8c;
-  --accent: #e0973a;
-  --accent-soft: #3a2c14;
-  --up: #3fb97a;
-  --down: #e06555;
-  --warn: #d9a441;
-  --warn-soft: #362a12;
+  --bg: #0b1220;
+  --panel: #131c2e;
+  --panel-2: #1b2740;
+  --border: #2a3a55;
+  --text: #e8edf7;
+  --muted: #94a3b8;
+  --accent: #60a5fa;
+  --accent-soft: #16294a;
+  --up: #34d399;
+  --down: #f87171;
+  --warn: #fbbf24;
+  --warn-soft: #3a2e10;
   --shadow: none;
   --card: var(--panel);
 }
 
 * { box-sizing: border-box; }
+
+/* Visible to screen readers only. The password checklist renders its state as a
+   tick or a circle, which is silence to anyone not looking at it. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
 
 body {
   margin: 0;
@@ -291,7 +307,6 @@ td.num, th.num { text-align: right; font-family: var(--font-mono); font-variant-
 
 /* Rebuild: RTL consumer + discovery */
 .app[dir="rtl"] .sidebar { border-right: none; border-left: 1px solid var(--border); }
-.auth-card { max-width: 420px; margin: 2rem auto; padding: 1.5rem; background: var(--card); border: 1px solid var(--border); border-radius: 12px; }
 .filters input,.row input { padding: 0.55rem 0.7rem; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
 .btn { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.45rem 0.8rem; border-radius: 8px; border: 1px solid var(--border); background: var(--card); color: var(--text); cursor: pointer; text-decoration: none; }
 .btn.primary { background: var(--accent); color: white; border-color: transparent; }
@@ -456,19 +471,21 @@ code { font-size: 0.92em; background: var(--panel-2); padding: 1px 5px; border-r
 .auth-shell {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: minmax(280px, .82fr) minmax(360px, 520px);
-  justify-content: center;
+  /* The form column is fixed-ish and the story panel takes the slack, so the
+     inputs never stretch to an unreadable width on a 27" monitor — which is
+     what "use the space" has to mean for a form. */
+  grid-template-columns: minmax(320px, 1fr) minmax(420px, 560px);
   align-items: stretch;
+  padding: 24px;
   gap: 0;
-  padding: 28px;
   background:
-    radial-gradient(circle at 12% 15%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 34%),
+    radial-gradient(circle at 12% 15%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 38%),
     var(--bg);
 }
 
 .auth-visual,
 .auth-card {
-  min-height: min(760px, calc(100vh - 56px));
+  min-height: min(780px, calc(100vh - 48px));
   border: 1px solid var(--border);
 }
 
@@ -478,10 +495,13 @@ code { font-size: 0.92em; background: var(--panel-2); padding: 1px 5px; border-r
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: clamp(28px, 6vw, 76px);
+  gap: 32px;
+  padding: clamp(32px, 5vw, 72px);
   border-radius: 20px 0 0 20px;
   background:
-    linear-gradient(145deg, color-mix(in srgb, var(--accent) 90%, #111 10%), #8c4d12);
+    linear-gradient(150deg,
+      color-mix(in srgb, var(--accent) 92%, #000 8%),
+      color-mix(in srgb, var(--accent) 55%, #0b1220 45%));
   color: #fff;
   border-color: transparent;
   box-shadow: var(--shadow);
@@ -489,125 +509,215 @@ code { font-size: 0.92em; background: var(--panel-2); padding: 1px 5px; border-r
 .auth-visual::after {
   position: absolute;
   inset: 0;
+  /* Texture only. A single hard diagonal was in here too and read as a scratch
+     on the screen rather than as anything deliberate. */
   background:
-    linear-gradient(135deg, transparent 0 58%, rgb(255 255 255 / 10%) 58% 59%, transparent 59%),
-    repeating-linear-gradient(165deg, transparent 0 26px, rgb(255 255 255 / 6%) 27px 28px);
+    radial-gradient(ellipse at 78% 12%, rgb(255 255 255 / 12%), transparent 55%),
+    repeating-linear-gradient(165deg, transparent 0 26px, rgb(255 255 255 / 4%) 27px 28px);
   content: "";
   pointer-events: none;
 }
 .auth-visual > * { position: relative; z-index: 1; }
 
 .auth-brand {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 18px;
+  font-family: var(--font-fa);
+  font-size: 17px;
   font-weight: 800;
-  letter-spacing: -0.02em;
+  letter-spacing: -.01em;
 }
+/* Shown only when the story panel is gone, so the form still carries the mark. */
+.auth-brand-compact { display: none; margin-bottom: 28px; color: var(--accent); }
 
-.auth-visual-copy { max-width: 400px; }
+.auth-visual-copy { max-width: 420px; }
 .auth-eyebrow {
   margin: 0 0 10px;
-  color: var(--accent);
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: .12em;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .08em;
   text-transform: uppercase;
 }
-.auth-visual .auth-eyebrow { color: #ffe3b8; }
+.auth-visual .auth-eyebrow { color: #cfe0ff; }
 .auth-visual h1 {
-  margin: 0 0 16px;
-  max-width: 8ch;
-  font-size: clamp(34px, 4vw, 58px);
-  line-height: .98;
-  letter-spacing: -.05em;
+  margin: 0 0 14px;
+  font-size: clamp(30px, 3.4vw, 46px);
+  line-height: 1.08;
+  letter-spacing: -.035em;
 }
-.auth-visual-copy > p:last-child { max-width: 34ch; margin: 0; color: rgb(255 255 255 / 78%); font-size: 15px; }
-.auth-trust { display: flex; align-items: center; gap: 8px; color: rgb(255 255 255 / 78%); font-size: 12px; }
+.auth-visual-copy > p:last-child {
+  max-width: 36ch;
+  margin: 0;
+  color: rgb(255 255 255 / 80%);
+  font-size: 15px;
+}
+
+.auth-facts { display: flex; flex-wrap: wrap; gap: 28px; margin: 0; }
+.auth-facts dt {
+  margin: 0 0 4px;
+  color: rgb(255 255 255 / 70%);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.auth-facts dd { margin: 0; font-size: 19px; font-weight: 800; letter-spacing: -.02em; }
 
 .auth-card {
-  align-self: center;
-  width: 100%;
-  max-width: 520px;
-  padding: clamp(28px, 5vw, 56px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(28px, 4vw, 56px);
   border-radius: 0 20px 20px 0;
   background: var(--panel);
   box-shadow: var(--shadow);
 }
-.auth-card-header h2 { margin: 0; font-size: clamp(26px, 3vw, 34px); letter-spacing: -.04em; }
-.auth-card-header > p:last-child { margin: 8px 0 0; color: var(--muted); }
-.auth-tabs {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4px;
-  margin: 28px 0 24px;
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--panel-2);
-}
-.auth-tabs button { border: 0; background: transparent; color: var(--muted); font-weight: 700; }
-.auth-tabs button.active { background: var(--panel); color: var(--accent); box-shadow: var(--shadow); }
-.auth-form { display: grid; gap: 17px; }
+.auth-card-inner { width: 100%; max-width: 420px; }
+.auth-card-header { margin-bottom: 26px; }
+.auth-card-header .auth-eyebrow { color: var(--accent); }
+.auth-card-header h2 { margin: 0; font-size: clamp(25px, 2.6vw, 32px); letter-spacing: -.035em; }
+.auth-card-header > p:last-child { margin: 8px 0 0; color: var(--muted); font-size: 14px; }
+
+.auth-form { display: grid; gap: 16px; }
 .auth-field { display: grid; gap: 7px; color: var(--text); font-size: 13px; font-weight: 700; }
 .auth-field input {
   width: 100%;
   min-height: 44px;
-  padding: 10px 12px;
-  border-radius: 9px;
+  padding: 11px 13px;
   border: 1px solid var(--border);
-  background: var(--bg);
+  border-radius: 10px;
+  background: var(--panel);
   color: var(--text);
+  font: inherit;
+  font-weight: 500;
 }
-.auth-field input:focus { border-color: var(--accent); outline: 3px solid color-mix(in srgb, var(--accent) 18%, transparent); }
+.auth-field input:focus {
+  border-color: var(--accent);
+  outline: 3px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  outline-offset: 0;
+}
 .auth-field input[aria-invalid="true"] { border-color: var(--down); }
-.auth-field small { margin-top: -2px; font-size: 11px; font-weight: 600; }
+.auth-field small,
+.auth-inline-hint { margin-top: -2px; font-size: 11px; font-weight: 600; }
+.auth-inline-hint { display: block; margin-top: -10px; }
 .auth-input-wrap { position: relative; }
-.auth-input-wrap input { padding-inline-end: 44px; }
+.auth-input-wrap input { padding-inline-end: 46px; }
 .auth-icon-button {
   position: absolute;
   inset-inline-end: 5px;
-  inset-block-start: 4px;
+  top: 50%;
   display: grid;
   place-items: center;
   width: 36px;
-  min-height: 36px;
+  height: 36px;
   padding: 0;
+  transform: translateY(-50%);
   border: 0;
+  border-radius: 8px;
   background: transparent;
   color: var(--muted);
+  cursor: pointer;
 }
 .auth-icon-button:hover { background: var(--panel-2); color: var(--text); }
+.auth-icon-button:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+/* Reserved so the form does not jump when an error appears. */
+.auth-error-slot:empty { display: none; }
 .auth-error {
   padding: 11px 13px;
   border: 1px solid color-mix(in srgb, var(--down) 40%, var(--border));
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--down) 10%, var(--panel));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--down) 8%, var(--panel));
   color: var(--down);
   font-size: 13px;
+  font-weight: 600;
 }
-.auth-strength { display: flex; align-items: center; gap: 8px; margin-top: -8px; color: var(--muted); font-size: 11px; font-weight: 700; }
-.auth-strength-bar { height: 4px; flex: 1; min-width: 45px; border-radius: 999px; background: var(--muted); }
+
+.auth-strength {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: -8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+.auth-strength-bar {
+  height: 4px;
+  max-width: 220px;
+  border-radius: 999px;
+  background: var(--muted);
+  transition: width .18s ease;
+}
 .auth-strength-bar.up { background: var(--up); }
 .auth-strength-bar.warn { background: var(--warn); }
 .auth-strength-bar.down { background: var(--down); }
-.auth-requirements { padding: 13px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel-2); color: var(--muted); font-size: 12px; }
+
+.auth-requirements {
+  padding: 13px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 12px;
+}
 .auth-requirements strong { color: var(--text); font-size: 13px; }
 .auth-requirements ul { display: grid; gap: 5px; margin: 9px 0 0; padding: 0; list-style: none; }
 .auth-requirements li { display: flex; align-items: center; gap: 7px; }
 .auth-requirements li.complete { color: var(--up); }
-.auth-requirements li span { width: 14px; font-weight: 800; text-align: center; }
-.auth-submit { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 46px; margin-top: 4px; font-weight: 800; }
+.auth-requirements li span[aria-hidden] { width: 14px; font-weight: 800; text-align: center; }
+
+.auth-submit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 46px;
+  margin-top: 4px;
+  font-weight: 800;
+}
 .auth-submit:disabled { cursor: not-allowed; opacity: .55; }
 .auth-footer { margin: 24px 0 0; color: var(--muted); font-size: 13px; text-align: center; }
-.auth-footer button { padding: 0; border: 0; background: transparent; color: var(--accent); font-weight: 800; }
+.auth-footer a { font-weight: 800; }
 
-@media (max-width: 760px) {
-  .auth-shell { display: block; padding: 12px; }
-  .auth-visual { min-height: auto; padding: 24px; border-radius: 16px 16px 0 0; }
-  .auth-visual-copy { padding: 48px 0 42px; }
-  .auth-visual h1 { max-width: 12ch; font-size: 36px; }
-  .auth-trust { font-size: 11px; }
-  .auth-card { min-height: auto; max-width: none; padding: 28px 22px; border-radius: 0 0 16px 16px; }
+/* Below this the story panel costs more width than it earns. */
+@media (max-width: 1024px) {
+  .auth-shell { grid-template-columns: 1fr; padding: 0; }
+  .auth-visual { display: none; }
+  .auth-brand-compact { display: flex; }
+  .auth-card {
+    min-height: 100vh;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    background: var(--bg);
+  }
+  .auth-card-inner {
+    max-width: 440px;
+    padding: 32px;
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    background: var(--panel);
+    box-shadow: var(--shadow);
+  }
+}
+
+@media (max-width: 560px) {
+  .auth-card { padding: 0; align-items: flex-start; }
+  .auth-card-inner {
+    max-width: none;
+    min-height: 100vh;
+    padding: 28px 18px 40px;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  .auth-card-header h2 { font-size: 26px; }
+  /* Comfortable touch targets without turning the web app into a phone app. */
+  .auth-field input,
+  .auth-submit { min-height: 48px; }
 }

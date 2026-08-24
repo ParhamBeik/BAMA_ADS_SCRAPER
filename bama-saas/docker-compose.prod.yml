@@ -31,11 +31,6 @@ x-django-env: &django-env
   BAMA_REQUEST_TIMEOUT: ${BAMA_REQUEST_TIMEOUT:-20}
   BAMA_COOKIE: ${BAMA_COOKIE:-}
   BAMA_TELEGRAM_TOKEN: ${BAMA_TELEGRAM_TOKEN:-}
-  # Read by ensure_seed_users, which creates/updates both logins on every start.
-  DEV_ADMIN_EMAIL: ${DEV_ADMIN_EMAIL:-admin@bama.local}
-  DEV_ADMIN_PASSWORD: ${DEV_ADMIN_PASSWORD:?set DEV_ADMIN_PASSWORD}
-  DEMO_USER_EMAIL: ${DEMO_USER_EMAIL:-demo@bama.local}
-  DEMO_USER_PASSWORD: ${DEMO_USER_PASSWORD:?set DEMO_USER_PASSWORD}
 
 services:
   postgres:
@@ -64,12 +59,11 @@ services:
     volumes: [staticfiles:/app/staticfiles]
     depends_on:
       postgres: { condition: service_healthy }
-    # ensure_seed_users, not createsuperuser: a redeploy with a changed password
-    # must actually take effect instead of silently no-opping.
+    # No account seeding: the first person to sign up becomes staff. A password
+    # baked into the environment is a credential nobody rotates.
     command: >
       sh -c "python manage.py migrate --noinput &&
              python manage.py collectstatic --noinput &&
-             python manage.py ensure_seed_users &&
              gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health/"]

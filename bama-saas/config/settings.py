@@ -7,6 +7,7 @@ must never fail open.
 
 import os
 import sys
+from datetime import timedelta
 from pathlib import Path
 
 import dj_database_url
@@ -38,6 +39,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "django.contrib.postgres",
     "rest_framework",
+    "rest_framework_simplejwt.token_blacklist",
     "django_filters",
     "corsheaders",
     "apps.accounts",
@@ -99,12 +101,6 @@ STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# Seed logins, created/updated on every startup by `manage.py ensure_seed_users`.
-DEV_ADMIN_EMAIL = os.environ.get("DEV_ADMIN_EMAIL", "admin@bama.local" if DEBUG else "")
-DEV_ADMIN_PASSWORD = os.environ.get("DEV_ADMIN_PASSWORD", "LocalOps-2026" if DEBUG else "")
-DEMO_USER_EMAIL = os.environ.get("DEMO_USER_EMAIL", "demo@bama.local" if DEBUG else "")
-DEMO_USER_PASSWORD = os.environ.get("DEMO_USER_PASSWORD", "LocalOps-2026-demo" if DEBUG else "")
-
 # ---------------------------------------------------------------------------
 # DRF
 # ---------------------------------------------------------------------------
@@ -118,7 +114,13 @@ DEMO_USER_PASSWORD = os.environ.get("DEMO_USER_PASSWORD", "LocalOps-2026-demo" i
 # Rates are off under DEBUG or a fast test run trips its own limiter.
 
 REST_FRAMEWORK = {
-    "DEFAULT_AUTHENTICATION_CLASSES": ("rest_framework.authentication.SessionAuthentication",),
+    # Session first: the browser SPA is the primary client and its cookie is
+    # HttpOnly, so script cannot read it. JWT is second and exists for API
+    # clients with nowhere to keep a cookie — the SPA never sends a bearer token.
+    "DEFAULT_AUTHENTICATION_CLASSES": (
+        "rest_framework.authentication.SessionAuthentication",
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+    ),
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.AllowAny" if DEBUG
         else "rest_framework.permissions.IsAuthenticated",
@@ -135,6 +137,42 @@ REST_FRAMEWORK = {
         "login": os.environ.get("THROTTLE_LOGIN", "10/min"),
         "register": os.environ.get("THROTTLE_REGISTER", "5/min"),
     },
+}
+
+# ---------------------------------------------------------------------------
+# Sessions (the browser) and JWT (everything else)
+# ---------------------------------------------------------------------------
+#
+# django.contrib.auth.login() cycles the session key on every login, so session
+# fixation is already covered. What was missing is expiry and an explicit
+# SameSite: a session that never ages out is a permanent credential.
+
+SESSION_COOKIE_HTTPONLY = True
+# Lax, not Strict: Strict drops the cookie on any cross-site navigation, so
+# following a link to a listing would land the user on the login screen.
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SAMESITE = "Lax"
+# The SPA must read this one to echo it back as X-CSRFToken, so it cannot be
+# HttpOnly. That is the standard double-submit trade and is why the *session*
+# cookie being HttpOnly is what matters.
+CSRF_COOKIE_HTTPONLY = False
+SESSION_COOKIE_AGE = int(os.environ.get("SESSION_COOKIE_AGE", 60 * 60 * 24 * 14))
+# Slides the expiry on activity, so the age above is an idle timeout rather than
+# a hard logout mid-session.
+SESSION_SAVE_EVERY_REQUEST = True
+
+SIMPLE_JWT = {
+    # Short access token, because a bearer token cannot be revoked before it
+    # expires; the refresh token is the thing with a kill switch.
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    # Rotate and blacklist: a stolen refresh token is usable once, and the moment
+    # the real client refreshes, the thief's copy is dead.
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
+    "UPDATE_LAST_LOGIN": True,
+    "USER_ID_FIELD": "id",
+    "USER_ID_CLAIM": "user_id",
 }
 
 if not DEBUG:

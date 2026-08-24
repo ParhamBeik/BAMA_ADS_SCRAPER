@@ -3,6 +3,10 @@
 This is a local market-intelligence tool: there is no subscription tier,
 alerting, or in-app inbox. Users exist for session auth, Django admin, and
 isolated saved listings.
+
+Accounts are created by signing up, never seeded from the environment. The
+first account on an empty database becomes staff (see accounts.views.
+RegisterView); every one after it is an ordinary user.
 """
 
 import uuid
@@ -53,9 +57,6 @@ class User(AbstractBaseUser, PermissionsMixin):
     full_name = models.CharField(max_length=255, blank=True)
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
-    # Marks the configured demo account; it remains a normal user and is not
-    # staff, so it cannot reach operator APIs.
-    is_demo = models.BooleanField(default=False)
     date_joined = models.DateTimeField(default=timezone.now)
 
     objects = UserManager()

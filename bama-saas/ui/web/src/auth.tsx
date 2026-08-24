@@ -1,11 +1,12 @@
 /**
  * Session auth for the SPA.
  *
- * There is no token to store: the browser holds the Django sessionid cookie,
- * and this context just tracks whether GET /api/auth/me/ currently says
- * "logged in". That same call also bootstraps the CSRF cookie (see
- * MeView in apps/accounts/views_auth.py), so it has to run once before any
- * POST/PATCH/DELETE can succeed — App renders nothing else until it resolves.
+ * There is no token to store: the browser holds an HttpOnly sessionid cookie
+ * that script cannot read, and this context just tracks whether
+ * GET /api/auth/me/ currently says "logged in". That same call also bootstraps
+ * the CSRF cookie (see MeView in apps/accounts/views.py), so it has to run once
+ * before any POST/PATCH/DELETE can succeed — App renders nothing else until it
+ * resolves.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api, ApiError } from "./api";
@@ -13,7 +14,6 @@ import { api, ApiError } from "./api";
 export interface AuthUser {
   email: string;
   is_staff: boolean;
-  is_demo: boolean;
 }
 
 interface AuthState {

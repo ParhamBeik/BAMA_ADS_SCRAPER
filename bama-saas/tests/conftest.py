@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import pytest
+from django.core.cache import cache
 from rest_framework.test import APIClient
 
 from apps.jobs.ingest import reset_cache, reset_price_cache
@@ -33,6 +34,19 @@ def _clean_ingest_caches():
     yield
     reset_cache()
     reset_price_cache()
+
+
+@pytest.fixture(autouse=True)
+def _reset_throttles():
+    """DRF keeps throttle history in the process-wide cache, not the database.
+
+    Without this, the 5/min register limit is consumed by whichever auth tests
+    ran first and every later one gets a 429 — a green suite that silently stops
+    testing what it claims to.
+    """
+    cache.clear()
+    yield
+    cache.clear()
 
 
 @pytest.fixture

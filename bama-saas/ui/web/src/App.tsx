@@ -1,9 +1,9 @@
 /**
  * Seven screens, one shell (Persian RTL for data, English chrome).
  *
- * Deployed instances require a session (see config/settings/prod.py); `useAuth`
- * decides between the login screen and the app shell, and the shell itself never
- * has to think about it again below this point.
+ * Deployed instances require a session (see config/settings.py); `useAuth`
+ * decides between the signed-out routes and the app shell, and the shell itself
+ * never has to think about it again below this point.
  */
 import { lazy, Suspense, type ReactNode } from "react";
 import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
@@ -15,6 +15,7 @@ import { useTheme, type ThemeChoice } from "./theme";
 import { Deals } from "./pages/Deals";
 import { Explorer } from "./pages/Explorer";
 import { Login } from "./pages/Login";
+import { Signup } from "./pages/Signup";
 import { Overview } from "./pages/Overview";
 import { Saved } from "./pages/Saved";
 import { ListingDetail } from "./pages/ListingDetail";
@@ -40,8 +41,23 @@ export function App() {
   const { user, loading } = useAuth();
 
   if (loading) return null;
-  if (!user) return <Login />;
-  return <AppShell />;
+  return user ? <AppShell /> : <AuthRoutes />;
+}
+
+/**
+ * Signed-out routes. Two real URLs rather than one screen with a toggle, so the
+ * back button works and a signup link is shareable. Anything else redirects to
+ * sign-in and does not 404 — a bookmark saved while logged in should land
+ * somewhere sensible.
+ */
+function AuthRoutes() {
+  return (
+    <Routes>
+      <Route path="/login" element={<Login />} />
+      <Route path="/signup" element={<Signup />} />
+      <Route path="*" element={<Navigate to="/login" replace />} />
+    </Routes>
+  );
 }
 
 function AppShell() {
@@ -104,6 +120,9 @@ function AppShell() {
               )
             }
           />
+          {/* Signed in, so the auth routes are meaningless here. */}
+          <Route path="/login" element={<Navigate to="/" replace />} />
+          <Route path="/signup" element={<Navigate to="/" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>

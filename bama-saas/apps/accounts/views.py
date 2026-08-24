@@ -1,6 +1,10 @@
-"""Session auth for the SPA, plus the saved ads owned by the logged-in user.
+"""Auth for the SPA and for API clients, plus the saved ads owned by a user.
 
-There is no token to store: the browser holds the Django sessionid cookie.
+The browser holds an HttpOnly Django session cookie and stores no token: script
+cannot read the cookie, so an XSS bug cannot walk away with the login. JWT lives
+alongside it (``/api/auth/token/``) for non-browser clients, which have nowhere
+to keep a cookie — the SPA never touches those endpoints.
+
 ``MeView`` doubles as the CSRF bootstrap — the SPA calls it once on load, which
 sets the csrftoken cookie regardless of auth outcome, then reads the body to
 decide between the app shell and the login screen.
@@ -12,7 +16,9 @@ from datetime import datetime
 
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.password_validation import validate_password
-from django.db import IntegrityError, transaction
+from django.contrib.sessions.models import Session
+from django.db import IntegrityError, connection, transaction
+from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import ensure_csrf_cookie
 from rest_framework import serializers, status, viewsets
@@ -26,7 +32,7 @@ from apps.core.models import PriceDropEvent
 
 
 def _user_payload(user) -> dict:
-    return {"email": user.email, "is_staff": user.is_staff, "is_demo": user.is_demo}
+    return {"email": user.email, "is_staff": user.is_staff}
 
 
 @method_decorator(ensure_csrf_cookie, name="dispatch")
@@ -81,6 +87,13 @@ class LoginView(APIView):
 
 
 class RegisterView(APIView):
+    """Open signup. The first account on an empty database becomes staff.
+
+    That rule replaces a seeded admin whose password lived in an environment
+    variable — a credential nobody rotates and everyone with deploy access can
+    read. Bootstrapping by being first is a single-use privilege instead.
+    """
+
     permission_classes = [AllowAny]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "register"
@@ -90,9 +103,20 @@ class RegisterView(APIView):
         serializer.is_valid(raise_exception=True)
         try:
             with transaction.atomic():
+                # Locked, not just counted: two simultaneous first signups would
+                # otherwise both read an empty table and both become superuser.
+                # The lock is on the whole table because the row does not exist
+                # yet, and it is uncontended after the first account exists.
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        f"LOCK TABLE {User._meta.db_table} IN SHARE ROW EXCLUSIVE MODE"
+                    )
+                first = not User.objects.exists()
                 user = User.objects.create_user(
                     email=serializer.validated_data["email"],
                     password=serializer.validated_data["password"],
+                    is_staff=first,
+                    is_superuser=first,
                 )
         except IntegrityError as exc:
             raise serializers.ValidationError(
@@ -102,12 +126,54 @@ class RegisterView(APIView):
         return Response(_user_payload(user), status=status.HTTP_201_CREATED)
 
 
+class EmailAvailableView(APIView):
+    """Is this address free? Used by the signup form so the answer arrives
+    before the user has typed a password and pressed submit.
+
+    Throttled on the register scope: it is an unauthenticated read of "does this
+    account exist", and left open it would enumerate every user.
+    """
+
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "register"
+
+    def get(self, request):
+        email = (request.query_params.get("email") or "").strip().lower()
+        if not email:
+            return Response({"detail": "email is required."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        return Response({"available": not User.objects.filter(email__iexact=email).exists()})
+
+
 class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
         logout(request)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class LogoutEverywhereView(APIView):
+    """Drop every session this user holds, on every device.
+
+    Django keys sessions by an opaque id with no user column, so the only way to
+    find them is to decode each unexpired one. That is affordable here precisely
+    because this is a small single-operator deployment, and the alternative —
+    "change your password and hope" — is not a revocation.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        uid = str(request.user.pk)
+        killed = 0
+        for row in Session.objects.filter(expire_date__gte=timezone.now()).iterator():
+            if row.get_decoded().get("_auth_user_id") == uid:
+                row.delete()
+                killed += 1
+        logout(request)
+        return Response({"sessions_ended": killed})
 
 
 class FavoriteSerializer(serializers.ModelSerializer):
