@@ -39,6 +39,7 @@ logger = logging.getLogger("bama.worker")
 JOBS: dict[str, Callable[..., dict]] = {
     "fetch": jobs.fetch,
     "mark_inactive": jobs.mark_inactive,
+    "link_reposts": jobs.link_reposts,
     "episodes": jobs.sync_episodes,
     "snapshot": jobs.daily_snapshot,
     "market_index": jobs.market_index,
@@ -47,22 +48,25 @@ JOBS: dict[str, Callable[..., dict]] = {
     "coverage": jobs.coverage,
     "prune": jobs.prune,
     "health": jobs.health,
+    "probe_depth": jobs.probe_depth,
     "reap_orphans": jobs.reap_orphan_runs,
 }
 
 # Canonical ordering. `market_index` must follow `snapshot` (it is arithmetic
 # over those rows) and `notify` must follow `deal_scores` (it reads that board),
 # so a run in this order can never announce the previous tick's answers.
-STEP_ORDER = ("fetch", "mark_inactive", "episodes", "snapshot", "market_index",
-              "deal_scores", "notify", "coverage", "prune", "health")
+# link_reposts sits between removal marking and episodes: it needs the
+# delisted set to be current, and episodes reads the links it writes.
+STEP_ORDER = ("fetch", "mark_inactive", "link_reposts", "episodes", "snapshot",
+              "market_index", "deal_scores", "notify", "coverage", "prune", "health")
 
 CADENCES = {
     "hot": ("fetch", "mark_inactive", "deal_scores", "notify"),
-    "warm": ("episodes", "snapshot", "market_index"),
+    "warm": ("link_reposts", "episodes", "snapshot", "market_index"),
     "coverage": ("coverage",),
     "maintenance": ("deal_scores", "prune", "health"),
-    "full": ("fetch", "mark_inactive", "episodes", "snapshot", "market_index",
-             "deal_scores", "notify"),
+    "full": ("fetch", "mark_inactive", "link_reposts", "episodes", "snapshot",
+             "market_index", "deal_scores", "notify"),
 }
 
 # A failed *fetch* deliberately does not cascade: the local steps are idempotent

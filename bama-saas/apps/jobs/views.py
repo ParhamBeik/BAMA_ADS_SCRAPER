@@ -209,6 +209,10 @@ def system_health(request):
             "ads": Ad.objects.count(),
             "active_ads": status_counts.get(Ad.Status.ACTIVE, 0),
             "removed_ads": status_counts.get(Ad.Status.REMOVED, 0),
+            # Ads nobody has seen for two windows that coverage could not prove
+            # anything about. A non-zero value here means the crawler is blind,
+            # not that the market shrank.
+            "unverified_ads": status_counts.get(Ad.Status.UNVERIFIED, 0),
             "brands": Brand.objects.count(),
             "models": Model.objects.count(),
             "unconfirmed_brands": Brand.objects.filter(is_confirmed=False).count(),

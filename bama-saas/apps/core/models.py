@@ -115,7 +115,31 @@ class Ad(models.Model):
 
     class Status(models.TextChoices):
         ACTIVE = "active", "Active"
-        REMOVED = "removed", "Removed (absent from the last completed sweeps)"
+        REMOVED = "removed", "Delisted (absent from two complete sweeps)"
+        # The state that used to be told as a lie. An ad we have not seen for
+        # days, during a stretch where coverage could not be proven complete, is
+        # not evidence of anything — but it stayed ACTIVE, so the app claimed
+        # 546 cars were for sale that nobody had laid eyes on in 48 hours.
+        UNVERIFIED = "unverified", "Unverified (not seen, coverage incomplete)"
+
+    class Reason(models.TextChoices):
+        """Why an ad probably left. Inferred, never observed.
+
+        Bama's feed carries no delisting reason — an ad simply stops appearing.
+        Keeping this out of ``status`` is the point: the status column states
+        what we saw, this column states what we guess, and a reader can tell
+        which is which.
+        """
+
+        SOLD = "likely_sold", "Likely sold"
+        EXPIRED = "likely_expired", "Likely expired"
+        REPOSTED = "reposted", "Relisted under a new code"
+        UNKNOWN = "unknown", "Unknown"
+
+    class Confidence(models.TextChoices):
+        HIGH = "high", "High"
+        MEDIUM = "medium", "Medium"
+        LOW = "low", "Low"
 
     class YearCalendar(models.TextChoices):
         JALALI = "jalali", "Jalali"
@@ -164,12 +188,26 @@ class Ad(models.Model):
     last_seen_at = models.DateTimeField(null=True, blank=True, db_index=True)
 
     # ACTIVE while observed; REMOVED once absent from two consecutive complete
-    # coverage windows (a proof, not a wall-clock guess — see jobs.pipeline).
-    # Re-seeing a removed ad flips it back.
+    # coverage windows (a proof, not a wall-clock guess — see jobs.pipeline);
+    # UNVERIFIED when it has not been seen for that long but coverage was too
+    # patchy to prove anything. Re-seeing an ad in any state flips it back.
     status = models.CharField(
         max_length=16, choices=Status.choices, default=Status.ACTIVE, db_index=True
     )
     removed_at = models.DateTimeField(null=True, blank=True)
+
+    # The inference about *why*, kept apart from the fact of absence above.
+    likely_reason = models.CharField(max_length=24, choices=Reason.choices,
+                                     blank=True, db_index=True)
+    reason_confidence = models.CharField(max_length=8, choices=Confidence.choices,
+                                         blank=True)
+    # Set on the NEW ad, pointing at the one it replaced. SET_NULL rather than
+    # CASCADE: losing the predecessor must not delete the live listing.
+    reposted_from = models.ForeignKey("self", on_delete=models.SET_NULL,
+                                      related_name="reposts", null=True, blank=True)
+    # Content identity across ad codes — how a relist is recognised when Bama
+    # issues a fresh code for the same car. See jobs.parsing.listing_fingerprint.
+    listing_fingerprint = models.CharField(max_length=64, blank=True, db_index=True)
 
     trim = models.CharField(max_length=200, blank=True)
     location = models.CharField(max_length=200, blank=True)
@@ -285,6 +323,13 @@ class FetchRun(models.Model):
     pages_fetched = models.IntegerField(default=0)
     deepest_rank = models.IntegerField(null=True, blank=True)
     reached_end = models.BooleanField(default=False)
+    # Where the feed ended, when this run walked into the empty page past the
+    # last ad: rank ``PAGE_SIZE * <empty page index>``. Deliberately NOT folded
+    # into ``deepest_rank``, which means "the highest rank we actually saw" — a
+    # backfill can prove the feed ends at 34,710 while observing no ads at all,
+    # and the two numbers answer different questions. This is the only thing
+    # allowed to lower the depth ratchet (see fetcher.known_feed_depth).
+    feed_end_rank = models.IntegerField(null=True, blank=True)
     stop_reason = models.CharField(max_length=24, choices=StopReason.choices, blank=True)
     # Set when a run aborts mid-sweep, so the next one resumes instead of
     # restarting from page 0.

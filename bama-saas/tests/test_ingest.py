@@ -25,7 +25,12 @@ from apps.core.models import (
 )
 from apps.core.pricing import compute_deal_scores
 from apps.jobs.ingest import ingest_ad, reset_cache, reset_price_cache
-from apps.jobs.jobs import REQUIRED_MISSED_WINDOWS, mark_inactive, sweep_cutoff
+from apps.jobs.jobs import (
+    REQUIRED_MISSED_WINDOWS,
+    link_reposts,
+    mark_inactive,
+    sweep_cutoff,
+)
 from apps.jobs.parsing import extract_ad, parse_publish_time
 
 NOW = datetime(2026, 8, 8, 12, 0, tzinfo=tz.utc)
@@ -452,6 +457,10 @@ def test_no_removal_with_one_covered_window(catalog):
     A wall-clock rule marks everything REMOVED the moment the crawler stalls
     long enough. The coverage rule must refuse to act, because a single pass
     proves nothing about ads it may have missed to rank shift.
+
+    Refusing to say REMOVED is not the same as saying ACTIVE, though: the ad
+    lands in UNVERIFIED, which is what stops the app from advertising a car
+    nobody has seen in a month as being for sale.
     """
     now = djtz.now()
     _cover(now - timedelta(hours=2))
@@ -460,7 +469,7 @@ def test_no_removal_with_one_covered_window(catalog):
     mark_inactive()
 
     stale.refresh_from_db()
-    assert stale.status == Ad.Status.ACTIVE
+    assert stale.status == Ad.Status.UNVERIFIED
     cutoff, n = sweep_cutoff()
     assert cutoff is None
     assert n == 1
@@ -471,7 +480,7 @@ def test_no_removal_without_any_coverage(catalog):
     stale = _ad(catalog, "stale002", djtz.now() - timedelta(days=90))
     mark_inactive()
     stale.refresh_from_db()
-    assert stale.status == Ad.Status.ACTIVE
+    assert stale.status == Ad.Status.UNVERIFIED
 
 
 @pytest.mark.django_db
@@ -521,7 +530,7 @@ def test_partial_coverage_does_not_authorise_removal(catalog):
     mark_inactive()
 
     stale.refresh_from_db()
-    assert stale.status == Ad.Status.ACTIVE
+    assert stale.status == Ad.Status.UNVERIFIED
     assert sweep_cutoff()[0] is None
 
 
@@ -713,3 +722,125 @@ def test_ask_below_half_peer_median_is_not_a_deal(catalog):
     compute_deal_scores()
 
     assert DealScoreCache.objects.filter(ad_id=deposit.code).first() is None
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle: what state an absent ad lands in, and why we think it left
+#
+# Integration level: the subject is the row that survives a `mark_inactive`
+# pass, and the decision depends on stored PageCoverage that no unit test of the
+# function alone could supply.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_an_unverified_ad_resolves_once_coverage_is_proven(catalog):
+    """UNVERIFIED is a holding state, not a destination.
+
+    An ad parked there while the crawler was blind must resolve as soon as two
+    complete windows exist — otherwise fixing coverage would leave a permanent
+    residue of ads stuck in limbo.
+    """
+    now = djtz.now()
+    _cover(now - timedelta(hours=2))
+    gone = _ad(catalog, "limbo001", now - timedelta(hours=50))
+
+    mark_inactive()
+    gone.refresh_from_db()
+    assert gone.status == Ad.Status.UNVERIFIED
+
+    _cover(now - timedelta(hours=30))    # the older window is now covered too
+    mark_inactive()
+
+    gone.refresh_from_db()
+    assert gone.status == Ad.Status.REMOVED
+    assert gone.removed_at == gone.last_seen_at
+
+
+@pytest.mark.django_db
+def test_being_seen_again_clears_the_inference(catalog, make_payload):
+    """A car we can see is not "likely sold"."""
+    now = djtz.now()
+    ad = _ad(catalog, "back0001", now - timedelta(hours=50))
+    Ad.objects.filter(code="back0001").update(
+        status=Ad.Status.REMOVED, removed_at=now,
+        likely_reason=Ad.Reason.SOLD, reason_confidence=Ad.Confidence.MEDIUM,
+    )
+
+    run = FetchRun.objects.create(source=FetchRun.Source.LIVE_FETCH,
+                                  status=FetchRun.Status.SUCCEEDED)
+    payload = make_payload("back0001", 1_000_000_000)
+    ingest_ad(extract_ad(payload, djtz.now()), run=run, observed_at=djtz.now(),
+              publish_at=djtz.now())
+
+    ad.refresh_from_db()
+    assert ad.status == Ad.Status.ACTIVE
+    assert ad.removed_at is None
+    assert ad.likely_reason == ""
+    assert ad.reason_confidence == ""
+
+
+@pytest.mark.django_db
+def test_a_delisted_ad_without_a_measured_baseline_is_low_confidence(catalog):
+    """With no closed-episode history there is no P90 to judge tenure against,
+    so "likely sold" is a guess and has to be labelled as one."""
+    now = djtz.now()
+    _cover(now - timedelta(hours=2))
+    _cover(now - timedelta(hours=30))
+    gone = _ad(catalog, "guess001", now - timedelta(hours=50))
+
+    mark_inactive()
+
+    gone.refresh_from_db()
+    assert gone.likely_reason == Ad.Reason.SOLD
+    assert gone.reason_confidence == Ad.Confidence.LOW
+
+
+@pytest.mark.django_db
+def test_a_repost_is_linked_and_the_predecessor_says_so(catalog):
+    """Bama issues a new code for a relist, so the pair reads as one removal
+    plus one arrival unless something ties them together."""
+    now = djtz.now()
+    old = _ad(catalog, "orig0001", now - timedelta(days=5))
+    Ad.objects.filter(code="orig0001").update(
+        status=Ad.Status.REMOVED, listing_fingerprint="samecar",
+    )
+    new = _ad(catalog, "relist01", now)
+    Ad.objects.filter(code="relist01").update(
+        listing_fingerprint="samecar", first_seen_at=now - timedelta(days=1),
+    )
+
+    assert link_reposts()["linked"] == 1
+
+    new.refresh_from_db()
+    old.refresh_from_db()
+    assert new.reposted_from_id == "orig0001"
+    assert old.likely_reason == Ad.Reason.REPOSTED
+    assert old.reason_confidence == Ad.Confidence.HIGH
+    # Nothing is merged away: both rows remain independently queryable.
+    assert Ad.objects.filter(code__in=["orig0001", "relist01"]).count() == 2
+
+
+@pytest.mark.django_db
+def test_two_live_ads_with_the_same_spec_are_not_fused(catalog):
+    """Two identically-specced cars in one city do exist. The predecessor must
+    have already left before its successor appeared, or this is not a repost."""
+    now = djtz.now()
+    _ad(catalog, "twin0001", now)
+    _ad(catalog, "twin0002", now)
+    Ad.objects.all().update(listing_fingerprint="samecar",
+                            first_seen_at=now - timedelta(days=2))
+
+    assert link_reposts()["linked"] == 0
+    assert Ad.objects.filter(reposted_from__isnull=False).count() == 0
+
+
+@pytest.mark.django_db
+def test_a_blank_fingerprint_never_matches(catalog):
+    """An ad too thin to identify must not be linked to another one just as thin."""
+    now = djtz.now()
+    _ad(catalog, "thin0001", now - timedelta(days=5))
+    Ad.objects.filter(code="thin0001").update(status=Ad.Status.REMOVED)
+    _ad(catalog, "thin0002", now)
+
+    assert Ad.objects.filter(listing_fingerprint="").count() == 2
+    assert link_reposts()["linked"] == 0

@@ -24,6 +24,7 @@ type Health = {
     ads: number;
     active_ads: number;
     removed_ads: number;
+    unverified_ads: number;
     brands: number;
     models: number;
     unconfirmed_brands: number;
@@ -127,7 +128,9 @@ export function Control() {
               <Stat
                 label="Active listings"
                 value={n(data.catalog.active_ads)}
-                sub={`${n(data.catalog.removed_ads)} removed`}
+                sub={`${n(data.catalog.removed_ads)} delisted, ${n(
+                  data.catalog.unverified_ads,
+                )} unverified`}
               />
               <Stat
                 label="Database"
@@ -285,6 +288,7 @@ export function Control() {
                   <tr><th>ads</th><td>{n(data.catalog.ads)}</td></tr>
                   <tr><th>active_ads</th><td>{n(data.catalog.active_ads)}</td></tr>
                   <tr><th>removed_ads</th><td>{n(data.catalog.removed_ads)}</td></tr>
+                  <tr><th>unverified_ads</th><td>{n(data.catalog.unverified_ads)}</td></tr>
                   <tr><th>brands</th><td>{n(data.catalog.brands)}</td></tr>
                   <tr><th>models</th><td>{n(data.catalog.models)}</td></tr>
                   <tr><th>unconfirmed_brands</th><td>{n(data.catalog.unconfirmed_brands)}</td></tr>

@@ -34,6 +34,7 @@ from apps.core.models import (
 from apps.jobs.parsing import (
     SEMANTIC_HASH_VERSION,
     fingerprint,
+    listing_fingerprint,
     normalize_model_year,
     parse_int,
     parse_mileage,
@@ -343,9 +344,18 @@ def _ad_defaults(extracted: dict, dims: dict, observed_at, publish_at, quality_f
         "description_length": len(description) or None,
         "seller_authenticated": authenticated if isinstance(authenticated, bool) else None,
         "source_modified_at": parse_source_datetime(detail.get("modified_date")),
-        # Being observed now means the ad is active: clear any prior removal.
+        # Being observed now means the ad is active: clear any prior removal and
+        # the inference that went with it. An ad we can see is not "likely sold".
         "status": Ad.Status.ACTIVE,
         "removed_at": None,
+        "likely_reason": "",
+        "reason_confidence": "",
+        "listing_fingerprint": listing_fingerprint(
+            brand=g("brand"), model=g("model"), trim=g("trim"),
+            year=detail.get("year", g("year")), mileage=detail.get("mileage"),
+            location=g("location"), body_color=g("body_color"),
+            description=description,
+        ),
         "raw_payload": pure_ad(g("raw_payload") or {}),
         # Recomputed every observation, so a row quarantined by a bad payload
         # clears itself the moment Bama sends a good one.
@@ -438,9 +448,11 @@ def _ingest_ad(extracted, *, run, observed_at, publish_at, dealer=None, rank=Non
             defaults["last_seen_at"] = ad.last_seen_at
             # A stale sighting is not evidence the ad is live now, so it must
             # not resurrect a REMOVED row using page data older than the removal
-            # decision.
+            # decision — nor erase the inference recorded alongside it.
             defaults.pop("status", None)
             defaults.pop("removed_at", None)
+            defaults.pop("likely_reason", None)
+            defaults.pop("reason_confidence", None)
         if ad.first_seen_at and observed_at < ad.first_seen_at:
             defaults["first_seen_at"] = observed_at
         Ad.objects.filter(code=code).update(**defaults)

@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from apps.jobs import parsing as P
 from apps.jobs.parsing import (
     JALALI_GREGORIAN_OFFSET,
     extract_ad,
@@ -199,3 +200,61 @@ class TestParseMileage:
     def test_low_but_real_mileage_survives(self):
         """Seed data has 160 ads at "1 km"; that is real, not a sentinel."""
         assert parse_mileage("1 km") == 1
+
+
+# --- listing identity across ad codes -------------------------------------------
+#
+# Pure unit level: the function takes flat values and returns a hash, so the
+# whole contract is observable without a database.
+
+
+def _fp(**overrides):
+    base = dict(
+        brand="پژو", model="405", trim="دنده‌ای", year="1399", mileage="120,000",
+        location="تهران - مرکز", body_color="سفید", description="خودرو سالم",
+    )
+    return P.listing_fingerprint(**{**base, **overrides})
+
+
+def test_the_same_car_relisted_keeps_its_fingerprint():
+    """The whole point: a new Bama code must not change the identity."""
+    assert _fp() == _fp()
+
+
+def test_price_is_not_part_of_the_identity():
+    """Relisting cheaper is the commonest reason to relist. Including price
+    would miss exactly the cases this exists to catch — there is no price
+    argument at all, and this test says that is deliberate."""
+    import inspect
+
+    assert "price" not in inspect.signature(P.listing_fingerprint).parameters
+
+
+def test_formatting_and_persian_digits_do_not_change_the_identity():
+    assert _fp(description="خودرو   سالم") == _fp()
+    assert _fp(mileage="۱۲۰,۰۰۰") == _fp()
+    assert _fp(year="۱۳۹۹") == _fp()
+
+
+def test_a_different_car_gets_a_different_fingerprint():
+    assert _fp(mileage="90,000") != _fp()
+    assert _fp(body_color="مشکی") != _fp()
+    assert _fp(description="تصادفی") != _fp()
+
+
+def test_both_calendars_of_one_model_year_agree():
+    """1399 and 2020 are the same model year, and a repost must survive Bama
+    switching which calendar it publishes."""
+    assert _fp(year="2020") == _fp(year="1399")
+
+
+def test_an_unidentifiable_ad_gets_no_fingerprint():
+    """Blank, so callers skip it. Two thin ads must never match each other."""
+    assert _fp(model=None) == ""
+    assert _fp(year=None) == ""
+    assert _fp(year="not a year") == ""
+
+
+def test_missing_mileage_is_still_identifiable():
+    """Bama omits mileage on some ads; that is not enough to give up on."""
+    assert _fp(mileage=None) != ""

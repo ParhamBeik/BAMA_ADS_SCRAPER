@@ -26,6 +26,10 @@ type Ad = {
   // ad that has since been delisted must still open. It has to say so.
   status?: string;
   last_seen_at?: string | null;
+  removed_at?: string | null;
+  likely_reason?: string;
+  reason_confidence?: string;
+  reposted_from?: string | null;
   price_basis_unclear?: boolean;
   condition_flagged?: boolean;
   // Not yet in the generated schema (another agent is adding these to the API);
@@ -42,6 +46,63 @@ type FairPrice = {
   methodology_version?: number;
   coverage?: Record<string, unknown>;
 };
+
+/**
+ * What we know about a listing that is no longer on the feed, and how sure we
+ * are. Status and reason are shown separately on purpose: "absent" is something
+ * we observed, "probably sold" is something we inferred, and collapsing the two
+ * would have the page assert a sale that Bama never reported.
+ */
+function ListingState({
+  status,
+  reason,
+  confidence,
+  repostedFrom,
+  lastSeen,
+}: {
+  status: string;
+  reason?: string;
+  confidence?: string;
+  repostedFrom?: string | null;
+  lastSeen?: string | null;
+}) {
+  if (status === "unverified") {
+    return (
+      <p className="badge warn">
+        We have lost sight of this listing — our last full sweep of Bama was
+        incomplete, so we cannot tell whether it is still for sale.
+        {lastSeen && <> Last seen {new Date(lastSeen).toLocaleDateString("en-US")}.</>}
+      </p>
+    );
+  }
+
+  const guess: Record<string, string> = {
+    likely_sold: "probably sold",
+    likely_expired: "the listing probably just expired",
+    reposted: "relisted under a new ad",
+    unknown: "we cannot tell why",
+  };
+  return (
+    <p className="badge warn">
+      No longer listed on Bama
+      {lastSeen && <> — last seen {new Date(lastSeen).toLocaleDateString("en-US")}</>}
+      {reason && guess[reason] && (
+        <>
+          {". "}
+          {confidence === "low" ? "Best guess: " : "Most likely: "}
+          {guess[reason]}
+          {repostedFrom && reason === "reposted" && "."}
+        </>
+      )}
+      {repostedFrom && (
+        <>
+          {" "}
+          <Link to={`/listing/${repostedFrom}`}>See the earlier listing</Link>.
+        </>
+      )}
+    </p>
+  );
+}
 
 export function ListingDetail() {
   const { code = "" } = useParams();
@@ -80,15 +141,13 @@ export function ListingDetail() {
                 <div className="card">
                   <h1><Fa>{data.title}</Fa></h1>
                   {data.status && data.status !== "active" && (
-                    <p className="badge warn">
-                      This listing is no longer active on Bama
-                      {data.last_seen_at && (
-                        <>
-                          {" "}— last seen{" "}
-                          {new Date(data.last_seen_at).toLocaleDateString("en-US")}
-                        </>
-                      )}
-                    </p>
+                    <ListingState
+                      status={data.status}
+                      reason={data.likely_reason}
+                      confidence={data.reason_confidence}
+                      repostedFrom={data.reposted_from}
+                      lastSeen={data.last_seen_at}
+                    />
                   )}
                   <p className="price">{data.current_price != null ? toman(data.current_price) : "—"}</p>
                   {data.price_basis_unclear && (

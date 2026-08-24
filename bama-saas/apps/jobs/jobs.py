@@ -13,7 +13,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import timedelta
 
 from django.db import transaction
-from django.db.models import Count, F, Sum
+from django.db.models import Count, Sum
 from django.utils import timezone
 
 from apps.core.models import (
@@ -33,13 +33,18 @@ from apps.core.quality import verified
 from apps.core.research import build_index
 from apps.jobs.fetcher import (
     COVERAGE_WINDOW_HOURS,
+    FIRST_PAGE,
     PAGE_SIZE,
     CrawlBlocked,
+    check_gate,
     coverage_is_complete,
+    create_session,
     fetch_live,
+    fetch_page_with_backoff,
     find_gaps,
     known_feed_depth,
     plan_backfill,
+    warmup,
 )
 
 # ---------------------------------------------------------------------------
@@ -61,6 +66,11 @@ from apps.jobs.fetcher import (
 
 REQUIRED_MISSED_WINDOWS = 2
 
+# Sample bounds for the measured expiry threshold. Below the minimum the P90 is
+# noise; the maximum keeps the scan bounded on a table that only grows.
+MIN_TENURE_SAMPLE = 200
+MAX_TENURE_SAMPLE = 20_000
+
 
 def sweep_cutoff(window_hours: int = COVERAGE_WINDOW_HOURS):
     """``(cutoff, n_complete_windows)``; cutoff is None unless both are complete."""
@@ -76,35 +86,187 @@ def sweep_cutoff(window_hours: int = COVERAGE_WINDOW_HOURS):
     return older_start, REQUIRED_MISSED_WINDOWS
 
 
+def _expiry_threshold_days() -> float | None:
+    """P90 of closed-episode tenure — the age past which leaving looks like expiry.
+
+    Measured, not assumed. Bama does not publish its listing lifetime, and
+    hardcoding a guess would put a number the product asserts as "likely
+    expired" entirely at the mercy of whoever typed it. ``None`` when there is
+    not enough closed history to say, in which case nothing is called expired.
+    """
+    tenures = [
+        (ended - started).total_seconds() / 86400.0
+        for started, ended in ListingEpisode.objects
+        .filter(ended_at__isnull=False, started_at__isnull=False)
+        .values_list("started_at", "ended_at")[:MAX_TENURE_SAMPLE]
+    ]
+    if len(tenures) < MIN_TENURE_SAMPLE:
+        return None
+    tenures.sort()
+    return tenures[min(len(tenures) - 1, int(len(tenures) * 0.9))]
+
+
+def _infer_reason(ad, expiry_days: float | None, reposted: set[str]) -> tuple[str, str]:
+    """``(reason, confidence)`` for one ad that has left the feed.
+
+    Ordered by how much evidence there is. A repost is close to observation — we
+    have the replacement listing in hand. Everything below it is a guess, and the
+    confidence column says so.
+    """
+    if ad.code in reposted:
+        return Ad.Reason.REPOSTED, Ad.Confidence.HIGH
+    if not (ad.first_seen_at and ad.last_seen_at):
+        return Ad.Reason.UNKNOWN, Ad.Confidence.LOW
+    tenure = (ad.last_seen_at - ad.first_seen_at).total_seconds() / 86400.0
+    if expiry_days is not None and tenure >= expiry_days:
+        # Sat around as long as the slowest tenth of all listings, then vanished.
+        return Ad.Reason.EXPIRED, Ad.Confidence.MEDIUM
+    if expiry_days is None:
+        # No measured baseline to place this tenure against.
+        return Ad.Reason.SOLD, Ad.Confidence.LOW
+    return Ad.Reason.SOLD, Ad.Confidence.MEDIUM
+
+
 def mark_inactive(*, days: int | None = None,
                   window_hours: int = COVERAGE_WINDOW_HOURS) -> dict:
-    """Flip ACTIVE ads absent from two complete coverage windows to REMOVED.
+    """Resolve ads that have stopped appearing into REMOVED or UNVERIFIED.
+
+    Two outcomes, because there are two different facts:
+
+    * Coverage over both windows was complete, so the feed was walked end to end
+      twice without this ad -> REMOVED, with an inferred ``likely_reason``.
+    * The ad is equally absent but coverage could not be proven -> UNVERIFIED.
+      Leaving it ACTIVE is the bug this exists to fix: for over a day the app
+      showed 546 cars as for sale that nothing had seen in 48 hours, because
+      "we cannot prove it is gone" was being rendered as "it is still here".
 
     Idempotent, and stamps ``removed_at`` with the ad's own ``last_seen_at`` (the
-    best estimate of when it left). Re-seeing a removed ad flips it back.
-    ``days`` is an escape hatch for the legacy wall-clock rule.
+    best estimate of when it left). Re-seeing an ad in either state flips it back
+    to ACTIVE (see ``ingest._ad_defaults``). ``days`` is an escape hatch for the
+    legacy wall-clock rule.
     """
+    now = timezone.now()
+    unproven_cutoff = now - REQUIRED_MISSED_WINDOWS * timedelta(hours=window_hours)
+
     if days is not None:
-        cutoff = timezone.now() - timedelta(days=days)
+        cutoff = now - timedelta(days=days)
         basis = f"wall-clock override, last_seen < {cutoff:%Y-%m-%d %H:%M} UTC"
+        n_windows = REQUIRED_MISSED_WINDOWS
     else:
         cutoff, n_windows = sweep_cutoff(window_hours)
-        if cutoff is None:
-            return {
-                "marked": 0, "windows_complete": n_windows,
-                "detail": (
-                    f"only {n_windows} of {REQUIRED_MISSED_WINDOWS} consecutive "
-                    f"{window_hours}h windows are fully covered; cannot prove an ad "
-                    f"is gone. Run the coverage job to close the uncovered ranges."
-                ),
-            }
         basis = (f"absent from {REQUIRED_MISSED_WINDOWS} consecutive {window_hours}h "
-                 f"windows (last_seen < {cutoff:%Y-%m-%d %H:%M} UTC)")
+                 f"windows (last_seen < {cutoff:%Y-%m-%d %H:%M} UTC)" if cutoff else "")
 
-    marked = Ad.objects.filter(
-        status=Ad.Status.ACTIVE, last_seen_at__lt=cutoff
-    ).update(status=Ad.Status.REMOVED, removed_at=F("last_seen_at"))
-    return {"marked": marked, "detail": f"marked {marked} ad(s) REMOVED — {basis}"}
+    if cutoff is None:
+        # Cannot prove absence. Say so on the rows themselves rather than
+        # leaving them looking live.
+        flagged = Ad.objects.filter(
+            status=Ad.Status.ACTIVE, last_seen_at__lt=unproven_cutoff
+        ).update(status=Ad.Status.UNVERIFIED)
+        return {
+            "marked": 0, "unverified": flagged, "windows_complete": n_windows,
+            "detail": (
+                f"only {n_windows} of {REQUIRED_MISSED_WINDOWS} consecutive "
+                f"{window_hours}h windows are fully covered; cannot prove an ad is "
+                f"gone. Flagged {flagged} unseen ad(s) UNVERIFIED. Run the coverage "
+                f"job to close the uncovered ranges."
+            ),
+        }
+
+    # Both windows are complete, so absence is proven — including for anything
+    # parked in UNVERIFIED while coverage was patchy.
+    stale = Ad.objects.filter(
+        status__in=(Ad.Status.ACTIVE, Ad.Status.UNVERIFIED), last_seen_at__lt=cutoff
+    )
+    expiry_days = _expiry_threshold_days()
+    reposted = set(
+        Ad.objects.filter(reposted_from__in=stale.values("code"))
+        .values_list("reposted_from_id", flat=True)
+    )
+
+    updates, reasons = [], defaultdict(int)
+    for ad in stale.only("code", "first_seen_at", "last_seen_at").iterator(chunk_size=1000):
+        ad.status = Ad.Status.REMOVED
+        ad.removed_at = ad.last_seen_at
+        ad.likely_reason, ad.reason_confidence = _infer_reason(ad, expiry_days, reposted)
+        reasons[ad.likely_reason] += 1
+        updates.append(ad)
+    Ad.objects.bulk_update(
+        updates, ["status", "removed_at", "likely_reason", "reason_confidence"],
+        batch_size=500,
+    )
+
+    breakdown = ", ".join(f"{n} {reason}" for reason, n in sorted(reasons.items()))
+    return {
+        "marked": len(updates), "unverified": 0, "windows_complete": n_windows,
+        "reasons": dict(reasons),
+        "detail": (f"marked {len(updates)} ad(s) REMOVED — {basis}"
+                   + (f" [{breakdown}]" if breakdown else "")),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Repost linking
+# ---------------------------------------------------------------------------
+#
+# Bama issues a fresh ad code when a seller delists and relists, so the same car
+# reads as one removal plus one arrival. That restarts the tenure clock and
+# double-counts a delisting, biasing every survival curve toward "sells fast".
+#
+# Conservative by construction: this writes a LINK and never merges or deletes,
+# so a wrong match costs one UPDATE to undo and no history is lost. The match is
+# an exact content fingerprint (see parsing.listing_fingerprint), not a
+# similarity score — two identically-specced cars in one city do exist, and a
+# fuzzy threshold would quietly fuse them.
+
+REPOST_WINDOW_DAYS = 30
+
+
+@transaction.atomic
+def link_reposts(*, window_days: int = REPOST_WINDOW_DAYS) -> dict:
+    """Point newly-seen ads at the delisted ad they appear to be a relist of."""
+    since = timezone.now() - timedelta(days=window_days)
+    candidates = list(
+        Ad.objects.filter(first_seen_at__gte=since, reposted_from__isnull=True)
+        .exclude(listing_fingerprint="")
+        .values_list("code", "listing_fingerprint", "first_seen_at")
+    )
+    if not candidates:
+        return {"linked": 0, "detail": "no unlinked ads first seen in the window"}
+
+    # One query for every predecessor of every candidate, then matched in Python:
+    # a per-candidate query would be thousands of round trips on a hot path.
+    # Newest-departed first, so the first match in the scan below is the closest
+    # predecessor and the loop can stop there.
+    prior = defaultdict(list)
+    for code, fp, last_seen in (
+        Ad.objects.filter(listing_fingerprint__in={fp for _, fp, _ in candidates},
+                          status=Ad.Status.REMOVED, last_seen_at__isnull=False)
+        .order_by("-last_seen_at")
+        .values_list("code", "listing_fingerprint", "last_seen_at")
+    ):
+        prior[fp].append((code, last_seen))
+
+    linked, predecessors = [], []
+    for code, fp, first_seen in candidates:
+        # `last_seen <= first_seen` is what stops two cars from being fused: a
+        # predecessor still live alongside this ad is a different car with the
+        # same spec, not the same one relisted.
+        match = next(
+            (c for c, seen in prior[fp] if c != code and seen <= first_seen), None
+        )
+        if match is None:
+            continue
+        linked.append(Ad(code=code, reposted_from_id=match))
+        predecessors.append(match)
+
+    if linked:
+        Ad.objects.bulk_update(linked, ["reposted_from"], batch_size=500)
+        Ad.objects.filter(code__in=predecessors).update(
+            likely_reason=Ad.Reason.REPOSTED, reason_confidence=Ad.Confidence.HIGH
+        )
+    return {"linked": len(linked),
+            "detail": f"linked {len(linked)} repost(s) over {window_days}d"}
 
 
 # ---------------------------------------------------------------------------
@@ -400,6 +562,80 @@ def coverage(*, since_hours: float = 24.0, max_pages: int | None = None,
     return {
         "gaps": len(gaps), "ranges": len(ranges), "pages": total_pages,
         "rescored_models": scored["refreshed_models"], "detail": plan,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Feed-depth probe
+# ---------------------------------------------------------------------------
+#
+# "What stops the fetch?" used to be answerable only by reading container logs.
+# Over one week every stop was a limit *we* chose — max_ads on delta, the
+# coverage chunk budget on backfill, the stale-page rule — except the genuine end
+# of the feed. Nothing bama.ir does caps us. This makes that checkable on demand
+# instead of inferred, and it is also the fastest way to see the depth ratchet
+# disagreeing with reality, which is what froze removal detection.
+
+PROBE_MAX_STEPS = 24
+
+
+def probe_depth(*, request_timeout: int | None = None) -> dict:
+    """Binary-search for the last page that still holds ads. Read-only.
+
+    Doubling out then halving in costs ~log2(pages) requests rather than the
+    ~1,160 a linear walk would, and touches no rows: this asks bama.ir where the
+    feed ends and compares that with what the ratchet believes.
+    """
+    from django.conf import settings
+
+    check_gate()
+    timeout = int(request_timeout if request_timeout is not None
+                  else settings.BAMA_REQUEST_TIMEOUT)
+    session = create_session(settings.BAMA_COOKIE or None)
+    warmup(session, timeout)
+    requests_made = 0
+
+    def has_ads(page: int) -> bool:
+        nonlocal requests_made
+        requests_made += 1
+        return bool(fetch_page_with_backoff(session, page, timeout))
+
+    if not has_ads(FIRST_PAGE):
+        return {"ok": False, "detail": "page 0 is empty — the feed itself is unreadable"}
+
+    # Double until an empty page is found, then binary-search the boundary.
+    lo, hi = FIRST_PAGE, 1
+    for _ in range(PROBE_MAX_STEPS):
+        if not has_ads(hi):
+            break
+        lo, hi = hi, hi * 2
+    else:
+        return {"ok": False, "detail": f"no empty page within {PROBE_MAX_STEPS} doublings"}
+
+    while lo + 1 < hi:
+        mid = (lo + hi) // 2
+        if has_ads(mid):
+            lo = mid
+        else:
+            hi = mid
+
+    # `lo` holds ads, `lo + 1` does not, so the feed ends at rank PAGE_SIZE*(lo+1)
+    # at the very most.
+    observed = PAGE_SIZE * (lo + 1)
+    ratchet = known_feed_depth()
+    drift = None if ratchet is None else ratchet - observed
+    return {
+        "ok": True,
+        "last_page_with_ads": lo, "first_empty_page": lo + 1,
+        "feed_end_rank": observed, "ratchet": ratchet, "ratchet_drift": drift,
+        "requests": requests_made,
+        "detail": (
+            f"feed ends after page {lo} (<= rank {observed}); "
+            + ("ratchet unknown" if ratchet is None else
+               f"ratchet says {ratchet} ({drift:+d})")
+            + f"; {requests_made} request(s). Every other stop reason (max_ads, "
+              f"max_pages, stale_pages) is a limit this app sets, not bama.ir."
+        ),
     }
 
 

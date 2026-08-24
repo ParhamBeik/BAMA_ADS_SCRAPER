@@ -201,6 +201,56 @@ def payload_hashes(payload: dict[str, Any]) -> tuple[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# Listing identity across ad codes
+# ---------------------------------------------------------------------------
+#
+# `semantic_hash` answers "did THIS ad change" and is scoped to one code. This
+# answers "is this the same car as one we already saw", which is a different
+# question: a seller who delists and relists gets a brand-new Bama code, and
+# without this the pair reads as one removal plus one arrival — restarting the
+# tenure clock and double-counting a delisting in every survival curve.
+#
+# Price is deliberately NOT part of the identity: relisting cheaper is the single
+# most common reason to relist, so including it would miss exactly the cases
+# worth catching. Nothing volatile is included either, for the same reason
+# VOLATILE_PAYLOAD_PATHS exists.
+
+# Collapse whitespace so a reformatted description is still the same text.
+_WHITESPACE = re.compile(r"\s+")
+
+
+def normalize_text(value: Any) -> str:
+    """Lowercased, digit-normalised, whitespace-collapsed."""
+    if not isinstance(value, str):
+        return ""
+    return _WHITESPACE.sub(" ", normalize_digits(value).strip().lower())
+
+
+def listing_fingerprint(*, brand: str | None, model: str | None, trim: str | None,
+                        year: Any, mileage: Any, location: str | None,
+                        body_color: str | None, description: str | None) -> str:
+    """Content identity for one listing, stable across a repost.
+
+    Returns ``""`` when the ad is too thin to identify — a blank fingerprint
+    must never match another blank one, so callers store it and skip it rather
+    than linking two unidentifiable ads together.
+    """
+    year_jalali, _, _ = normalize_model_year(year)
+    km = parse_mileage(mileage)
+    # Model and year are the minimum that makes "same car" meaningful. Mileage
+    # is allowed to be absent (Bama omits it on some ads) but not the rest.
+    if not model or year_jalali is None:
+        return ""
+    parts = [
+        normalize_text(brand), normalize_text(model), normalize_text(trim),
+        str(year_jalali), "" if km is None else str(km),
+        normalize_text(location), normalize_text(body_color),
+        normalize_text(description),
+    ]
+    return fingerprint(parts)
+
+
+# ---------------------------------------------------------------------------
 # Publish time
 # ---------------------------------------------------------------------------
 

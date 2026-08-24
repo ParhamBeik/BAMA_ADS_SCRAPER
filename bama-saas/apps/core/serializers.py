@@ -78,6 +78,7 @@ class AdSerializer(serializers.ModelSerializer):
             "transmission", "body_type", "fuel", "city_id", "city_name", "url",
             "description", "primary_image_url", "image_urls", "image_count",
             "seller_authenticated", "dealer_name", "seller_type", "status",
+            "removed_at", "likely_reason", "reason_confidence", "reposted_from",
             "cohort_flags", "price_basis_unclear", "condition_flagged",
         )
 

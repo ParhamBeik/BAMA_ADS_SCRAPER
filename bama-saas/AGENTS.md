@@ -64,6 +64,27 @@ schema is independent of the Python layout. Do not remove those pins.
 - **Removal is proven, not guessed.** An ad goes `REMOVED` only after two
   complete coverage windows without it (`COVERAGE_WINDOW_HOURS = 24`). Elapsed
   wall-clock time is not evidence.
+- **Three states, because there are three facts.** `ACTIVE` (seen), `REMOVED`
+  (provably absent), `UNVERIFIED` (absent, but coverage could not be proven).
+  The third exists because leaving unprovable ads `ACTIVE` had the app
+  advertising 546 cars nobody had seen in 48 hours. `UNVERIFIED` is a holding
+  state: the next complete pair of windows resolves it either way.
+- **Why an ad left is inferred, never observed.** Bama's feed carries no reason,
+  so `likely_reason` / `reason_confidence` are kept out of `status` — the status
+  column says what we saw, those say what we guess. The "likely expired"
+  threshold is the P90 of measured `ListingEpisode` tenure, never a constant.
+- **Anything credible may lower the depth ratchet, not just a full sweep.**
+  `known_feed_depth` is a one-way high-water mark and the feed shrinks daily, so
+  something has to bring it down. Requiring `mode=FULL` for that was the bug that
+  froze removal detection: rolling coverage retired the full sweep, so in one
+  week production logged 624 backfills that reached the real end of the feed and
+  0 full sweeps. `end_of_feed_is_credible` is the guard — a bounded run also
+  needs an existing ceiling to be measured against, so a cold database cannot be
+  taught a bogus depth by one empty page.
+- **Reposts are linked, never merged.** A relist gets a fresh Bama code, so
+  `listing_fingerprint` (content identity, price deliberately excluded) ties the
+  pair together via `Ad.reposted_from`. Both rows stay; a wrong link is one
+  `UPDATE` to undo.
 - **A 403 is an IP block, not a rate limit.** The crawl gate opens a cooldown
   breaker rather than probing; slowing the crawl does not help and refetching
   during a block poisons coverage.

@@ -838,3 +838,91 @@ def test_empty_coverage():
     assert find_gaps(max_rank=60) == [(1, 60)]
     assert plan_backfill([]) == []
 
+
+
+# --- the depth ratchet, and what is allowed to lower it -------------------------
+#
+# Integration level against a stubbed session, because the bug being pinned here
+# only exists in the handoff between three units: the fetch loop decides whether
+# an empty page is the end of the feed, `known_feed_depth` decides which runs it
+# will believe, and `find_gaps` turns that ceiling into work. Each was correct
+# alone. Together they disabled removal detection for over a day.
+
+
+@pytest.mark.django_db
+def test_a_deep_backfill_that_walks_off_the_feed_lowers_the_ceiling():
+    """The production incident, reproduced.
+
+    The ratchet is a one-way high-water mark, but the feed shrinks as ads are
+    deleted. Only a `mode=FULL` run used to be allowed to lower it, and rolling
+    coverage retired the full sweep entirely — so in one week production logged
+    624 backfills that reached the real end of the feed, 0 full sweeps, and a
+    ceiling stuck ~60 ranks above anything that still existed.
+    """
+    # A deeper feed, observed three days ago: inside the 30-day depth window, so
+    # it still sets the ceiling, but outside the 24h coverage window.
+    _cover(_run(), [4], fetched_at=djtz.now() - timedelta(days=3))
+    assert F.known_feed_depth() == 150
+
+    # The feed now ends after page 3. A bounded backfill walks into the empty page.
+    run = run_with(FakeSession(make_feed(3, "R")), mode="backfill",
+                   start_page=3, end_page=5)
+
+    assert run.reached_end is True
+    assert run.stop_reason == FetchRun.StopReason.END_OF_FEED
+    # An empty page at index 3 says no ad holds a rank above 30 * 3. Recorded
+    # as feed_end_rank, not deepest_rank: this run observed no ads at all.
+    assert run.feed_end_rank == 90
+    assert run.deepest_rank is None
+    assert F.known_feed_depth() == 90
+
+
+@pytest.mark.django_db
+def test_a_shallow_empty_page_never_lowers_the_ceiling():
+    """A delta that runs out of new ads is not evidence about the whole feed.
+
+    This is the guard that makes the change above safe: believing every empty
+    page would let one throttled response retire most of the market.
+    """
+    _cover(_run(), [4], fetched_at=djtz.now() - timedelta(days=3))
+
+    # One page of ads, then empty — far too shallow against a ceiling of page 4.
+    run = run_with(FakeSession(make_feed(1, "S")), mode="delta")
+
+    assert run.reached_end is False
+    assert F.known_feed_depth() == 150
+
+
+@pytest.mark.django_db
+def test_retiring_the_phantom_tail_completes_coverage():
+    """Why any of this matters: `mark_inactive` refuses to act without this.
+
+    Ranks 91..150 belong to ads that no longer exist, so no fetch could ever
+    cover them and `coverage_is_complete` stayed False forever.
+    """
+    stale = djtz.now() - timedelta(days=3)
+    _cover(_run(), [4], fetched_at=stale)
+    _cover(_run(), [0, 1, 2], fetched_at=djtz.now())
+    window = djtz.now() - timedelta(hours=F.COVERAGE_WINDOW_HOURS)
+
+    assert F.find_gaps(since=window, max_rank=F.known_feed_depth()) == [(91, 150)]
+    assert F.coverage_is_complete(since=window) is False
+
+    run_with(FakeSession(make_feed(3, "T")), mode="backfill", start_page=3, end_page=5)
+
+    assert F.known_feed_depth() == 90
+    assert F.find_gaps(since=window, max_rank=F.known_feed_depth()) == []
+    assert F.coverage_is_complete(since=window) is True
+
+
+@pytest.mark.django_db
+def test_a_backfill_range_that_simply_ends_claims_nothing():
+    """Reaching `end_page` is not the same as reaching the end of the feed."""
+    _cover(_run(), [4], fetched_at=djtz.now() - timedelta(days=3))
+
+    run = run_with(FakeSession(make_feed(6, "U")), mode="backfill",
+                   start_page=1, end_page=2)
+
+    assert run.reached_end is False
+    assert run.stop_reason == FetchRun.StopReason.MAX_PAGES
+    assert F.known_feed_depth() == 150

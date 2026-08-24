@@ -8,6 +8,7 @@ failed, so cron and the worker loop can gate on it.
     manage.py bama coverage --since-hours 24
     manage.py bama fetch --mode full --max-ads 50000
     manage.py bama health --json
+    manage.py bama probe_depth      # where does bama.ir actually stop?
 """
 
 from __future__ import annotations
@@ -99,7 +100,7 @@ class Command(BaseCommand):
 
         # A single job. `health` and `reap_orphans` are reports/housekeeping and
         # run bare; everything else is recorded as a JobRun like a scheduled tick.
-        if what in ("health", "reap_orphans"):
+        if what in ("health", "reap_orphans", "probe_depth"):
             result = pipeline.JOBS[what]()
             if options["as_json"]:
                 self.stdout.write(json.dumps(result, indent=2, default=str))
@@ -109,6 +110,8 @@ class Command(BaseCommand):
                     self.stdout.write(style(
                         f"[{'OK  ' if check['ok'] else 'FAIL'}] {check['name']}: {check['detail']}"
                     ))
+            elif what == "probe_depth":
+                self.stdout.write(result["detail"])
             else:
                 self.stdout.write(str(result))
             # A report of a bad state, not a crash — but the exit code is the

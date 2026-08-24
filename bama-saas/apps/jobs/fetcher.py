@@ -33,7 +33,7 @@ from typing import Any
 import requests
 from django.conf import settings
 from django.db import connection, transaction
-from django.db.models import Max
+from django.db.models import Max, Q
 from django.utils import timezone as djtz
 
 from apps.core.models import FetchRun, PageCoverage
@@ -78,6 +78,17 @@ def known_feed_depth() -> int | None:
     would be demanded for ~1,000 ranks that no longer exist. The most recent
     authoritative statement wins — a plain min would let a stale end-of-feed
     hide a tail that has since grown.
+
+    The cap deliberately accepts a credible end-of-feed from ANY mode, not only
+    a full sweep. Requiring ``mode=FULL`` looked safe and was the bug: rolling
+    coverage replaced the full sweep entirely, so no run could ever lower the
+    ceiling again. Over one week production logged 624 backfills that reached the
+    real end of the feed and 0 full sweeps, so the ratchet stayed pinned at a
+    high-water mark from days earlier, ~50 ranks of it referring to ads that no
+    longer existed. Coverage could never be complete, and removal detection was
+    silently disabled for over 24 hours. The credibility check in
+    ``end_of_feed_is_credible`` is what keeps this honest — a shallow delta that
+    hits an empty page never sets ``reached_end``.
     """
     since = djtz.now() - timedelta(days=FEED_DEPTH_WINDOW_DAYS)
     covered = PageCoverage.objects.filter(fetched_at__gte=since)
@@ -87,18 +98,25 @@ def known_feed_depth() -> int | None:
 
     last_end = (
         FetchRun.objects.filter(
-            stop_reason=FetchRun.StopReason.END_OF_FEED, mode=FetchRun.Mode.FULL,
+            stop_reason=FetchRun.StopReason.END_OF_FEED,
             reached_end=True, status=FetchRun.Status.SUCCEEDED,
-            started_at__gte=since, deepest_rank__isnull=False,
+            started_at__gte=since,
         )
-        .order_by("-started_at").values("started_at", "deepest_rank").first()
+        # feed_end_rank is the honest bound; deepest_rank is the fallback for
+        # runs recorded before that column existed.
+        .filter(Q(feed_end_rank__isnull=False) | Q(deepest_rank__isnull=False))
+        .order_by("-started_at")
+        .values("started_at", "feed_end_rank", "deepest_rank").first()
     )
     if not last_end:
         return ratchet
+    ceiling = last_end["feed_end_rank"]
+    if ceiling is None:
+        ceiling = last_end["deepest_rank"]
     deeper_since = covered.filter(
         fetched_at__gte=last_end["started_at"]
     ).aggregate(depth=Max("rank_hi"))["depth"]
-    return max(last_end["deepest_rank"], deeper_since or 0)
+    return max(ceiling, deeper_since or 0)
 
 
 def _merge(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:
@@ -549,6 +567,18 @@ def last_completed_sweep_depth() -> int | None:
     )
 
 
+def expected_end_page() -> int | None:
+    """Page index the feed is currently believed to end on, from the ratchet.
+
+    The yardstick every mode is judged against, because it needs no run to have
+    survived start to finish — unlike ``last_completed_sweep_depth``, which is
+    ``None`` for weeks at a time now that rolling coverage replaced the full
+    sweep.
+    """
+    depth = known_feed_depth()
+    return None if not depth else (depth - 1) // PAGE_SIZE
+
+
 def end_of_feed_is_credible(depth_reached: int, expected_depth: int | None) -> bool:
     """Is an apparent end-of-feed deep enough to believe?
 
@@ -651,7 +681,11 @@ def _fetch_live(*, mode: str = "delta", max_ads: int | None = None,
 
     floor_pages = _delta_floor_pages(djtz.now()) if mode == FetchRun.Mode.DELTA else 0
     # Read before the run row exists, so this run cannot be its own yardstick.
-    expected_depth = last_completed_sweep_depth() if mode == FetchRun.Mode.FULL else None
+    # Every mode is judged now, not just FULL: a bounded backfill that walks off
+    # the end of the feed has seen the same fact a full sweep would have.
+    expected_depth = expected_end_page()
+    if mode == FetchRun.Mode.FULL:
+        expected_depth = max(expected_depth or 0, last_completed_sweep_depth() or 0) or None
 
     run = FetchRun.objects.create(
         source=FetchRun.Source.LIVE_FETCH, status=FetchRun.Status.RUNNING,
@@ -680,24 +714,47 @@ def _fetch_live(*, mode: str = "delta", max_ads: int | None = None,
                 request_timeout=request_timeout, start_page=start_page, end_page=end_page,
             ):
                 if not rows:
-                    # Only a credible full sweep can establish global feed depth.
-                    # Delta and bounded-backfill empties are local stop signals;
-                    # treating them as global evidence can authorise removals
-                    # after one transient empty response.
-                    if mode != FetchRun.Mode.FULL:
-                        stop_reason = (FetchRun.StopReason.END_OF_FEED
-                                       if mode == FetchRun.Mode.DELTA
-                                       else FetchRun.StopReason.MAX_PAGES)
-                    elif end_of_feed_is_credible(page, expected_depth):
+                    # Depth, not mode, decides whether this is the end of the
+                    # feed. `iter_pages` has already confirmed the empty page
+                    # with a second request, and an empty page at index P means
+                    # no ad holds a rank above PAGE_SIZE * P — a fact that does
+                    # not become truer because a full sweep observed it.
+                    #
+                    # A wrongly-believed empty page lowers the ceiling, which is
+                    # self-correcting: the coverage job probes PROBE_PAGES past
+                    # the ceiling every ~10 min, and `known_feed_depth` raises it
+                    # again from any page covered since. That is orders of
+                    # magnitude faster than the two 24h windows a removal needs,
+                    # so a transient empty response cannot delist anything.
+                    #
+                    # A bounded run additionally needs a ceiling to be measured
+                    # against. On a cold database there is nothing to compare
+                    # with, and a single backfilled page returning empty says
+                    # nothing about the feed; only a full sweep, which starts at
+                    # page 0 and therefore walked the whole thing, is believed
+                    # without a yardstick.
+                    credible = (
+                        (expected_depth is not None or mode == FetchRun.Mode.FULL)
+                        and end_of_feed_is_credible(page, expected_depth)
+                    )
+                    if credible:
                         run.reached_end = True
+                        run.feed_end_rank = PAGE_SIZE * page
                         stop_reason = FetchRun.StopReason.END_OF_FEED
-                    else:
+                    elif mode == FetchRun.Mode.FULL:
                         run.error = (
-                            f"end-of-feed at page {page}; the last completed sweep "
-                            f"reached {expected_depth}. Treating as truncated, not "
+                            f"end-of-feed at page {page}; the feed was believed to "
+                            f"reach page {expected_depth}. Treating as truncated, not "
                             "as the end of the feed."
                         )
                         stop_reason = FetchRun.StopReason.ERROR
+                    else:
+                        # Too shallow to be the end of the feed — a delta that
+                        # ran out of new ads, or a backfill range that simply
+                        # finished. A local stop signal and nothing more.
+                        stop_reason = (FetchRun.StopReason.END_OF_FEED
+                                       if mode == FetchRun.Mode.DELTA
+                                       else FetchRun.StopReason.MAX_PAGES)
                     break
 
                 resume_page = page
