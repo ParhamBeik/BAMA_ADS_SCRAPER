@@ -612,8 +612,9 @@ def end_of_feed_is_credible(depth_reached: int, expected_depth: int | None,
     against and is believed.
 
     ``bounded`` marks a run that did not start at page 0 and so cannot vouch for
-    everything above it; it is held to the much tighter
-    ``MIN_BOUNDED_END_OF_FEED_RATIO``.
+    everything above it; it is held to the much tighter page-shortfall bar
+    (``BOUNDED_END_SHORTFALL_RATIO`` / ``MIN_BOUNDED_END_SHORTFALL_PAGES``)
+    instead of the ratio.
     """
     if not expected_depth:
         return True

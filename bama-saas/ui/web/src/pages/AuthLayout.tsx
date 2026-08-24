@@ -51,7 +51,9 @@ export function strengthOf(password: string, checks: Check[]) {
   const roomy = password.length >= 12;
   const varied = /[a-zA-Z]/.test(password) && /[\d\W]/.test(password);
   if (!required) return { label: "Weak", tone: "down" as const, pct: 33 };
-  if (roomy || varied) return { label: "Strong", tone: "up" as const, pct: 100 };
+  // Both, not either: "aaaaaaaaaaaa" is long and "Pa55!" is varied, and calling
+  // either one Strong tells the user something untrue about their password.
+  if (roomy && varied) return { label: "Strong", tone: "up" as const, pct: 100 };
   return { label: "Good", tone: "warn" as const, pct: 66 };
 }
 
