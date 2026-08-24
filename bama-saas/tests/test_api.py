@@ -794,33 +794,41 @@ def _register(client, email, password="StrongPass1!"):
 
 
 @pytest.mark.django_db
-def test_the_first_account_is_staff_and_the_second_is_not(api_client):
-    """Bootstrapping by being first, instead of by a password in the env.
-
-    The seeded admin this replaces had its password in a compose variable that
-    nobody rotates and every deploy operator can read.
-    """
+def test_signup_never_grants_staff(api_client):
+    """Public signup creates a regular user even on an empty table."""
     assert _register(api_client, "owner@example.com").status_code == 201
-    assert User.objects.get(email="owner@example.com").is_staff is True
+    owner = User.objects.get(email="owner@example.com")
+    assert owner.is_staff is False and owner.is_superuser is False
 
     api_client.post("/api/auth/logout/")
     assert _register(api_client, "guest@example.com").status_code == 201
-
     guest = User.objects.get(email="guest@example.com")
     assert guest.is_staff is False and guest.is_superuser is False
 
 
 @pytest.mark.django_db
-def test_staff_is_not_regranted_after_a_wipe_and_resignup(api_client):
-    """`wipe_users` empties the table, so the next signup is first again — that
-    is the documented way back in, and it must actually work."""
+def test_signup_after_a_wipe_is_still_a_regular_user(api_client):
+    """Wiping accounts is not a way back into staff. Use createsuperuser."""
     from django.core.management import call_command
 
     _register(api_client, "owner@example.com")
     call_command("wipe_users", yes=True)
 
     assert _register(api_client, "owner@example.com").status_code == 201
+    owner = User.objects.get(email="owner@example.com")
+    assert owner.is_staff is False and owner.is_superuser is False
+
+
+@pytest.mark.django_db
+def test_an_existing_staff_user_stays_staff_when_someone_else_signs_up(api_client):
+    User.objects.create_user(
+        email="owner@example.com", password="StrongPass1!",
+        is_staff=True, is_superuser=True,
+    )
+    assert _register(api_client, "guest@example.com").status_code == 201
     assert User.objects.get(email="owner@example.com").is_staff is True
+    guest = User.objects.get(email="guest@example.com")
+    assert guest.is_staff is False and guest.is_superuser is False
 
 
 @pytest.mark.django_db

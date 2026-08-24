@@ -59,8 +59,7 @@ services:
     volumes: [staticfiles:/app/staticfiles]
     depends_on:
       postgres: { condition: service_healthy }
-    # No account seeding: the first person to sign up becomes staff. A password
-    # baked into the environment is a credential nobody rotates.
+    # No account seeding. Staff is granted by createsuperuser, not by signup.
     command: >
       sh -c "python manage.py migrate --noinput &&
              python manage.py collectstatic --noinput &&

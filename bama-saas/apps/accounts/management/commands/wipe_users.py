@@ -36,5 +36,6 @@ class Command(BaseCommand):
             f"deleted {total} account(s): {per_model or 'nothing else'}"
         ))
         self.stdout.write(
-            "The next account to sign up becomes staff. Nothing else is seeded."
+            "Signup stays open for regular users. Staff is restored with "
+            "createsuperuser inside the container, not by signing up again."
         )

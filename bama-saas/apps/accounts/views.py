@@ -17,7 +17,7 @@ from datetime import datetime
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.sessions.models import Session
-from django.db import IntegrityError, connection, transaction
+from django.db import IntegrityError
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import ensure_csrf_cookie
@@ -87,11 +87,11 @@ class LoginView(APIView):
 
 
 class RegisterView(APIView):
-    """Open signup. The first account on an empty database becomes staff.
+    """Open signup. Every new account is a regular user.
 
-    That rule replaces a seeded admin whose password lived in an environment
-    variable — a credential nobody rotates and everyone with deploy access can
-    read. Bootstrapping by being first is a single-use privilege instead.
+    Staff is granted only by an existing admin (or ``createsuperuser`` inside
+    the container). The first-signup bootstrap was a one-shot window; it closed
+    once the operator account existed.
     """
 
     permission_classes = [AllowAny]
@@ -102,22 +102,10 @@ class RegisterView(APIView):
         serializer = RegisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
-            with transaction.atomic():
-                # Locked, not just counted: two simultaneous first signups would
-                # otherwise both read an empty table and both become superuser.
-                # The lock is on the whole table because the row does not exist
-                # yet, and it is uncontended after the first account exists.
-                with connection.cursor() as cursor:
-                    cursor.execute(
-                        f"LOCK TABLE {User._meta.db_table} IN SHARE ROW EXCLUSIVE MODE"
-                    )
-                first = not User.objects.exists()
-                user = User.objects.create_user(
-                    email=serializer.validated_data["email"],
-                    password=serializer.validated_data["password"],
-                    is_staff=first,
-                    is_superuser=first,
-                )
+            user = User.objects.create_user(
+                email=serializer.validated_data["email"],
+                password=serializer.validated_data["password"],
+            )
         except IntegrityError as exc:
             raise serializers.ValidationError(
                 {"email": "An account with this email already exists."}

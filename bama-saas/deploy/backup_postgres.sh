@@ -17,11 +17,54 @@ if [[ -r "${env_file}" ]]; then
   compose+=(--env-file "${env_file}")
 fi
 
+# Read one KEY=value from the env file without sourcing the rest of it
+# (passwords, the dump passphrase, and the bot token all live there).
+_env_get() {
+  local key="$1"
+  [[ -r "${env_file}" ]] || return 0
+  local line
+  line="$(grep -E "^${key}=" "${env_file}" | tail -n 1)" || true
+  [[ -n "${line}" ]] || return 0
+  line="${line#"${key}="}"
+  line="${line#\"}"; line="${line%\"}"
+  line="${line#\'}"; line="${line%\'}"
+  printf '%s' "${line}"
+}
+
 # Everything this script says goes to a log nobody watches until the day it
 # matters, so stamp every line. "Created ..." with no date cannot tell you
 # whether the job stopped running three weeks ago.
 say() { echo "$(date -Is) $*"; }
-die() { echo "$(date -Is) FAILED: $*" >&2; exit 1; }
+
+# A failed backup that nobody hears about is the same as no backup. Telegram
+# is best-effort: a down bot must not change the exit code, and missing
+# credentials must not look like success.
+alert_failure() {
+  local msg="$1"
+  local token chat
+  token="${BAMA_TELEGRAM_TOKEN:-$(_env_get BAMA_TELEGRAM_TOKEN)}"
+  chat="${BACKUP_TELEGRAM_CHAT_ID:-$(_env_get BACKUP_TELEGRAM_CHAT_ID)}"
+  if [[ -z "${chat}" ]]; then
+    chat="$("${compose[@]}" exec -T postgres \
+      sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT telegram_chat_id FROM analytics_notifiersettings WHERE id=1"' \
+      2>/dev/null | tr -d "[:space:]")" || true
+  fi
+  if [[ -z "${token}" || -z "${chat}" ]]; then
+    say "alert skipped: telegram token or chat id missing"
+    return 0
+  fi
+  curl -sS --max-time 10 -X POST \
+    "https://api.telegram.org/bot${token}/sendMessage" \
+    --data-urlencode "chat_id=${chat}" \
+    --data-urlencode "text=${msg}" \
+    >/dev/null 2>&1 || say "alert send failed (backup still failed)"
+}
+
+die() {
+  say "FAILED: $*" >&2
+  alert_failure "Bama nightly backup FAILED: $*" || true
+  exit 1
+}
 
 [[ -r "${passphrase_file}" ]] || die "cannot read ${passphrase_file}"
 mode="$(stat -c '%a' "${passphrase_file}")"
