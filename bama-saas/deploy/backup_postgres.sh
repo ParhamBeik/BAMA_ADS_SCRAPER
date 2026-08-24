@@ -17,9 +17,15 @@ if [[ -r "${env_file}" ]]; then
   compose+=(--env-file "${env_file}")
 fi
 
-[[ -r "${passphrase_file}" ]] || { echo "Cannot read ${passphrase_file}" >&2; exit 1; }
+# Everything this script says goes to a log nobody watches until the day it
+# matters, so stamp every line. "Created ..." with no date cannot tell you
+# whether the job stopped running three weeks ago.
+say() { echo "$(date -Is) $*"; }
+die() { echo "$(date -Is) FAILED: $*" >&2; exit 1; }
+
+[[ -r "${passphrase_file}" ]] || die "cannot read ${passphrase_file}"
 mode="$(stat -c '%a' "${passphrase_file}")"
-[[ "${mode}" =~ ^[46]00$ ]] || { echo "${passphrase_file} must have mode 400 or 600" >&2; exit 1; }
+[[ "${mode}" =~ ^[46]00$ ]] || die "${passphrase_file} must have mode 400 or 600"
 mkdir -p "${backup_dir}"
 
 stamp="$(TZ=Asia/Tehran date +%F)"
@@ -50,9 +56,7 @@ mv "${partial}" "${destination}"
 
 if ! openssl enc -d -aes-256-cbc -pbkdf2 -iter 310000 \
      -pass "file:${passphrase_file}" -in "${destination}" >/dev/null 2>&1; then
-  echo "Verification failed: ${destination} does not decrypt cleanly end to end" >&2
-  echo "(truncated or corrupt). Left in place for inspection." >&2
-  exit 1
+  die "${destination} does not decrypt cleanly end to end (truncated or corrupt). Left in place for inspection."
 fi
 
 # Judged on output, not exit status, deliberately: `pg_restore --list` reads the
@@ -67,10 +71,7 @@ toc="$(set +o pipefail
 
 tables="$(grep -c 'TABLE DATA' <<<"${toc}" || true)"
 if ((tables < MIN_EXPECTED_TABLES)) || ! grep -q 'TABLE DATA public accounts_user' <<<"${toc}"; then
-  echo "Verification failed: decrypted archive lists ${tables} tables and no" >&2
-  echo "accounts_user; expected at least ${MIN_EXPECTED_TABLES}. Keeping" >&2
-  echo "${destination} unchecksummed for inspection." >&2
-  exit 1
+  die "decrypted archive lists ${tables} tables and no accounts_user; expected at least ${MIN_EXPECTED_TABLES}. Keeping ${destination} unchecksummed for inspection."
 fi
 
 sha256sum "${destination}" > "${destination}.sha256"
@@ -79,4 +80,4 @@ mapfile -t old_backups < <(find "${backup_dir}" -maxdepth 1 -type f -name 'daily
 if ((${#old_backups[@]} > 7)); then
   for backup in "${old_backups[@]:7}"; do rm -f -- "${backup}" "${backup}.sha256"; done
 fi
-echo "Created ${destination}"
+say "created ${destination} ($(du -h "${destination}" | cut -f1), ${tables} tables)"
