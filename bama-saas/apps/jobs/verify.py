@@ -124,6 +124,24 @@ def _brand_missing(extracted, payload):
         return Rejection("brand_missing", f"brand={brand!r} model={model!r}", True)
 
 
+def _photo_missing(extracted, payload):
+    """No usable photo — hard, because the crawl asked for photos.
+
+    The feed is fetched with ``image=1&priced=1``: a photoless ad is outside the
+    population this app collects, not a listing with a field missing. Keeping
+    them meant the deal board's cards had nothing to show and the buyer could
+    not judge a car before opening it, which is most of what a card is for.
+
+    Checked against the same extractor ingest stores from, so a row can never be
+    accepted here and then written with an empty ``primary_image_url``.
+    """
+    from apps.jobs.ingest import _image_urls  # local: verify must not import ORM
+
+    primary, _ = _image_urls(payload or {})
+    if not primary:
+        return Rejection("photo_missing", "no bama-CDN image in the payload", True)
+
+
 # --- soft rules ------------------------------------------------------------
 
 def _price_type_unknown(extracted, payload):
@@ -235,12 +253,14 @@ RULES: tuple[Callable[[dict, dict], Rejection | None], ...] = (
     _installment_without_prepayment,
     _publish_unparseable,
     _brand_missing,
+    _photo_missing,
 )
 
 # Rule ids whose presence makes a row unusable. Analytics excludes exactly
 # these (apps.core.quality.verified).
 HARD_RULE_IDS = frozenset({
     "code_missing", "price_missing_for_lumpsum", "price_too_low", "brand_missing",
+    "photo_missing",
 })
 
 # Flags raised outside RULES because they need database state the rule signature

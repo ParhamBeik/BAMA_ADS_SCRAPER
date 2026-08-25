@@ -40,6 +40,7 @@ from apps.jobs.jobs import (
     sweep_cutoff,
 )
 from apps.jobs.parsing import extract_ad, parse_publish_time
+from tests.conftest import gallery
 
 NOW = datetime(2026, 8, 8, 12, 0, tzinfo=tz.utc)
 
@@ -333,21 +334,61 @@ def test_backfill_fills_photos_from_payloads_already_stored(known_catalog):
 
 
 @pytest.mark.django_db
-def test_backfill_leaves_a_photoless_payload_alone(known_catalog):
-    """An ad genuinely without a photo must not be counted as filled."""
+def test_backfill_deletes_what_it_cannot_fill(known_catalog):
+    """The feed is crawled with image=1, so a photoless ad is out of population.
+
+    Not "kept with a placeholder": these are rows the crawl never meant to
+    collect, and on the board they were cards with nothing to show.
+    """
     Ad.objects.create(
         code="nophoto1", title="x", current_price=1_000_000_000,
         primary_image_url="", raw_payload={"detail": {"code": "nophoto1"}},
     )
-    assert backfill_images()["filled"] == 0
-    assert Ad.objects.get(code="nophoto1").primary_image_url == ""
+    result = backfill_images()
+
+    assert result["filled"] == 0
+    assert result["pruned"] == 1
+    assert not Ad.objects.filter(code="nophoto1").exists()
+
+
+@pytest.mark.django_db
+def test_backfill_fills_before_it_prunes(known_catalog):
+    """Order matters: reversed, this would delete every row whose photo was
+    merely unread — ~28,500 of them in production."""
+    Ad.objects.create(
+        code="fillme01", title="x", current_price=1_000_000_000,
+        primary_image_url="", image_urls=[], raw_payload=_gallery_payload(2),
+    )
+    Ad.objects.create(
+        code="dropme01", title="x", current_price=1_000_000_000,
+        primary_image_url="", raw_payload={"detail": {"code": "dropme01"}},
+    )
+
+    result = backfill_images()
+
+    assert result == {"scanned": 2, "filled": 1, "pruned": 1, "remaining": 0}
+    assert Ad.objects.filter(code="fillme01").exists()
+    assert not Ad.objects.filter(code="dropme01").exists()
+
+
+@pytest.mark.django_db
+def test_backfill_can_fill_without_pruning(known_catalog):
+    """`prune=False` is the dry-run for "what would this remove?"."""
+    Ad.objects.create(
+        code="nophoto2", title="x", current_price=1_000_000_000,
+        primary_image_url="", raw_payload={"detail": {"code": "nophoto2"}},
+    )
+    result = backfill_images(prune=False)
+
+    assert result["pruned"] == 0
+    assert Ad.objects.filter(code="nophoto2").exists()
 
 
 @pytest.mark.django_db
 def test_missing_presentation_fields_stay_null(known_catalog, make_payload):
-    """None means "not stated", which is a different fact from zero — an ad with
-    no photos and an ad that did not report a photo count must stay
-    distinguishable or every average over them is wrong."""
+    """None means "not stated", which is a different fact from zero — a seller
+    who wrote no description and one whose description we failed to read must
+    stay distinguishable or every average over them is wrong."""
     run = FetchRun.objects.create(source=FetchRun.Source.LIVE_FETCH)
     observed = datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc)
 
@@ -357,10 +398,14 @@ def test_missing_presentation_fields_stay_null(known_catalog, make_payload):
     )
     ad.refresh_from_db()
 
-    assert ad.image_count is None
     assert ad.description_length is None
     assert ad.seller_authenticated is None
     assert ad.source_modified_at is None
+    # image_count is NOT in this list any more. It used to be, back when an ad
+    # could have no photo at all; `_photo_missing` now makes that unstorable, so
+    # when Bama omits the count the gallery we did read is the better answer
+    # than None.
+    assert ad.image_count == 3
 
 
 @pytest.mark.django_db
@@ -678,6 +723,7 @@ def test_cutoff_is_the_start_of_the_older_window(catalog):
 
 def _payload(code, price=1_000_000_000):
     return {
+        "images": gallery(code),
         "detail": {
             "code": code, "title": "پژو، ۲۰۶", "brand_fa": "پژو",
             "year": "1399", "mileage": "100,000", "type": "car",

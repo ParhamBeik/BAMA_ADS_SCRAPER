@@ -1,4 +1,10 @@
-"""Query filters for GET /api/ads/."""
+"""Query filters for GET /api/ads/.
+
+No ``has_image`` filter: every stored ad has one. The feed is crawled with
+``image=1&priced=1`` and ``verify._photo_missing`` is hard, so "photoless"
+is not a state a row can be in — a filter for it would have exactly one
+answer forever, and ``?has_image=false`` would silently return nothing.
+"""
 
 import django_filters
 from django.db.models import Q
@@ -36,18 +42,10 @@ class AdFilter(django_filters.FilterSet):
         choices=(("dealer", "dealer"), ("private", "private")),
         method="filter_seller_type",
     )
-    has_image = django_filters.BooleanFilter(method="filter_has_image")
     q = django_filters.CharFilter(method="filter_q")
 
     def filter_seller_type(self, queryset, name, value):
         return queryset.filter(dealer__isnull=value != "dealer")
-
-    def filter_has_image(self, queryset, name, value):
-        if value is True:
-            return queryset.exclude(primary_image_url="")
-        if value is False:
-            return queryset.filter(primary_image_url="")
-        return queryset
 
     def filter_q(self, queryset, name, value):
         if not value:

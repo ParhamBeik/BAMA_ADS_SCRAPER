@@ -714,18 +714,28 @@ def prune(*, days: int = PRUNE_DEFAULT_DAYS, dry_run: bool = False) -> dict:
 _IMAGE_BACKFILL_BATCH = 500
 
 
-def backfill_images(*, limit: int | None = None) -> dict:
-    """Refill the image columns from payloads already on disk. No network.
+def backfill_images(*, limit: int | None = None, prune: bool = True) -> dict:
+    """Refill the image columns from payloads already on disk, then drop the rest.
 
     The image columns were added after most of the catalog was ingested, and
-    they only refill when an ad is next *observed* — so 14,658 of 21,346 rows
-    render "No photo" while carrying a perfectly good CDN URL inside their own
-    ``raw_payload``. Nothing needs re-crawling; the data is already here.
+    they only refill when an ad is next *observed* — so 36,914 of 81,490
+    production rows render "No photo" while ~78% of them carry a perfectly good
+    CDN URL inside their own ``raw_payload``. Nothing needs re-crawling.
+
+    What cannot be filled is **deleted**, not kept: the feed is crawled with
+    ``image=1&priced=1``, so an ad with no photo is outside the population this
+    app collects rather than a listing with one field missing. ``_photo_missing``
+    is the hard verify rule that stops new ones arriving; this is the same
+    decision applied to rows that predate it. Fill first and delete second —
+    reversing that order would destroy the ~28.5k rows whose photos were merely
+    unread.
 
     Runs through the same ``_image_urls`` the live path uses, so a row filled
     here and a row filled by a fetch cannot disagree. Idempotent: it only reads
     rows that have no primary image, and a second pass over a filled row is a
     no-op.
+
+    ``prune=False`` fills only, for checking what a run would remove first.
     """
     from apps.jobs.ingest import _image_urls
 
@@ -760,7 +770,14 @@ def backfill_images(*, limit: int | None = None) -> dict:
     if batch:
         Ad.objects.bulk_update(batch, ["primary_image_url", "image_urls", "image_count"])
 
-    return {"scanned": scanned, "filled": filled,
+    # Everything still photoless after the fill genuinely has no image in its
+    # payload. Batched, because CASCADE reaches observations, versions, episodes
+    # and price rows, and one 8k-row DELETE takes locks for the whole statement.
+    pruned = 0
+    if prune and limit is None:
+        pruned = _batched_delete(Ad.objects.filter(primary_image_url=""))
+
+    return {"scanned": scanned, "filled": filled, "pruned": pruned,
             "remaining": Ad.objects.filter(primary_image_url="").count()}
 
 

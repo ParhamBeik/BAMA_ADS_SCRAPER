@@ -67,11 +67,28 @@ def staff_client(db) -> APIClient:
     return client
 
 
+# The feed is crawled with `image=1&priced=1`, so every payload it returns
+# carries a gallery. Fixtures must too, or they exercise a shape the crawler
+# cannot produce — and `_photo_missing` (hard) would reject all of them.
+CDN = "https://cdn-sth1.bama.ir/uploads/BamaImages/VehicleCarImages"
+
+
+def gallery(code, n=3):
+    """The top-level `images` block, one entry per photo at three widths."""
+    return [
+        {"large": f"{CDN}/{code}/{i}.jpg?x-img=v1/resize,w_600",
+         "small": f"{CDN}/{code}/{i}.jpg?x-img=v1/resize,w_450",
+         "thumb": f"{CDN}/{code}/{i}.jpg?x-img=v1/resize,w_90"}
+        for i in range(n)
+    ]
+
+
 @pytest.fixture
 def make_payload():
     """Build a raw Bama payload the way the feed sends one."""
     def build(code, price, phrase="2 ساعت پیش", brand="پژو", model="405", trim="دنده‌ای"):
         return {
+            "images": gallery(code),
             "detail": {
                 "code": code,
                 "title": f"{brand}، {model}",

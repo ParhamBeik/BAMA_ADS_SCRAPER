@@ -19,6 +19,7 @@ from apps.core.models import Ad, Brand, FetchRun, Model
 from apps.jobs import verify as V
 from apps.jobs.ingest import ingest_ad, reset_cache, resolve_dimensions
 from apps.jobs.parsing import extract_ad
+from tests.conftest import gallery
 
 OBSERVED_AT = datetime(2025, 7, 1, tzinfo=timezone.utc)
 
@@ -27,6 +28,8 @@ def clean_payload() -> dict:
     """A real (abridged) Bama ad that passes every rule."""
     return copy.deepcopy(
         {
+            # The crawl asks for `image=1`, so a real payload always has one.
+            "images": gallery("6mnwbfv5"),
             "detail": {
                 "code": "6mnwbfv5", "title": "آئودی، A3L", "brand_fa": "آئودی",
                 "year": "2025", "mileage": "صفر کیلومتر", "type": "car",
@@ -53,7 +56,7 @@ def test_clean_payload_has_no_rejections():
 
 
 def test_every_rule_is_registered():
-    assert len(V.RULES) == 13
+    assert len(V.RULES) == 14
 
 
 def test_hard_flag_agrees_with_hard_rule_ids():
@@ -278,7 +281,35 @@ def test_verify_never_raises_on_garbage():
 
 def test_hard_soft_classification():
     hard = {r.rule for r in V.verify_extracted({}, {}) if r.hard}
-    assert hard == {"code_missing", "brand_missing"}
+    assert hard == {"code_missing", "brand_missing", "photo_missing"}
+
+
+def test_a_photoless_ad_is_quarantined_not_stored():
+    """The feed is crawled with `image=1`, so no photo means out of population.
+
+    Hard, not soft: a card with nothing to show is most of what a card is for,
+    and these were 8,352 rows of production catalog nobody could judge.
+    """
+    payload = clean_payload()
+    del payload["images"]
+    assert run(payload) == ["photo_missing"]
+    assert "photo_missing" in V.HARD_RULE_IDS
+
+
+def test_a_non_bama_image_does_not_count_as_a_photo():
+    payload = clean_payload()
+    payload["images"] = [{"large": "https://evil.example.com/car.jpg"}]
+    assert run(payload) == ["photo_missing"]
+
+
+def test_the_single_detail_thumbnail_is_enough():
+    """Older payloads carry one photo on `detail.image` and no gallery."""
+    payload = clean_payload()
+    del payload["images"]
+    payload["detail"]["image"] = (
+        "https://cdn-sth1.bama.ir/uploads/BamaImages/x/only.jpg?x-img=v1/resize,w_450"
+    )
+    assert run(payload) == []
 
 
 @pytest.mark.django_db

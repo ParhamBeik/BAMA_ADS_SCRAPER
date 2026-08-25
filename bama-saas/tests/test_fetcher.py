@@ -31,10 +31,12 @@ from apps.jobs.fetcher import (
     find_gaps,
     plan_backfill,
 )
+from tests.conftest import gallery
 
 
 def make_ad(code: str, rank: int, price: int = 450_000_000) -> dict:
     return {
+        "images": gallery(code),
         "detail": {
             "code": code,
             "rank": rank,
@@ -365,6 +367,7 @@ def feed_ad(code, price, phrase="2 ساعت پیش", brand="پژو", model="405"
     if rank is not None:
         detail["rank"] = rank
     return {
+        "images": gallery(code),
         "detail": detail,
         "price": {
             "price": str(price),

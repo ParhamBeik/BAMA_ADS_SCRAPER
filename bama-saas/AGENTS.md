@@ -70,6 +70,12 @@ schema is independent of the Python layout. Do not remove those pins.
   gallery duplicates the first photo. `backfill_images` refills from
   `raw_payload` with no network; 45% of the catalog was photoless and 78% of
   those had a usable URL already stored.
+- **A photoless ad is not stored.** `image=1&priced=1` is what the crawl asks
+  for, so no photo means the row is out of population — `_photo_missing` is a
+  HARD rule, and `backfill_images` deletes what it cannot fill (fill first,
+  delete second; reversed it would destroy the ~28.5k rows whose photos were
+  merely unread). Test fixtures must therefore carry an `images` block —
+  `tests/conftest.gallery()` builds one.
 - **`Ad.url` is a path, not a URL.** Every row in production stores
   `/car/detail-...`, so anything rendering it into an href resolves against our
   own origin. `parsing.absolute_ad_url` is the only place that fixes it — the
