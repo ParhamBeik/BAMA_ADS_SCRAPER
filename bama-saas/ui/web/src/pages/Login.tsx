@@ -26,7 +26,7 @@ export function Login() {
     try {
       await login(email.trim(), password);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
+      setError(err instanceof Error ? err.message : "خطایی رخ داد. دوباره تلاش کنید.");
       setPassword("");
     } finally {
       setSubmitting(false);
@@ -35,12 +35,12 @@ export function Login() {
 
   return (
     <AuthLayout
-      eyebrow="Welcome back"
-      heading="Sign in to your account"
-      intro="Pick up where you left off across deals, research, and saved listings."
+      eyebrow="خوش آمدید"
+      heading="به حساب خود وارد شوید"
+      intro="از همان‌جا که رها کردید ادامه دهید: معامله‌ها، تحلیل‌ها و آگهی‌های ذخیره‌شده."
       footer={
         <>
-          New to Bama Market? <Link to="/signup">Create an account</Link>
+          تازه به بازار خودرو باما آمده‌اید؟ <Link to="/signup">حساب بسازید</Link>
         </>
       }
     >
@@ -54,24 +54,24 @@ export function Login() {
           touched={emailTouched}
           hint={
             email && !emailValid
-              ? { text: "Enter a valid email address", tone: "down" }
+              ? { text: "یک نشانی ایمیل معتبر وارد کنید", tone: "down" }
               : null
           }
         />
 
         <PasswordField
           id="auth-password"
-          label="Password"
+          label="گذرواژه"
           value={password}
           onChange={setPassword}
           show={show}
           onToggle={() => setShow((v) => !v)}
           autoComplete="current-password"
-          placeholder="Enter your password"
+          placeholder="گذرواژه خود را وارد کنید"
         />
 
         <button className="primary auth-submit" type="submit" disabled={!ready || submitting}>
-          {submitting ? "Signing in…" : "Sign in"}
+          {submitting ? "در حال ورود…" : "ورود"}
           {!submitting && <ArrowRight size={17} />}
         </button>
       </form>

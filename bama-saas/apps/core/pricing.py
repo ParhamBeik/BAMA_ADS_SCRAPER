@@ -21,12 +21,15 @@ withdrawal.
 
 from __future__ import annotations
 
+import math
 import statistics
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from datetime import timedelta
 from statistics import median
 
+from django.core.cache import cache
 from django.utils import timezone
 
 from apps.core.models import Ad, DealScoreCache
@@ -35,6 +38,7 @@ from apps.core.quality import (
     FLAG_OUTLIER_HIGH,
     exclude_unclear_price,
     verified,
+    verified_by_ad,
     without_cohort_outliers,
 )
 from apps.jobs.verify import MIN_PLAUSIBLE_PRICE
@@ -126,6 +130,20 @@ def dispersion(prices: list[int], base: float) -> float | None:
     return round(statistics.median([abs(p - base) for p in prices]) / base, 4)
 
 
+def percentile(values: list[float], p: int) -> float:
+    """The p-th percentile by nearest rank. Empty input is 0.0.
+
+    Nearest-rank rather than interpolated: the result is used as an inclusion
+    threshold compared against the same values it was drawn from, so it should
+    be one of them.
+    """
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    rank = max(1, math.ceil(p / 100 * len(ordered)))
+    return ordered[rank - 1]
+
+
 def cohort_peers(*, model_id: int, variant_id, year_jalali) -> list[tuple[int, int]]:
     """Priced, active, verified ``(price, mileage)`` peers of one cohort.
 
@@ -194,6 +212,32 @@ def fair_price(code: str) -> dict:
         "peer_count": baseline.peer_count,
         "dispersion": dispersion([p for p, _ in peers], baseline.base),
         "confidence": baseline.confidence,
+        # Where this car sits among its peers, as a shape rather than a verdict.
+        # A components table answers "how was the number built"; this answers
+        # "is this cheap", which is the question people actually arrive with.
+        # Free: it is the same peer list the baseline was computed from.
+        "distribution": peer_distribution([p for p, _ in peers]),
+    }
+
+
+def peer_distribution(prices: list[int]) -> dict:
+    """The cohort's asking-price shape: the band, the middle, and the edges.
+
+    p10/p90 rather than min/max define the drawn band — one typo listing at
+    5.8 trillion toman would otherwise squash every real car into the left
+    pixel. min/max ride along for labelling the tails honestly.
+    """
+    if not prices:
+        return {}
+    return {
+        "min": min(prices),
+        "p10": int(percentile(prices, 10)),
+        "p25": int(percentile(prices, 25)),
+        "median": int(statistics.median(prices)),
+        "p75": int(percentile(prices, 75)),
+        "p90": int(percentile(prices, 90)),
+        "max": max(prices),
+        "count": len(prices),
     }
 
 
@@ -292,6 +336,96 @@ def flag_high_outliers(*, model_id: int | None = None) -> dict:
 # 50M-vs-2B row.
 MIN_ASK_VS_MEDIAN = 0.5
 
+# Above this, the gap is an attribute the cohort key cannot see far more often
+# than it is a bargain: (model, variant, year) knows nothing about accident
+# damage, free-zone plates or pre-sales. Those listings are not hidden — they go
+# to the review band, labelled, instead of onto the page that calls them the
+# best deals available.
+#
+# Lives here, not in the frontend where it started, because the API filters on
+# it and the UI narrates it; two copies drift on the first retune. Lowered from
+# 30 to 25 on 2026-08-25: the 25-50% band is populated systematically rather
+# than occasionally, which is a symptom of something unresolved (a peer median
+# that is not recency-weighted, or damaged/fake listings) and not a supply of
+# quarter-price cars.
+TRUSTED_MAX_DISCOUNT = 25.0
+
+# --- the dynamic top-suggestions window ------------------------------------
+#
+# A fixed "top N by discount" board ranks a three-week-old asking price above a
+# fresh one, and a fixed discount floor is either empty on a quiet day or
+# thousands of rows deep on a busy one. Both thresholds are therefore measured
+# from the batch actually on the board right now.
+
+# The window grows a day at a time until it holds this many candidates. Several
+# pages' worth, so the board is worth paging through, but small enough that a
+# normal day resolves in a handful of days rather than falling back to a month.
+MIN_CANDIDATES = 200
+MAX_WINDOW_DAYS = 30
+# "Top suggestions" means the best quarter of what the window holds.
+CANDIDATE_PERCENTILE = 75
+# Recomputed on the worker's tick anyway; five minutes keeps the page honest
+# without re-running the percentile scan for every reader.
+WINDOW_CACHE_SECONDS = 300
+_WINDOW_CACHE_KEY = "deal_window:v1"
+
+# Freshness bands, in days since the ad was published or last bumped. The board
+# sorts by band first and discount second, so a fresh 9% deal outranks a
+# three-week-old 20% one without recency having to be blended into the score.
+FRESHNESS_BANDS = ((1, "today"), (3, "d1_3"), (7, "d4_7"), (14, "d8_14"))
+LAST_BAND = "d15_plus"
+
+
+def deal_window(*, now=None) -> dict:
+    """How far back the board looks today, and how good a deal has to be.
+
+    Walks the window out one day at a time and stops at the first width that
+    holds ``MIN_CANDIDATES`` listings at or above that width's own
+    ``CANDIDATE_PERCENTILE`` discount. A thin day therefore widens the window
+    instead of showing three cars, and a busy day tightens it instead of
+    burying today's arrivals under last month's.
+
+    Recency is measured on ``publish_at``, never ``first_seen_at``:
+    ``first_seen_at`` is when *our crawler* got there, so an old listing found
+    by a deep backfill yesterday would rank as brand new. ``publish_at`` comes
+    from Bama's own phrase and moves when a seller bumps the ad — which is the
+    "this price was reasserted recently" signal the ordering is actually for.
+    """
+    cached = cache.get(_WINDOW_CACHE_KEY)
+    if cached is not None:
+        return cached
+
+    now = now or timezone.now()
+    rows = list(
+        verified_by_ad(DealScoreCache.objects.filter(discount_pct__gt=0,
+                                                     discount_pct__lte=TRUSTED_MAX_DISCOUNT))
+        .filter(ad__publish_at__isnull=False)
+        .values_list("ad__publish_at", "discount_pct")
+    )
+
+    window = {
+        "window_days": MAX_WINDOW_DAYS,
+        "min_discount_pct": 0.0,
+        "ceiling_pct": TRUSTED_MAX_DISCOUNT,
+        "candidates": 0,
+        "scored": len(rows),
+        "computed_at": now,
+    }
+    for days in range(1, MAX_WINDOW_DAYS + 1):
+        cutoff = now - timedelta(days=days)
+        inside = [d for published, d in rows if published >= cutoff]
+        if not inside:
+            continue
+        floor = percentile(inside, CANDIDATE_PERCENTILE)
+        candidates = sum(1 for d in inside if d >= floor)
+        window.update(window_days=days, min_discount_pct=round(floor, 2),
+                      candidates=candidates)
+        if candidates >= MIN_CANDIDATES:
+            break
+
+    cache.set(_WINDOW_CACHE_KEY, window, WINDOW_CACHE_SECONDS)
+    return window
+
 
 def compute_deal_scores(*, model_id: int | None = None) -> dict:
     """Rebuild deal scores for every eligible ad, or one model's.
@@ -389,6 +523,11 @@ def compute_deal_scores(*, model_id: int | None = None) -> dict:
         DealScoreCache.objects.all().delete()
     if objs:
         DealScoreCache.objects.bulk_create(objs, batch_size=500)
+
+    # The window is measured from these rows, so it is wrong the instant they
+    # are replaced. Dropped rather than recomputed here: the next reader pays
+    # for it, and a rebuild that crashes afterwards leaves no stale answer.
+    cache.delete(_WINDOW_CACHE_KEY)
 
     return {
         "scored": len(objs),

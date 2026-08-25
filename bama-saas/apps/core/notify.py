@@ -19,6 +19,7 @@ from django.conf import settings
 
 from apps.core.models import DealScoreCache, NotifiedAd, NotifierSettings
 from apps.core.quality import exclude_unclear_price, verified_by_ad
+from apps.jobs.parsing import absolute_ad_url
 
 log = logging.getLogger("bama.notify")
 
@@ -79,9 +80,7 @@ def format_message(row: DealScoreCache) -> str:
     ad = row.ad
     components = row.components or {}
     fair = components.get("fair_value") or row.peer_median or 0
-    url = ad.url or ""
-    if url and not url.startswith("http"):
-        url = f"https://bama.ir{url}"
+    url = absolute_ad_url(ad.url or ad.canonical_path)
     lines = [
         f"<b>{row.discount_pct:.0f}% below fair value</b>",
         f"{ad.title or ''} — {ad.year_jalali or '?'}",

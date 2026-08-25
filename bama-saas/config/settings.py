@@ -87,6 +87,38 @@ DATABASES = {
     )
 }
 
+# ---------------------------------------------------------------------------
+# Cache
+# ---------------------------------------------------------------------------
+#
+# Redis holds two things: the proxied listing photos (bama.ir's CDN blocks us
+# periodically, and a card grid of broken images is the failure users actually
+# see) and the deal board's computed window. Both are pure derived data — losing
+# the whole cache costs one recomputation and some re-fetching, never a fact.
+#
+# LocMem when REDIS_URL is empty, so pytest and a Redis-less host still run.
+# django.core.cache.backends.redis is built in; no django-redis dependency.
+
+REDIS_URL = os.environ.get("REDIS_URL", "" if DEBUG else "redis://redis:6379/0")
+
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": REDIS_URL,
+    } if REDIS_URL else {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "bama-fallback",
+    }
+}
+
+# How long a proxied photo stays cached. Bama's image URLs are content-addressed
+# (a GUID per upload), so a stale entry is not a risk — the URL changes when the
+# picture does.
+IMAGE_CACHE_SECONDS = int(os.environ.get("IMAGE_CACHE_SECONDS", 60 * 60 * 24 * 30))
+# Listing photos run ~40-120KB. Anything past this is not a car photo and must
+# not be pulled into the cache.
+IMAGE_MAX_BYTES = int(os.environ.get("IMAGE_MAX_BYTES", 2 * 1024 * 1024))
+
 AUTH_USER_MODEL = "accounts.User"
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": f"django.contrib.auth.password_validation.{name}"}

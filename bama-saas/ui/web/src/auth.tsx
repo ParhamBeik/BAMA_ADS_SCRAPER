@@ -48,12 +48,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(u);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
-        throw new Error("Invalid email or password.");
+        throw new Error("ایمیل یا گذرواژه نادرست است.");
       }
       if (err instanceof ApiError && err.status === 429) {
-        throw new Error("Too many attempts. Wait a minute and try again.");
+        throw new Error("تلاش بیش از حد. یک دقیقه صبر کنید و دوباره تلاش کنید.");
       }
-      throw new Error("Login failed.");
+      throw new Error("ورود ناموفق بود.");
     }
   }, []);
 
@@ -64,12 +64,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (err) {
       if (err instanceof ApiError && err.status === 400) {
         const body = err.body as { email?: string[]; password?: string[] } | undefined;
-        throw new Error(body?.email?.[0] ?? body?.password?.[0] ?? "Please check your details.");
+        throw new Error(body?.email?.[0] ?? body?.password?.[0] ?? "لطفاً اطلاعات واردشده را بررسی کنید.");
       }
       if (err instanceof ApiError && err.status === 429) {
-        throw new Error("Too many sign-up attempts. Wait a minute and try again.");
+        throw new Error("تلاش بیش از حد برای ثبت‌نام. یک دقیقه صبر کنید و دوباره تلاش کنید.");
       }
-      throw new Error("Account creation failed.");
+      throw new Error("ساخت حساب ناموفق بود.");
     }
   }, []);
 

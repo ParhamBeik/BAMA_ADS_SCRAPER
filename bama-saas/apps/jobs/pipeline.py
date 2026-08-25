@@ -46,6 +46,7 @@ JOBS: dict[str, Callable[..., dict]] = {
     "deal_scores": jobs.deal_scores,
     "notify": jobs.notify,
     "coverage": jobs.coverage,
+    "backfill_images": jobs.backfill_images,
     "prune": jobs.prune,
     "health": jobs.health,
     "probe_depth": jobs.probe_depth,
@@ -58,13 +59,17 @@ JOBS: dict[str, Callable[..., dict]] = {
 # link_reposts sits between removal marking and episodes: it needs the
 # delisted set to be current, and episodes reads the links it writes.
 STEP_ORDER = ("fetch", "mark_inactive", "link_reposts", "episodes", "snapshot",
-              "market_index", "deal_scores", "notify", "coverage", "prune", "health")
+              "market_index", "deal_scores", "notify", "coverage",
+              "backfill_images", "prune", "health")
 
 CADENCES = {
     "hot": ("fetch", "mark_inactive", "deal_scores", "notify"),
     "warm": ("link_reposts", "episodes", "snapshot", "market_index"),
     "coverage": ("coverage",),
-    "maintenance": ("deal_scores", "prune", "health"),
+    # backfill_images is local and idempotent: it sweeps up rows whose photos
+    # were never extracted, so a listing does not have to be re-observed before
+    # the board can show it.
+    "maintenance": ("deal_scores", "backfill_images", "prune", "health"),
     "full": ("fetch", "mark_inactive", "link_reposts", "episodes", "snapshot",
              "market_index", "deal_scores", "notify"),
 }

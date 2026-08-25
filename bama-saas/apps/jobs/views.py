@@ -119,6 +119,18 @@ def trigger_deal_scores(request):
     return _accepted("deal_scores")
 
 
+@api_view(["POST"])
+@permission_classes([IsAdminUser])
+def trigger_backfill_images(request):
+    """POST /api/admin/jobs/backfill-images/ — refill photos from stored payloads.
+
+    Local and idempotent (no network), but it walks every photoless ad, so it is
+    an operator action rather than something to run on the hot cadence.
+    """
+    _spawn("backfill_images", _step("backfill_images"))
+    return _accepted("backfill_images")
+
+
 @api_view(["GET"])
 @permission_classes([IsAdminUser])
 def jobs_overview(request):

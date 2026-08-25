@@ -2,26 +2,28 @@
  * The deal board — the product's point.
  *
  * Every column here exists so the ranking can be checked rather than trusted.
- * The discount is measured against the cohort's own median, the peer count says
- * how many cars that median was built from, and the confidence tier says whether
- * the backend considers that enough. A 40% discount off three listings is not a
- * better deal than 12% off forty, and the board has to make that visible.
+ * The discount is measured against the peer group's own median, the peer count
+ * says how many cars that median was built from, and the confidence dots say
+ * whether the backend considers that enough. A 40% discount off three listings
+ * is not a better deal than 12% off forty, and the board has to make that
+ * visible.
  *
- * Two corrections this screen carries, both from an audit of what it was
- * actually showing:
+ * **Freshness ranks before size of discount.** A three-week-old asking price is
+ * a worse guide to what a car costs today than a fresh one, however large the
+ * gap looks — so the board groups by how recently the ad was posted or bumped,
+ * and the discount only decides order *within* a group. Without the group
+ * headings this reads as a broken sort, which is why they are not decoration.
  *
- * **It defaults to the ≤30% band.** An audit of the top 200 rows found 74% were
- * installment ads advertising a down payment rather than a price. Those are now
- * excluded upstream (`listing_kind.exclude_unclear_price`), but the deeper
- * problem survives the filter: the cohort key is `(model, variant, year)` and
- * knows nothing about accident damage, free-zone plates or pre-sales, so above
- * ~30% the gap is essentially always an attribute the model cannot see rather
- * than a bargain. Those rows are still reachable — under a tab that says what
- * they are, instead of on a page that calls them the best deals available.
+ * **Both thresholds are measured, not chosen.** How far back the board looks
+ * and how good a deal has to be to appear are computed per rebuild from the
+ * batch actually on the board (`pricing.deal_window`), so a quiet day widens
+ * the window instead of showing three cars.
  *
- * **It paginates.** The board holds ~8,600 rows and this screen used to request
- * a hard-coded top 50 with no way forward, so every genuine 5–20% deal in the
- * cache was unreachable.
+ * **Above 25% goes to review, not to the front page.** The peer group is
+ * (model, trim, year) and knows nothing about accident damage, free-zone plates
+ * or pre-sales, so past that point the gap is an unmodelled attribute far more
+ * often than a bargain. Nothing is hidden — it is moved to a tab that says what
+ * it is.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
@@ -29,14 +31,33 @@ import { Link } from "react-router-dom";
 import { AlertTriangle, LayoutGrid, List } from "lucide-react";
 import { api } from "../api";
 import type { Envelope } from "../api";
+import { FilterPanel } from "../FilterPanel";
 import { qs, useFilters } from "../filters";
-import { Async, Card, ConfidenceDots, Fa, ListingActions, Pager, Provenance, Table, Thumb, km, pct, toman } from "../ui";
+import {
+  Async, BamaLink, Card, ConfidenceDots, Fa, ListingActions, Pager, Provenance,
+  Table, Thumb, km, pct, toman,
+} from "../ui";
 
-/** Above this, the gap is an unmodelled attribute far more often than a deal. */
-const TRUSTED_MAX_DISCOUNT = 30;
-/** score is rounded to 1 decimal (deal_score.py); the smallest step above it. */
-const SCORE_STEP = 0.1;
 const PAGE_SIZE = 24;
+
+/** Freshness bands, matching pricing.FRESHNESS_BANDS on the backend — the API
+ *  orders by them, this only has to name them. */
+const BAND_LABEL = [
+  "امروز",
+  "۱ تا ۳ روز پیش",
+  "۴ تا ۷ روز پیش",
+  "۱ تا ۲ هفته پیش",
+  "بیش از دو هفته پیش",
+];
+
+function bandOf(daysListed: number | null): number {
+  if (daysListed == null) return BAND_LABEL.length - 1;
+  if (daysListed < 1) return 0;
+  if (daysListed <= 3) return 1;
+  if (daysListed <= 7) return 2;
+  if (daysListed <= 14) return 3;
+  return 4;
+}
 
 interface NotifierSettings {
   enabled: boolean;
@@ -56,23 +77,30 @@ interface Deal {
   peer_count: number | null;
   confidence: string | null;
   age_days: number | null;
+  days_listed: number | null;
   year: number | null;
   mileage: number | null;
   city_name: string;
-  primary_image_url: string;
+  image_url: string;
+  bama_url: string;
   condition_flagged: boolean;
+}
+
+interface DealWindow {
+  window_days: number;
+  min_discount_pct: number;
+  ceiling_pct: number;
+  candidates: number;
+  scored: number;
 }
 
 interface DealBoard extends Envelope {
   count: number;
   limit: number;
   offset: number;
+  band: string;
+  window: DealWindow;
   results: Deal[];
-}
-
-interface Brand {
-  slug: string;
-  name_fa: string;
 }
 
 /**
@@ -106,27 +134,26 @@ function NotifierPanel() {
   });
 
   if (!form) return null;
-  const set = (patch: Partial<NotifierSettings>) =>
-    setForm({ ...form, ...patch });
+  const set = (patch: Partial<NotifierSettings>) => setForm({ ...form, ...patch });
 
   return (
     <Card>
       <div className="row between">
         <strong>
-          Telegram alerts{" "}
+          اعلان تلگرام{" "}
           <span className={`badge ${form.enabled ? "ok" : ""}`}>
-            {form.enabled ? "On" : "Off"}
+            {form.enabled ? "روشن" : "خاموش"}
           </span>
         </strong>
         <button className="ghost" onClick={() => setOpen(!open)}>
-          {open ? "Close" : "Settings"}
+          {open ? "بستن" : "تنظیمات"}
         </button>
       </div>
 
       {!open ? (
         <p className="muted">
-          Listings with at least {form.min_discount_pct}% off and{" "}
-          {form.min_peers} peers — each listing only once.
+          آگهی‌هایی با دست‌کم {form.min_discount_pct}٪ تخفیف و {form.min_peers} آگهی
+          مشابه — هر آگهی فقط یک بار.
         </p>
       ) : (
         <div className="stack">
@@ -136,25 +163,25 @@ function NotifierPanel() {
               checked={form.enabled}
               onChange={(e) => set({ enabled: e.target.checked })}
             />
-            <span>Send alerts</span>
+            <span>ارسال اعلان</span>
           </label>
           <div className="row wrap">
             <label>
-              Min discount (%)
+              کمترین تخفیف (٪)
               <input
                 type="number" min={1} max={99} value={form.min_discount_pct}
                 onChange={(e) => set({ min_discount_pct: Number(e.target.value) })}
               />
             </label>
             <label>
-              Min peers
+              کمترین تعداد آگهی مشابه
               <input
                 type="number" min={8} value={form.min_peers}
                 onChange={(e) => set({ min_peers: Number(e.target.value) })}
               />
             </label>
             <label>
-              Min price
+              کمترین قیمت
               <input
                 type="number" value={form.price_min ?? ""}
                 onChange={(e) =>
@@ -163,7 +190,7 @@ function NotifierPanel() {
               />
             </label>
             <label>
-              Max price
+              بیشترین قیمت
               <input
                 type="number" value={form.price_max ?? ""}
                 onChange={(e) =>
@@ -172,7 +199,7 @@ function NotifierPanel() {
               />
             </label>
             <label>
-              Telegram chat ID
+              شناسه گفت‌وگوی تلگرام
               <input
                 value={form.telegram_chat_id}
                 onChange={(e) => set({ telegram_chat_id: e.target.value })}
@@ -181,20 +208,20 @@ function NotifierPanel() {
           </div>
           <div className="row">
             <button onClick={() => save.mutate(form)} disabled={save.isPending}>
-              {save.isPending ? "Saving…" : "Save"}
+              {save.isPending ? "در حال ذخیره…" : "ذخیره"}
             </button>
             {save.isSuccess && !save.isPending && (
-              <span className="badge ok">Saved</span>
+              <span className="badge ok">ذخیره شد</span>
             )}
             {save.isError && (
               <span className="badge warn">
-                {(save.error as Error)?.message ?? "Save failed"}
+                {(save.error as Error)?.message ?? "ذخیره نشد"}
               </span>
             )}
           </div>
           <p className="muted">
-            A minimum peer count under 8 isn't accepted — a median built from
-            fewer listings isn't a reliable basis for an alert.
+            تعداد آگهی مشابه کمتر از ۸ پذیرفته نمی‌شود — میانه‌ای که از آگهی‌های
+            کمتر ساخته شود، مبنای قابل اتکایی برای اعلان نیست.
           </p>
         </div>
       )}
@@ -202,25 +229,27 @@ function NotifierPanel() {
   );
 }
 
-/** "0d on market" is technically right and reads like a bug. */
+/** "۰ روز در بازار" is technically right and reads like a bug. */
 function ageLabel(days: number | null): string {
   if (days == null) return "—";
-  if (days === 0) return "Listed today";
-  return `${days}d on market`;
+  if (days <= 0) return "امروز ثبت شده";
+  return `${days} روز در بازار`;
 }
 
-function DealCard({ deal }: { deal: Deal }) {
-  const suspect = (deal.discount_pct ?? 0) > TRUSTED_MAX_DISCOUNT;
+function DealCard({ deal, suspect }: { deal: Deal; suspect: boolean }) {
   return (
     <Link to={`/listing/${deal.code}`} className="listing-card">
-      <Thumb src={deal.primary_image_url}>
+      <Thumb src={deal.image_url}>
         <span className={`ribbon${suspect ? " suspect" : ""}`}>
           {pct(deal.discount_pct, 0)}
         </span>
         {deal.condition_flagged && (
           <span className="card-badges">
-            <span className="badge warn" title="Listing description mentions an accident, free-zone plate, or body condition">
-              <AlertTriangle size={11} /> Condition
+            <span
+              className="badge warn"
+              title="توضیحات آگهی به تصادف، پلاک منطقه آزاد یا وضعیت بدنه اشاره کرده است"
+            >
+              <AlertTriangle size={11} /> وضعیت بدنه
             </span>
           </span>
         )}
@@ -235,7 +264,7 @@ function DealCard({ deal }: { deal: Deal }) {
         </div>
         <div className="row">
           <ConfidenceDots tier={deal.confidence} />
-          <span>{deal.peer_count ?? "—"} peers</span>
+          <span>{deal.peer_count ?? "—"} آگهی مشابه</span>
           <span>·</span>
           <span>{deal.year ?? "—"}</span>
           <span>·</span>
@@ -244,46 +273,74 @@ function DealCard({ deal }: { deal: Deal }) {
         <div className="row">
           <Fa>{deal.city_name || "—"}</Fa>
           <span>·</span>
-          <span>{ageLabel(deal.age_days)}</span>
+          <span>{ageLabel(deal.days_listed)}</span>
+        </div>
+        <div className="row">
+          <BamaLink href={deal.bama_url} className="ghost" />
         </div>
       </div>
     </Link>
   );
 }
 
+/** The cards, with a heading wherever the freshness band changes. */
+function BandedGrid({ rows, ceiling }: { rows: Deal[]; ceiling: number }) {
+  const out: React.ReactNode[] = [];
+  let current = -1;
+  let bucket: Deal[] = [];
+
+  const flush = () => {
+    if (!bucket.length) return;
+    const band = current;
+    const items = bucket;
+    out.push(
+      <div key={`h${band}-${items[0].code}`} className="band-heading">
+        {BAND_LABEL[band]}
+        <span className="badge">{items.length}</span>
+      </div>,
+      <div key={`g${band}-${items[0].code}`} className="card-grid">
+        {items.map((d) => (
+          <DealCard key={d.code} deal={d} suspect={(d.discount_pct ?? 0) > ceiling} />
+        ))}
+      </div>,
+    );
+    bucket = [];
+  };
+
+  for (const deal of rows) {
+    const band = bandOf(deal.days_listed);
+    if (band !== current) {
+      flush();
+      current = band;
+    }
+    bucket.push(deal);
+  }
+  flush();
+  return <>{out}</>;
+}
+
+const TABS: { id: string; label: string }[] = [
+  { id: "top", label: "پیشنهادهای برتر" },
+  { id: "all", label: "همه آگهی‌ها" },
+  { id: "review", label: "نیازمند بررسی" },
+];
+
 export function Deals() {
   const filters = useFilters();
   const page = filters.getInt("page") ?? 1;
-  const band = filters.get("band") === "review" ? "review" : "trusted";
+  const raw = filters.get("band");
+  const band = TABS.some((t) => t.id === raw) ? raw! : "top";
   const view = filters.get("view") === "table" ? "table" : "cards";
-  const brand = filters.get("brand");
-  const priceMin = filters.get("price_min");
-  const priceMax = filters.get("price_max");
-  const confidence = filters.get("confidence");
-
-  const brands = useQuery({
-    queryKey: ["brands"],
-    queryFn: ({ signal }) =>
-      api.get<{ results?: Brand[] } | Brand[]>("/api/brands/", signal),
-  });
-  const brandList: Brand[] = Array.isArray(brands.data)
-    ? brands.data
-    : (brands.data?.results ?? []);
 
   const params = {
+    band,
     limit: PAGE_SIZE,
     offset: (page - 1) * PAGE_SIZE,
-    brand,
-    price_min: priceMin,
-    price_max: priceMax,
-    confidence,
-    // The band is the whole point of the tab: one query, two windows onto it.
-    // Backend min_score/max_score are both inclusive, so the boundary value
-    // itself must land in exactly one window — trusted claims it (<=), review
-    // starts one score step above (>), matching the ribbon's ">" suspect check.
-    ...(band === "review"
-      ? { min_score: TRUSTED_MAX_DISCOUNT + SCORE_STEP }
-      : { max_score: TRUSTED_MAX_DISCOUNT }),
+    brand: filters.get("brand"),
+    model: filters.get("model"),
+    price_min: filters.get("price_min"),
+    price_max: filters.get("price_max"),
+    confidence: filters.get("confidence"),
   };
 
   const deals = useQuery({
@@ -292,104 +349,75 @@ export function Deals() {
       api.get<DealBoard>(`/api/analytics/deal-scores/${qs(params)}`, signal),
   });
 
-  const hasFilter = Boolean(brand || priceMin || priceMax || confidence);
-  const clear = () =>
-    filters.set({
-      brand: null, price_min: null, price_max: null, confidence: null, page: null,
-    });
+  const w = deals.data?.window;
 
   return (
-    <div className="stack" dir="rtl">
-      <div className="segmented" role="group" aria-label="Discount range">
-        <button
-          className={band === "trusted" ? "on" : ""}
-          onClick={() => filters.set({ band: null, page: null })}
-        >
-          Trusted deals
-        </button>
-        <button
-          className={band === "review" ? "on" : ""}
-          onClick={() => filters.set({ band: "review", page: null })}
-        >
-          Needs review (over {TRUSTED_MAX_DISCOUNT}%)
-        </button>
+    <div className="stack">
+      <div className="segmented" role="group" aria-label="دسته‌بندی آگهی‌ها">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            className={band === t.id ? "on" : ""}
+            aria-pressed={band === t.id}
+            onClick={() => filters.set({ band: t.id === "top" ? null : t.id, page: null })}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
 
+      {/* The thresholds are computed, so the page quotes them rather than
+          describing a filter whose value it does not know. */}
       <p className="muted">
-        {band === "trusted" ? (
+        {band === "top" && (
           <>
-            Listings priced below their peer group's median. The discount is
-            measured against the peer-group median; "peers" and the
-            confidence dots show how many listings that median was built
-            from.
+            آگهی‌هایی که در <b>{w?.window_days ?? "—"} روز گذشته</b> ثبت یا
+            به‌روزرسانی شده‌اند و دست‌کم <b>{w?.min_discount_pct ?? "—"}٪</b> زیر
+            میانه قیمت آگهی‌های مشابه خود هستند. هر دو حد از همین آگهی‌های امروز
+            محاسبه می‌شوند، نه از عددی ثابت. تازه‌ترین آگهی‌ها اول می‌آیند، چون
+            قیمتشان به بازار امروز نزدیک‌تر است.
           </>
-        ) : (
+        )}
+        {band === "all" && (
           <>
-            A discount above {TRUSTED_MAX_DISCOUNT}% almost always has a
-            reason the model can't see: the peer group is built only from
-            "model, trim, and year," and knows nothing about accidents,
-            free-zone plates, or pre-sales. Nothing is hidden here, but check
-            it yourself before you call.
+            همه آگهی‌های زیر میانه قیمت آگهی‌های مشابه، تا سقف{" "}
+            <b>{w?.ceiling_pct ?? "—"}٪</b>. گروه‌بندی بر پایه تازگی آگهی است و
+            میزان تخفیف تنها ترتیب درون هر گروه را تعیین می‌کند.
+          </>
+        )}
+        {band === "review" && (
+          <>
+            تخفیف بیش از <b>{w?.ceiling_pct ?? "—"}٪</b> تقریباً همیشه دلیلی دارد
+            که این محاسبه نمی‌بیند: آگهی‌های مشابه فقط بر پایه «مدل، تیپ و سال»
+            انتخاب می‌شوند و چیزی درباره تصادف، پلاک منطقه آزاد یا پیش‌فروش
+            نمی‌دانند. چیزی پنهان نشده، اما پیش از تماس خودتان بررسی کنید.
           </>
         )}
       </p>
 
-      <div className="filters">
-        <select
-          value={brand ?? ""}
-          onChange={(e) => filters.set({ brand: e.target.value || null, page: null })}
-          aria-label="Brand"
-        >
-          <option value="">All brands</option>
-          {brandList.map((b) => (
-            <option key={b.slug} value={b.slug}>{b.name_fa}</option>
-          ))}
-        </select>
-        <select
-          value={confidence ?? ""}
-          onChange={(e) => filters.set({ confidence: e.target.value || null, page: null })}
-          aria-label="Confidence"
-        >
-          <option value="">Any confidence</option>
-          <option value="high">High confidence only</option>
-          <option value="medium">Medium confidence</option>
-          <option value="low">Low confidence</option>
-        </select>
-        <input
-          key={`price_min-${priceMin}`}
-          type="number"
-          placeholder="Min price (toman)"
-          defaultValue={priceMin ?? ""}
-          onBlur={(e) => filters.set({ price_min: e.target.value || null, page: null })}
-        />
-        <input
-          key={`price_max-${priceMax}`}
-          type="number"
-          placeholder="Max price (toman)"
-          defaultValue={priceMax ?? ""}
-          onBlur={(e) => filters.set({ price_max: e.target.value || null, page: null })}
-        />
-        {hasFilter && <button onClick={clear}>Clear filters</button>}
-        <div className="segmented" style={{ marginInlineStart: "auto" }}>
-          <button
-            className={view === "cards" ? "on" : ""}
-            onClick={() => filters.set({ view: null })}
-            aria-label="Card view"
-          >
-            <LayoutGrid size={14} />
-          </button>
-          <button
-            className={view === "table" ? "on" : ""}
-            onClick={() => filters.set({ view: "table" })}
-            aria-label="Table view"
-          >
-            <List size={14} />
-          </button>
-        </div>
-      </div>
+      <FilterPanel showSpecs={false} showConfidence showSearch={false} />
 
-      <Card>
-        <Async query={deals} empty="No scores computed yet." shape="cards">
+      <Card
+        action={
+          <div className="segmented">
+            <button
+              className={view === "cards" ? "on" : ""}
+              onClick={() => filters.set({ view: null })}
+              aria-label="نمایش کارتی"
+            >
+              <LayoutGrid size={14} />
+            </button>
+            <button
+              className={view === "table" ? "on" : ""}
+              onClick={() => filters.set({ view: "table" })}
+              aria-label="نمایش جدولی"
+            >
+              <List size={14} />
+            </button>
+          </div>
+        }
+      >
+        <Async query={deals} empty="هنوز امتیازی محاسبه نشده است." shape="cards">
           {(board) => {
             const rows = board.results ?? [];
             if (!rows.length) {
@@ -399,15 +427,15 @@ export function Deals() {
               // instead of a dead end.
               return (
                 <div className="state">
-                  <strong>No listings match these filters.</strong>
+                  <strong>آگهی‌ای با این فیلترها پیدا نشد.</strong>
                   <p className="empty-hint">
                     {page > 1
-                      ? "This page may no longer exist."
-                      : "Try simpler filters or a different brand."}
+                      ? "ممکن است این صفحه دیگر وجود نداشته باشد."
+                      : "فیلترها را ساده‌تر کنید یا برند دیگری را امتحان کنید."}
                   </p>
                   {page > 1 && (
                     <button onClick={() => filters.set({ page: null })}>
-                      Back to page 1
+                      بازگشت به صفحه اول
                     </button>
                   )}
                 </div>
@@ -415,19 +443,26 @@ export function Deals() {
             }
             const total = board.count ?? rows.length;
             const lastPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
+            const ceiling = board.window?.ceiling_pct ?? 25;
             return (
               <>
                 {view === "cards" ? (
-                  <div className="card-grid">
-                    {rows.map((d) => (
-                      <DealCard key={d.code} deal={d} />
-                    ))}
-                  </div>
+                  band === "review" ? (
+                    // The review tab is ranked by discount, not by freshness,
+                    // so banding it would draw groups the order does not follow.
+                    <div className="card-grid">
+                      {rows.map((d) => (
+                        <DealCard key={d.code} deal={d} suspect />
+                      ))}
+                    </div>
+                  ) : (
+                    <BandedGrid rows={rows} ceiling={ceiling} />
+                  )
                 ) : (
                   <Table
                     head={[
-                      "Listing", "Discount", "Price", "Peer median",
-                      "Peers", "Confidence", "Age", "",
+                      "آگهی", "تخفیف", "قیمت", "میانه مشابه‌ها",
+                      "تعداد مشابه", "اعتبار", "در بازار", "",
                     ]}
                   >
                     {rows.map((d) => (
@@ -438,7 +473,7 @@ export function Deals() {
                           </Link>
                           {d.condition_flagged && (
                             <div className="badge warn" style={{ marginTop: 4 }}>
-                              <AlertTriangle size={11} /> Read the condition notes
+                              <AlertTriangle size={11} /> توضیحات وضعیت را بخوانید
                             </div>
                           )}
                         </td>
@@ -448,10 +483,13 @@ export function Deals() {
                         <td className="num">{d.peer_count ?? "—"}</td>
                         <td className="num"><ConfidenceDots tier={d.confidence} /></td>
                         <td className="num">
-                          {d.age_days != null ? `${d.age_days}d` : "—"}
+                          {d.days_listed != null ? `${d.days_listed} روز` : "—"}
                         </td>
                         <td className="num">
-                          <ListingActions code={d.code} />
+                          <div className="row">
+                            <ListingActions code={d.code} />
+                            <BamaLink href={d.bama_url} className="ghost">باما</BamaLink>
+                          </div>
                         </td>
                       </tr>
                     ))}

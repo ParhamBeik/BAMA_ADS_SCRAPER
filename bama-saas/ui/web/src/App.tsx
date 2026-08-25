@@ -1,5 +1,6 @@
 /**
- * Seven screens, one shell (Persian RTL for data, English chrome).
+ * Seven screens, one shell. Persian throughout, RTL from <html> — the direction
+ * used to be set per page, so a screen that forgot it laid itself out backwards.
  *
  * Deployed instances require a session (see config/settings.py); `useAuth`
  * decides between the signed-out routes and the app shell, and the shell itself
@@ -29,12 +30,12 @@ const Research = lazy(() =>
 );
 
 const NAV = [
-  { to: "/", label: "Deals", icon: Percent, end: true },
-  { to: "/explore", label: "Explore", icon: Search, end: false },
-  { to: "/market", label: "Market", icon: LayoutDashboard, end: false },
-  { to: "/research", label: "Research", icon: BarChart3, end: false },
-  { to: "/saved", label: "Saved", icon: Bookmark, end: false },
-  { to: "/control", label: "Control", icon: Activity, end: false, staffOnly: true },
+  { to: "/", label: "معامله‌ها", icon: Percent, end: true },
+  { to: "/explore", label: "جست‌وجو", icon: Search, end: false },
+  { to: "/market", label: "بازار", icon: LayoutDashboard, end: false },
+  { to: "/research", label: "تحلیل", icon: BarChart3, end: false },
+  { to: "/saved", label: "ذخیره‌شده‌ها", icon: Bookmark, end: false },
+  { to: "/control", label: "کنترل", icon: Activity, end: false, staffOnly: true },
 ];
 
 export function App() {
@@ -69,11 +70,11 @@ function AppShell() {
   ) ?? nav[0];
 
   return (
-    <div className="app" dir="rtl">
+    <div className="app">
       <nav className="sidebar" aria-label="Main">
         <div className="brand brand-lockup">
           <BrandMark size={24} />
-          <span>Bama Market</span>
+          <span>بازار خودرو باما</span>
         </div>
         {nav.map(({ to, label, icon: Icon, end }) => (
           <NavLink
@@ -89,7 +90,7 @@ function AppShell() {
         <div className="sidebar-foot">
           <button className="nav-item linkish" onClick={() => logout()}>
             <LogOut size={16} />
-            Log out
+            خروج
           </button>
         </div>
       </nav>
@@ -136,17 +137,21 @@ function Lazy({ children }: { children: ReactNode }) {
 
 function ThemeToggle() {
   const { choice, setChoice } = useTheme();
-  const options: ThemeChoice[] = ["light", "system", "dark"];
+  const options: [ThemeChoice, string][] = [
+    ["light", "روشن"],
+    ["system", "سیستم"],
+    ["dark", "تیره"],
+  ];
   return (
     <div className="segmented" role="group" aria-label="پوسته">
-      {options.map((option) => (
+      {options.map(([option, label]) => (
         <button
           key={option}
           className={choice === option ? "on" : ""}
           aria-pressed={choice === option}
           onClick={() => setChoice(option)}
         >
-          {option}
+          {label}
         </button>
       ))}
     </div>

@@ -25,9 +25,16 @@ from apps.core.models import (
     Variant,
 )
 from apps.core.pricing import compute_deal_scores
-from apps.jobs.ingest import ingest_ad, reset_cache, reset_price_cache
+from apps.jobs.ingest import (
+    _MAX_GALLERY,
+    _image_urls,
+    ingest_ad,
+    reset_cache,
+    reset_price_cache,
+)
 from apps.jobs.jobs import (
     REQUIRED_MISSED_WINDOWS,
+    backfill_images,
     link_reposts,
     mark_inactive,
     sweep_cutoff,
@@ -246,6 +253,94 @@ def test_presentation_fields_are_promoted_from_the_payload(known_catalog, make_p
     assert ad.description_length == 120
     assert ad.seller_authenticated is True
     assert ad.source_modified_at is not None
+
+
+# --- photos ------------------------------------------------------------------
+#
+# Unit level for the extractor (a pure dict -> tuple function), integration for
+# the backfill (its whole subject is rows already in the database).
+
+_CDN = "https://cdn-sth1.bama.ir/uploads/BamaImages/VehicleCarImages"
+
+
+def _gallery_payload(n: int = 3) -> dict:
+    """A payload shaped the way the live feed sends one: gallery at the TOP
+    level, a single thumbnail on `detail`."""
+    return {
+        "detail": {"code": "img1", "image": f"{_CDN}/x/detail.jpg?x-img=resize,w_450"},
+        "images": [
+            {"large": f"{_CDN}/x/{i}.jpg?x-img=resize,w_600",
+             "small": f"{_CDN}/x/{i}.jpg?x-img=resize,w_450",
+             "thumb": f"{_CDN}/x/{i}.jpg?x-img=resize,w_90"}
+            for i in range(n)
+        ],
+    }
+
+
+def test_gallery_is_read_from_the_top_level_not_from_detail():
+    """`detail` carries one thumbnail; the gallery is a level up.
+
+    This was handed `detail` alone, so _MAX_GALLERY had never once applied and
+    every listing in the database had at most one photo.
+    """
+    primary, gallery = _image_urls(_gallery_payload(3))
+
+    assert len(gallery) == 3
+    assert all("w_600" in url for url in gallery)     # detail-page size
+    assert "w_450" in primary                          # card size
+
+
+def test_a_payload_with_only_detail_image_still_yields_a_photo():
+    """The shape behind the 14,658 rows that render "No photo" today."""
+    primary, gallery = _image_urls(
+        {"detail": {"image": f"{_CDN}/x/only.jpg?x-img=resize,w_450"}}
+    )
+    assert primary.startswith(_CDN)
+    assert gallery == [primary]
+
+
+def test_a_non_bama_host_is_refused():
+    primary, gallery = _image_urls(
+        {"images": [{"large": "https://evil.example.com/x.jpg"}],
+         "detail": {"image": "http://cdn-sth1.bama.ir/insecure.jpg"}}
+    )
+    assert (primary, gallery) == ("", [])
+
+
+def test_gallery_is_capped():
+    _, gallery = _image_urls(_gallery_payload(40))
+    assert len(gallery) == _MAX_GALLERY
+
+
+@pytest.mark.django_db
+def test_backfill_fills_photos_from_payloads_already_stored(known_catalog):
+    """No re-crawl: the URLs are already inside raw_payload, unread."""
+    Ad.objects.create(
+        code="backfill1", title="x", current_price=1_000_000_000,
+        primary_image_url="", image_urls=[], raw_payload=_gallery_payload(3),
+    )
+
+    first = backfill_images()
+    assert first["filled"] == 1
+
+    ad = Ad.objects.get(code="backfill1")
+    assert ad.primary_image_url
+    assert len(ad.image_urls) == 3
+
+    # Idempotent: a filled row is no longer a candidate, so a second pass is a
+    # no-op rather than rewriting the same bytes.
+    assert backfill_images()["filled"] == 0
+
+
+@pytest.mark.django_db
+def test_backfill_leaves_a_photoless_payload_alone(known_catalog):
+    """An ad genuinely without a photo must not be counted as filled."""
+    Ad.objects.create(
+        code="nophoto1", title="x", current_price=1_000_000_000,
+        primary_image_url="", raw_payload={"detail": {"code": "nophoto1"}},
+    )
+    assert backfill_images()["filled"] == 0
+    assert Ad.objects.get(code="nophoto1").primary_image_url == ""
 
 
 @pytest.mark.django_db

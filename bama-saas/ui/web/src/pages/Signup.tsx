@@ -67,7 +67,7 @@ export function Signup() {
     try {
       await register(trimmed, password);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
+      setError(err instanceof Error ? err.message : "خطایی رخ داد. دوباره تلاش کنید.");
     } finally {
       setSubmitting(false);
     }
@@ -76,21 +76,21 @@ export function Signup() {
   const emailHint = !email
     ? null
     : !emailValid
-      ? { text: "Enter a valid email address", tone: "down" as const }
+      ? { text: "یک نشانی ایمیل معتبر وارد کنید", tone: "down" as const }
       : taken === true
-        ? { text: "An account with this email already exists", tone: "down" as const }
+        ? { text: "حسابی با این ایمیل از پیش وجود دارد", tone: "down" as const }
         : taken === false
-          ? { text: "This email is available", tone: "up" as const }
+          ? { text: "این ایمیل در دسترس است", tone: "up" as const }
           : null;
 
   return (
     <AuthLayout
-      eyebrow="Start with Bama Market"
-      heading="Create your account"
-      intro="Save the listings that matter and return to the market with everything in one place."
+      eyebrow="آغاز کار با بازار خودرو باما"
+      heading="حساب خود را بسازید"
+      intro="آگهی‌های مهم را ذخیره کنید و همه‌چیز را یکجا در دسترس داشته باشید."
       footer={
         <>
-          Already have an account? <Link to="/login">Sign in</Link>
+          از پیش حساب دارید؟ <Link to="/login">وارد شوید</Link>
         </>
       }
     >
@@ -107,13 +107,13 @@ export function Signup() {
 
         <PasswordField
           id="auth-password"
-          label="Password"
+          label="گذرواژه"
           value={password}
           onChange={setPassword}
           show={showPassword}
           onToggle={() => setShowPassword((v) => !v)}
           autoComplete="new-password"
-          placeholder="Create a password"
+          placeholder="یک گذرواژه انتخاب کنید"
           describedBy="auth-requirements"
           invalid={Boolean(password) && !passwordValid}
         />
@@ -129,24 +129,24 @@ export function Signup() {
 
         <PasswordField
           id="auth-confirm-password"
-          label="Confirm password"
+          label="تکرار گذرواژه"
           value={confirmation}
           onChange={setConfirmation}
           show={showConfirmation}
           onToggle={() => setShowConfirmation((v) => !v)}
           autoComplete="new-password"
-          placeholder="Re-enter your password"
+          placeholder="گذرواژه را دوباره وارد کنید"
           invalid={Boolean(confirmation) && !matches}
           describedBy="auth-confirm-hint"
         />
         {confirmation && !matches && (
           <small id="auth-confirm-hint" className="down auth-inline-hint">
-            Passwords do not match
+            گذرواژه‌ها یکسان نیستند
           </small>
         )}
 
         <button className="primary auth-submit" type="submit" disabled={!ready || submitting}>
-          {submitting ? "Creating account…" : "Create account"}
+          {submitting ? "در حال ساخت حساب…" : "ساخت حساب"}
           {!submitting && <ArrowRight size={17} />}
         </button>
       </form>

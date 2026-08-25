@@ -11,9 +11,9 @@
  * `Async` makes "we do not have enough clean data for this" a first-class result
  * rather than an error or, worse, an empty chart that looks like zero.
  */
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Database, Heart } from "lucide-react";
+import { AlertTriangle, Database, ExternalLink, Heart, X } from "lucide-react";
 import { api, type Envelope, type Paginated } from "./api";
 
 /**
@@ -23,9 +23,42 @@ import { api, type Envelope, type Paginated } from "./api";
  * detail page used to print the raw `price_outlier_low` string.
  */
 export const FLAG_LABEL: Record<string, string> = {
-  price_outlier_low: "Far below peer group — check why",
-  price_outlier_high: "Far above peer group",
+  price_outlier_low: "خیلی پایین‌تر از آگهی‌های مشابه — دلیلش را بررسی کنید",
+  price_outlier_high: "خیلی بالاتر از آگهی‌های مشابه",
 };
+
+/**
+ * The link out to the real ad on bama.ir.
+ *
+ * `Ad.url` holds a site-relative path, so anything rendering it straight into
+ * an href resolved against our own origin and dead-ended inside the SPA — the
+ * Telegram alerts had a working link and the website never did. The backend now
+ * serves `bama_url` absolute; this is the one place that renders it, so the
+ * "opens elsewhere" affordance cannot go missing on one screen.
+ */
+export function BamaLink({
+  href,
+  className = "btn",
+  children = "مشاهده در باما",
+}: {
+  href?: string;
+  className?: string;
+  children?: ReactNode;
+}) {
+  if (!href) return null;
+  return (
+    <a
+      className={className}
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      // Stops the click from also selecting the card it sits on.
+      onClick={(e) => e.stopPropagation()}
+    >
+      <ExternalLink size={13} aria-hidden /> {children}
+    </a>
+  );
+}
 
 /**
  * A listing photo, or a graceful gap where one should be.
@@ -42,7 +75,7 @@ export function Thumb({ src, children }: { src?: string; children?: ReactNode })
       {src && !failed ? (
         <img src={src} alt="" loading="lazy" onError={() => setFailed(true)} />
       ) : (
-        <div className="thumb-fallback">No photo</div>
+        <div className="thumb-fallback">بدون تصویر</div>
       )}
       {children}
     </div>
@@ -141,35 +174,35 @@ export function Provenance({ envelope }: { envelope?: Partial<Envelope> }) {
           cheerful listing count. */}
       {coverage.source_blocked && (
         <span className="badge warn">
-          <AlertTriangle size={11} /> Bama isn't responding right now — these
-          numbers aren't refreshing
+          <AlertTriangle size={11} /> باما در حال حاضر پاسخ نمی‌دهد — این اعداد
+          به‌روز نمی‌شوند
         </span>
       )}
       {coverage.removal_detection_paused && (
         <span className="badge warn">
-          <AlertTriangle size={11} /> Removal detection is paused — a sold
-          listing may still show as active
+          <AlertTriangle size={11} /> تشخیص حذف آگهی متوقف است — ممکن است آگهی
+          فروخته‌شده هنوز فعال نشان داده شود
         </span>
       )}
       <Database size={13} />
       {coverage.complete_sweep ? (
         <span>
-          {coverage.ads_covered?.toLocaleString("en-US")} listings, last swept{" "}
-          {coverage.age_hours}h ago
+          {coverage.ads_covered?.toLocaleString("en-US")} آگهی، آخرین بررسی{" "}
+          {coverage.age_hours} ساعت پیش
         </span>
       ) : (
         <span className="warn">
-          No complete sweep recorded — these numbers may cover only part of
-          the market
+          هیچ بررسی کاملی ثبت نشده — این اعداد ممکن است تنها بخشی از بازار را
+          پوشش دهند
         </span>
       )}
       {coverage.stale && (
         <span className="badge warn">
-          <AlertTriangle size={11} /> Stale
+          <AlertTriangle size={11} /> قدیمی
         </span>
       )}
-      {as_of && <span>· as of {new Date(as_of).toLocaleString("en-US")}</span>}
-      {methodology_version != null && <span>· methodology v{methodology_version}</span>}
+      {as_of && <span>· تا {new Date(as_of).toLocaleString("fa-IR")}</span>}
+      {methodology_version != null && <span>· روش محاسبه نسخه {methodology_version}</span>}
     </div>
   );
 }
@@ -184,9 +217,11 @@ export function Provenance({ envelope }: { envelope?: Partial<Envelope> }) {
 export function ConfidenceDots({ tier }: { tier?: string | null }) {
   const filled = tier === "high" ? 3 : tier === "medium" ? 2 : tier === "low" ? 1 : 0;
   if (!filled) return <span className="dots">—</span>;
-  const label = { high: "High confidence", medium: "Medium confidence", low: "Low confidence" }[
-    tier as "high" | "medium" | "low"
-  ];
+  const label = {
+    high: "اعتبار زیاد — بر پایه ۴۰ آگهی مشابه یا بیشتر",
+    medium: "اعتبار متوسط — بر پایه ۱۵ تا ۳۹ آگهی مشابه",
+    low: "اعتبار کم — بر پایه ۸ تا ۱۴ آگهی مشابه",
+  }[tier as "high" | "medium" | "low"];
   return (
     <span className={`dots ${tier}`} title={label} aria-label={label}>
       {"●".repeat(filled)}
@@ -231,18 +266,18 @@ export function Async<T>({
   if (query.error) {
     return (
       <div className="state error">
-        {query.error instanceof Error ? query.error.message : "Something went wrong."}
+        {query.error instanceof Error ? query.error.message : "خطایی رخ داد."}
       </div>
     );
   }
   const data = query.data as (T & { available?: boolean; reason?: string }) | undefined;
-  if (!data) return <div className="state">{empty ?? "Nothing to show."}</div>;
+  if (!data) return <div className="state">{empty ?? "چیزی برای نمایش نیست."}</div>;
 
   if (data.available === false) {
     return (
       <div className="state">
         <AlertTriangle size={16} />{" "}
-        <strong>Not enough clean data yet for this calculation.</strong>
+        <strong>هنوز داده کافی برای این محاسبه وجود ندارد.</strong>
         <div style={{ marginTop: 4 }}>{humanReason(data.reason)}</div>
       </div>
     );
@@ -253,24 +288,24 @@ export function Async<T>({
 function humanReason(reason?: string): string {
   switch (reason) {
     case "insufficient_episodes":
-      return "Too few completed listings in this cohort to estimate time-to-sell.";
+      return "آگهی‌های پایان‌یافته این دسته برای تخمین مدت فروش کم است.";
     case "insufficient_clean_history":
       // Not an error and not an empty cohort: removal dates recorded before the
       // crawl was reliable measured the sweep schedule rather than the market,
       // so they are excluded until enough trustworthy history accumulates.
-      return "Not enough reliable history yet — time-on-market only counts listings seen after the crawler fix.";
+      return "سابقه قابل اتکا هنوز کافی نیست — مدت ماندن در بازار تنها برای آگهی‌هایی شمرده می‌شود که پس از اصلاح خزنده دیده شده‌اند.";
     case "insufficient_peers":
-      return "Too few peer listings to price this car.";
+      return "آگهی‌های مشابه برای قیمت‌گذاری این خودرو کم است.";
     case "insufficient_years":
-      return "Not enough model years with data to plot a depreciation curve.";
+      return "سال‌های ساخت دارای داده، برای رسم نمودار افت قیمت کافی نیست.";
     case "insufficient_listings":
-      return "Too few listings in this cohort.";
+      return "تعداد آگهی‌های این دسته کم است.";
     case "unknown_or_unverified_ad":
-      return "This listing is unknown or hasn't passed data verification.";
+      return "این آگهی ناشناخته است یا از بررسی صحت داده عبور نکرده است.";
     case "no_price_baseline":
-      return "No usable price baseline exists for this cohort.";
+      return "مبنای قیمتی قابل استفاده‌ای برای این دسته وجود ندارد.";
     default:
-      return reason ?? "This cohort is too small to report on.";
+      return reason ?? "این دسته برای گزارش‌دهی کوچک است.";
   }
 }
 
@@ -287,7 +322,7 @@ export function Pager({
   page,
   lastPage,
   total,
-  label = "listings",
+  label = "آگهی",
   onChange,
 }: {
   page: number;
@@ -309,23 +344,23 @@ export function Pager({
   return (
     <div className="pager">
       <button disabled={page <= 1} onClick={() => onChange(page - 1)}>
-        Prev
+        قبلی
       </button>
       <span className="stat-sub pager-mid">
-        Page
+        صفحه
         <input
           className="pager-input"
           value={draft}
           inputMode="numeric"
-          aria-label="Page number"
+          aria-label="شماره صفحه"
           onChange={(e) => setDraft(e.target.value)}
           onBlur={commit}
           onKeyDown={(e) => e.key === "Enter" && commit()}
         />
-        of {lastPage.toLocaleString("en-US")} · {total.toLocaleString("en-US")} {label}
+        از {lastPage.toLocaleString("en-US")} · {total.toLocaleString("en-US")} {label}
       </span>
       <button disabled={page >= lastPage} onClick={() => onChange(page + 1)}>
-        Next
+        بعدی
       </button>
     </div>
   );
@@ -365,7 +400,7 @@ export function BrandMark({ size = 28 }: { size?: number }) {
       height={size}
       viewBox="0 0 32 32"
       role="img"
-      aria-label="Bama Market"
+      aria-label="بازار خودرو باما"
     >
       <path
         d="M6 23.5 12.5 10l4.25 8 3.5-5.5L26 23.5"
@@ -411,11 +446,138 @@ export function ListingActions({ code }: { code: string }) {
   return (
     <button
       className={saved ? "on" : ""}
-      onClick={() => toggle.mutate()}
+      onClick={(e) => { e.stopPropagation(); toggle.mutate(); }}
       disabled={toggle.isPending}
       aria-pressed={saved}
     >
-      <Heart size={14} /> {saved ? "Saved" : "Save"}
+      <Heart size={14} /> {saved ? "ذخیره شد" : "ذخیره"}
     </button>
+  );
+}
+
+/**
+ * A right-side panel for a secondary answer about a chosen row.
+ *
+ * Exists because the Explore page gave half its width permanently to a
+ * fair-price panel that was empty until something was clicked. Escape and a
+ * backdrop click both close, and focus returns to whatever opened it — a modal
+ * that traps the keyboard is worse than the layout it replaced.
+ */
+export function Sheet({
+  title,
+  onClose,
+  children,
+}: {
+  title: ReactNode;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  const panel = useRef<HTMLDivElement>(null);
+  const opener = useRef<Element | null>(null);
+
+  useEffect(() => {
+    opener.current = document.activeElement;
+    panel.current?.focus();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      (opener.current as HTMLElement | null)?.focus?.();
+    };
+  }, [onClose]);
+
+  return (
+    <>
+      <div className="sheet-backdrop" onClick={onClose} />
+      <div
+        className="sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label={typeof title === "string" ? title : undefined}
+        tabIndex={-1}
+        ref={panel}
+      >
+        <div className="sheet-head">
+          <h2>{title}</h2>
+          <button className="sheet-close" onClick={onClose} aria-label="بستن">
+            <X size={18} />
+          </button>
+        </div>
+        {children}
+      </div>
+    </>
+  );
+}
+
+export interface Distribution {
+  min: number;
+  p10: number;
+  p25: number;
+  median: number;
+  p75: number;
+  p90: number;
+  max: number;
+  count: number;
+}
+
+/**
+ * Where one asking price sits among its peers.
+ *
+ * The components table answers "how was this number built"; this answers "is
+ * this car cheap", which is the question people actually arrive with. The drawn
+ * band is p10-p90, not min-max: one 5.8-trillion-toman typo listing would
+ * otherwise squash every real car into the leftmost pixel.
+ */
+export function PriceBar({
+  distribution,
+  asking,
+}: {
+  distribution?: Distribution;
+  asking?: number | null;
+}) {
+  if (!distribution?.count || asking == null) return null;
+  const { p10, p25, median, p75, p90 } = distribution;
+  const span = p90 - p10 || 1;
+  // Clamped, so a listing outside the drawn band still renders on the bar
+  // (pinned to its edge) rather than escaping the container.
+  const at = (v: number) => `${Math.min(100, Math.max(0, ((v - p10) / span) * 100))}%`;
+  const cheaper = asking < median;
+
+  return (
+    <div className="price-bar">
+      <div
+        className="price-bar-track"
+        role="img"
+        aria-label={
+          `قیمت این خودرو ${toman(asking)} تومان است، در برابر میانه ` +
+          `${toman(median)} تومان در ${distribution.count} آگهی مشابه`
+        }
+      >
+        <div
+          className="price-bar-iqr"
+          style={{ insetInlineStart: at(p25), width: `calc(${at(p75)} - ${at(p25)})` }}
+        />
+        <div className="price-bar-median" style={{ insetInlineStart: at(median) }} />
+        <div
+          className={`price-bar-you${cheaper ? " good" : ""}`}
+          style={{ insetInlineStart: at(asking) }}
+        />
+      </div>
+      <div className="price-bar-scale">
+        <span>{toman(p10)}</span>
+        <span>{toman(p90)}</span>
+      </div>
+      <div className="price-bar-legend">
+        <span className={cheaper ? "up" : ""}>
+          این آگهی <b>{toman(asking)}</b>
+        </span>
+        <span className="muted">
+          میانه <b>{toman(median)}</b>
+        </span>
+        <span className="muted">
+          نیمه میانی <b>{toman(p25)}</b> تا <b>{toman(p75)}</b>
+        </span>
+      </div>
+    </div>
   );
 }

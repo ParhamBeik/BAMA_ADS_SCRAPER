@@ -160,6 +160,137 @@ def test_havaleh_is_still_excluded_after_the_special_case_was_removed(cohort):
     assert not DealScoreCache.objects.filter(ad_id="havale01").exists()
 
 
+# --- the dynamic top-suggestions window --------------------------------------
+#
+# Unit level for `percentile` (pure arithmetic); integration for `deal_window`,
+# whose whole subject is a percentile over stored rows.
+
+
+@pytest.mark.parametrize("values,p,expected", [
+    ([10], 75, 10),
+    ([1, 2, 3, 4], 75, 3),
+    ([1, 2, 3, 4], 100, 4),
+    ([1, 2, 3, 4], 1, 1),      # never falls off the low end
+    ([], 50, 0.0),             # empty is answerable, not a crash
+])
+def test_percentile_is_nearest_rank(values, p, expected):
+    assert FP.percentile(values, p) == expected
+
+
+def test_peer_distribution_reports_the_band_and_the_tails():
+    dist = FP.peer_distribution([100, 200, 300, 400, 500])
+    assert dist["median"] == 300
+    assert dist["min"] == 100 and dist["max"] == 500
+    assert dist["p10"] <= dist["p25"] <= dist["median"] <= dist["p75"] <= dist["p90"]
+    assert dist["count"] == 5
+
+
+def test_peer_distribution_of_nothing_is_empty_not_zeroes():
+    """A cohort with no peers has no shape; zeroes would draw one anyway."""
+    assert FP.peer_distribution([]) == {}
+
+
+@pytest.fixture
+def scored(db, cohort):
+    """Deal rows at chosen ages and discounts, anchored on the real clock."""
+    from django.utils import timezone as djtz
+
+    def make(n, *, days_old, discount):
+        now = djtz.now()
+        for i in range(n):
+            code = f"w{days_old:02d}{discount:04.0f}{i:04d}"
+            ad = cohort(code, 2_000_000_000)
+            Ad.objects.filter(code=code).update(publish_at=now - timedelta(days=days_old))
+            DealScoreCache.objects.create(
+                ad=ad, score=discount, discount_pct=discount,
+                peer_median=2_000_000_000,
+                components={"peer_count": 11, "confidence": "low"},
+            )
+    return make
+
+
+@pytest.mark.django_db
+def test_window_widens_until_it_has_enough_candidates(scored):
+    """A quiet day must widen the window, not show three cars."""
+    scored(5, days_old=1, discount=10.0)     # far below MIN_CANDIDATES
+    scored(5, days_old=20, discount=10.0)
+
+    window = FP.deal_window()
+
+    assert window["candidates"] < FP.MIN_CANDIDATES
+    # Nothing satisfied the target, so it walked out to the cap rather than
+    # settling for day 1's five rows.
+    assert window["window_days"] == FP.MAX_WINDOW_DAYS
+
+
+@pytest.mark.django_db
+def test_window_stops_early_once_a_day_carries_the_board(scored):
+    scored(FP.MIN_CANDIDATES + 50, days_old=0, discount=10.0)
+    scored(50, days_old=25, discount=10.0)
+
+    window = FP.deal_window()
+
+    assert window["window_days"] == 1        # today alone is enough
+    assert window["candidates"] >= FP.MIN_CANDIDATES
+
+
+@pytest.mark.django_db
+def test_floor_is_drawn_from_the_batch_not_from_a_constant(scored):
+    """The floor tracks what is actually on offer today."""
+    scored(100, days_old=0, discount=5.0)
+    scored(100, days_old=0, discount=20.0)
+
+    window = FP.deal_window()
+
+    # Three quarters of the batch is at or below 5%, so the 75th percentile
+    # lands there — a fixed floor would have shown either everything or nothing.
+    assert 5.0 <= window["min_discount_pct"] <= 20.0
+    assert window["ceiling_pct"] == FP.TRUSTED_MAX_DISCOUNT
+
+
+@pytest.mark.django_db
+def test_window_ignores_listings_above_the_ceiling(scored):
+    """The review band must not drag the floor up behind it."""
+    scored(20, days_old=0, discount=10.0)
+    scored(200, days_old=0, discount=60.0)
+
+    window = FP.deal_window()
+
+    assert window["min_discount_pct"] <= FP.TRUSTED_MAX_DISCOUNT
+    assert window["scored"] == 20
+
+
+@pytest.mark.django_db
+def test_window_answers_on_an_empty_board(db):
+    """Cold start: no scores yet. Must return a usable shape, not blow up."""
+    window = FP.deal_window()
+    assert window["scored"] == 0
+    assert window["candidates"] == 0
+    assert window["ceiling_pct"] == FP.TRUSTED_MAX_DISCOUNT
+
+
+@pytest.mark.django_db
+def test_rebuilding_the_board_drops_the_cached_window(scored):
+    """The window is measured from exactly the rows a rebuild throws away.
+
+    Without the invalidation the page would keep quoting a floor computed from
+    deleted scores for up to WINDOW_CACHE_SECONDS after every worker tick.
+    """
+    from django.core.cache import cache
+
+    scored(10, days_old=0, discount=10.0)
+    assert FP.deal_window()["scored"] == 10
+    assert cache.get(FP._WINDOW_CACHE_KEY) is not None
+
+    compute_deal_scores()  # drops and rebuilds DealScoreCache wholesale
+
+    assert cache.get(FP._WINDOW_CACHE_KEY) is None
+    # And the next reader gets a window measured from the rebuilt board.
+    assert FP.deal_window()["scored"] == DealScoreCache.objects.filter(
+        discount_pct__gt=0, discount_pct__lte=FP.TRUSTED_MAX_DISCOUNT
+    ).count()
+
+
 @pytest.fixture(autouse=True)
 def _episodes_are_trustworthy(settings):
     """Pin the clean-start cutoff behind these fixtures' episode dates.

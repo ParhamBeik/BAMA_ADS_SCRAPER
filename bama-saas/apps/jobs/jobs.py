@@ -711,6 +711,59 @@ def prune(*, days: int = PRUNE_DEFAULT_DAYS, dry_run: bool = False) -> dict:
     return counts
 
 
+_IMAGE_BACKFILL_BATCH = 500
+
+
+def backfill_images(*, limit: int | None = None) -> dict:
+    """Refill the image columns from payloads already on disk. No network.
+
+    The image columns were added after most of the catalog was ingested, and
+    they only refill when an ad is next *observed* — so 14,658 of 21,346 rows
+    render "No photo" while carrying a perfectly good CDN URL inside their own
+    ``raw_payload``. Nothing needs re-crawling; the data is already here.
+
+    Runs through the same ``_image_urls`` the live path uses, so a row filled
+    here and a row filled by a fetch cannot disagree. Idempotent: it only reads
+    rows that have no primary image, and a second pass over a filled row is a
+    no-op.
+    """
+    from apps.jobs.ingest import _image_urls
+
+    qs = (
+        Ad.objects.filter(primary_image_url="", raw_payload__isnull=False)
+        .order_by("code")
+    )
+    scanned = filled = 0
+    batch: list[Ad] = []
+    for ad in qs.only("code", "raw_payload", "image_count").iterator(
+        chunk_size=_IMAGE_BACKFILL_BATCH
+    ):
+        if limit is not None and scanned >= limit:
+            break
+        scanned += 1
+        primary, gallery = _image_urls(ad.raw_payload or {})
+        if not primary:
+            continue
+        ad.primary_image_url = primary[:500]
+        ad.image_urls = gallery
+        # Only when the payload never carried a count of its own: Bama's
+        # image_count is what the *ad* has, which can exceed the capped gallery.
+        if not ad.image_count:
+            ad.image_count = len(gallery) or None
+        batch.append(ad)
+        filled += 1
+        if len(batch) >= _IMAGE_BACKFILL_BATCH:
+            Ad.objects.bulk_update(
+                batch, ["primary_image_url", "image_urls", "image_count"]
+            )
+            batch = []
+    if batch:
+        Ad.objects.bulk_update(batch, ["primary_image_url", "image_urls", "image_count"])
+
+    return {"scanned": scanned, "filled": filled,
+            "remaining": Ad.objects.filter(primary_image_url="").count()}
+
+
 def reap_orphan_runs(*, now=None) -> dict:
     """Fail every RUNNING fetch/job. Safe at worker boot: nothing is live yet."""
     now = now or timezone.now()

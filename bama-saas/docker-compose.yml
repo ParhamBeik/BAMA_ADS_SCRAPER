@@ -6,6 +6,10 @@ x-django-env: &django-env
   DJANGO_SETTINGS_MODULE: config.settings
   DJANGO_DEBUG: "1"
   SECRET_KEY: ${SECRET_KEY:-django-insecure-dev-compose-key-not-for-production}
+  # Set explicitly even in dev: DJANGO_DEBUG=1 otherwise selects the LocMem
+  # fallback, and a per-process image cache in a multi-worker stack is
+  # indistinguishable from no cache at all when you are testing one.
+  REDIS_URL: redis://redis:6379/0
 
 x-logging: &logging
   driver: json-file
@@ -32,6 +36,21 @@ services:
       timeout: 5s
       retries: 10
 
+  # Listing photos and the deal board's computed window. Everything in here is
+  # derived data — losing it costs one recomputation, never a fact — so there is
+  # no volume and no persistence.
+  redis:
+    image: redis:7-alpine
+    container_name: bama-redis
+    restart: unless-stopped
+    logging: *logging
+    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru --save ""
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   django:
     build: .
     container_name: bama-django
@@ -43,6 +62,7 @@ services:
     ports: ["8001:8000"]
     depends_on:
       postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
     command: >
       sh -c "python manage.py migrate --noinput &&
              python manage.py runserver 0.0.0.0:8000"

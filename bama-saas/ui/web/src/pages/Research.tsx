@@ -62,14 +62,14 @@ function ModelPicker({
     <select
       value={value ?? ""}
       onChange={(e) => e.target.value && onChange(e.target.value)}
-      aria-label="Car model"
+      aria-label="مدل خودرو"
     >
-      {!value && <option value="">Select a model…</option>}
+      {!value && <option value="">یک مدل را انتخاب کنید…</option>}
       {[...brands].map(([brand, rows]) => (
         <optgroup key={brand} label={brand}>
           {rows.map((model) => (
             <option key={model.model_id} value={model.model_id}>
-              {model.model_name} ({model.ad_count.toLocaleString("en-US")} listings)
+              {model.model_name} ({model.ad_count.toLocaleString("en-US")} آگهی)
             </option>
           ))}
         </optgroup>
@@ -94,7 +94,7 @@ function ModelPickerSection({
   navigate: (path: string) => void;
 }) {
   if (models.length === 0) {
-    return <div className="state">No models available to research yet.</div>;
+    return <div className="state">هنوز مدلی برای تحلیل وجود ندارد.</div>;
   }
   const featured = [...models].sort((a, b) => b.ad_count - a.ad_count).slice(0, 12);
   return (
@@ -113,7 +113,7 @@ function ModelPickerSection({
               <Fa>{m.model_name}</Fa>
             </strong>
             <span className="stat-sub">
-              <Fa>{m.brand_name}</Fa> · {m.ad_count.toLocaleString("en-US")} listings
+              <Fa>{m.brand_name}</Fa> · {m.ad_count.toLocaleString("en-US")} آگهی
             </span>
           </button>
         ))}
@@ -150,9 +150,9 @@ export function Research() {
 
   if (!modelId) {
     return (
-      <div className="stack" dir="rtl">
-        <Card title="Model research">
-          <Async query={models} empty="No models available to research yet.">
+      <div className="stack">
+        <Card title="تحلیل بر پایه مدل">
+          <Async query={models} empty="هنوز مدلی برای تحلیل وجود ندارد.">
             {() => <ModelPickerSection models={modelList} navigate={navigate} />}
           </Async>
         </Card>
@@ -161,17 +161,17 @@ export function Research() {
   }
 
   return (
-    <div className="stack" dir="rtl">
+    <div className="stack">
       <div className="filters">
         <ModelPicker
           models={modelList}
           value={modelId}
           onChange={(id) => navigate(`/research/${id}`)}
         />
-        <button onClick={() => navigate("/research")}>Change model</button>
+        <button onClick={() => navigate("/research")}>تغییر مدل</button>
       </div>
 
-      <Card title="Time on market">
+      <Card title="مدت ماندن در بازار">
         <Async query={survival} shape="chart">
           {(data) => (
             <>
@@ -179,7 +179,7 @@ export function Research() {
                 x={data.curve.map((p) => p.day)}
                 series={[
                   {
-                    name: "Still listed",
+                    name: "هنوز فهرست‌شده",
                     data: data.curve.map((p) => Math.round(p.still_listed * 1000) / 10),
                     area: true,
                   },
@@ -189,25 +189,25 @@ export function Research() {
               />
               <div className="grid cols-2" style={{ marginTop: 10 }}>
                 <div>
-                  <div className="card-title">Median (including active listings)</div>
+                  <div className="card-title">میانه (با احتساب آگهی‌های فعال)</div>
                   <div className="stat">
-                    {data.median_days != null ? `${data.median_days.toFixed(0)}d` : "—"}
+                    {data.median_days != null ? `${data.median_days.toFixed(0)} روز` : "—"}
                   </div>
                   <div className="stat-sub">
-                    from {data.n.toLocaleString("en-US")} listings
+                    از {data.n.toLocaleString("en-US")} آگهی
                   </div>
                 </div>
                 <div>
-                  <div className="card-title">Naive average</div>
+                  <div className="card-title">میانگین ساده (گمراه‌کننده)</div>
                   <div className="stat warn">
                     {data.naive_mean_days_finished_only != null
-                      ? `${data.naive_mean_days_finished_only.toFixed(0)}d`
+                      ? `${data.naive_mean_days_finished_only.toFixed(0)} روز`
                       : "—"}
                   </div>
                   <div className="stat-sub">
-                    Counts only {data.delisted.toLocaleString("en-US")} completed
-                    listings and ignores {data.censored.toLocaleString("en-US")}{" "}
-                    still-active ones
+                    تنها {data.delisted.toLocaleString("en-US")} آگهی پایان‌یافته را
+                    می‌شمارد و {data.censored.toLocaleString("en-US")} آگهی هنوز فعال
+                    را نادیده می‌گیرد
                   </div>
                 </div>
               </div>
@@ -217,7 +217,7 @@ export function Research() {
         </Async>
       </Card>
 
-      <Card title="Value by model year">
+      <Card title="ارزش بر پایه سال ساخت">
         <Async query={retention} shape="chart">
           {(data) => (
             <>
@@ -225,7 +225,7 @@ export function Research() {
                 x={data.points.map((p) => p.year_jalali)}
                 series={[
                   {
-                    name: "% of newest year's value",
+                    name: "درصد ارزش جدیدترین سال",
                     data: data.points.map((p) => p.pct_of_newest),
                     area: true,
                   },
@@ -233,7 +233,7 @@ export function Research() {
                 yFormatter={(v) => `${v}%`}
                 height={220}
               />
-              <Table head={["Model year", "Listings", "Median price", "% of newest year"]}>
+              <Table head={["سال ساخت", "تعداد آگهی", "میانه قیمت", "درصد جدیدترین سال"]}>
                 {data.points.map((p) => (
                   <tr key={p.year_jalali}>
                     <td>{p.year_jalali}</td>
@@ -244,13 +244,12 @@ export function Research() {
                 ))}
               </Table>
               <p className="stat-sub">
-                Over {data.span_years.toLocaleString("en-US")} years,{" "}
-                {data.retained_over_span_pct}% of value has been retained
+                در {data.span_years.toLocaleString("en-US")} سال،{" "}
+                {data.retained_over_span_pct}٪ از ارزش حفظ شده است
                 {data.avg_annual_decline_pct != null &&
-                  ` (about ${data.avg_annual_decline_pct}%/year)`}
-                . The baseline is {data.reference_year}: the newest year with
-                enough listings, not a factory price, which doesn't exist in
-                this data.
+                  ` (حدود ${data.avg_annual_decline_pct}٪ در سال)`}
+                . مبنا سال {data.reference_year} است: جدیدترین سالی که آگهی کافی
+                دارد، نه قیمت کارخانه — چنین قیمتی در این داده وجود ندارد.
               </p>
               <Provenance envelope={data} />
             </>

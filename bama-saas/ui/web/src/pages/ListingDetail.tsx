@@ -1,7 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
-import { Async, FLAG_LABEL, Fa, ListingActions, Provenance, toman } from "../ui";
+import {
+  Async, BamaLink, FLAG_LABEL, Fa, ListingActions, PriceBar, Provenance, toman,
+} from "../ui";
+import type { Distribution } from "../ui";
 
 type Ad = {
   code: string;
@@ -17,9 +20,12 @@ type Ad = {
   fuel: string;
   city_name: string;
   description: string;
-  primary_image_url: string;
+  // Proxied through our own origin (apps/core/images.py), not hotlinked.
+  image_url: string;
   image_urls: string[];
-  url: string;
+  // Absolute, unlike the raw `url` column it is derived from — that one is a
+  // site-relative path and resolved against this app, not bama.ir.
+  bama_url: string;
   seller_authenticated: boolean | null;
   cohort_flags: string[];
   // The browse list is ACTIVE-only, but this route is deliberately not: a saved
@@ -42,6 +48,10 @@ type FairPrice = {
   available?: boolean;
   reason?: string;
   fair_value?: number | null;
+  asking?: number | null;
+  gap_pct?: number | null;
+  peer_count?: number;
+  distribution?: Distribution;
   as_of?: string;
   methodology_version?: number;
   coverage?: Record<string, unknown>;
@@ -69,35 +79,34 @@ function ListingState({
   if (status === "unverified") {
     return (
       <p className="badge warn">
-        We have lost sight of this listing — our last full sweep of Bama was
-        incomplete, so we cannot tell whether it is still for sale.
-        {lastSeen && <> Last seen {new Date(lastSeen).toLocaleDateString("en-US")}.</>}
+        این آگهی را از دست داده‌ایم — آخرین بررسی کامل ما از باما ناقص بوده، پس
+        نمی‌توانیم بگوییم هنوز برای فروش هست یا نه.
+        {lastSeen && <> آخرین بار {new Date(lastSeen).toLocaleDateString("fa-IR")} دیده شد.</>}
       </p>
     );
   }
 
   const guess: Record<string, string> = {
-    likely_sold: "probably sold",
-    likely_expired: "the listing probably just expired",
-    reposted: "relisted under a new ad",
-    unknown: "we cannot tell why",
+    likely_sold: "احتمالاً فروخته شده",
+    likely_expired: "احتمالاً اعتبار آگهی تمام شده",
+    reposted: "با آگهی تازه‌ای دوباره ثبت شده",
+    unknown: "دلیلش را نمی‌دانیم",
   };
   return (
     <p className="badge warn">
-      No longer listed on Bama
-      {lastSeen && <> — last seen {new Date(lastSeen).toLocaleDateString("en-US")}</>}
+      دیگر در باما فهرست نشده است
+      {lastSeen && <> — آخرین بار {new Date(lastSeen).toLocaleDateString("fa-IR")} دیده شد</>}
       {reason && guess[reason] && (
         <>
-          {". "}
-          {confidence === "low" ? "Best guess: " : "Most likely: "}
+          {"، "}
+          {confidence === "low" ? "حدس ما: " : "به احتمال زیاد: "}
           {guess[reason]}
-          {repostedFrom && reason === "reposted" && "."}
         </>
       )}
       {repostedFrom && (
         <>
           {" "}
-          <Link to={`/listing/${repostedFrom}`}>See the earlier listing</Link>.
+          <Link to={`/listing/${repostedFrom}`}>آگهی پیشین را ببینید</Link>.
         </>
       )}
     </p>
@@ -123,19 +132,19 @@ export function ListingDetail() {
   });
 
   return (
-    <div className="stack" dir="rtl">
+    <div className="stack">
       <Async query={ad}>
         {(data) => (
           <>
             <div className="breadcrumb">
-              <Link to="/">Home</Link> / <Link to="/explore">Explore</Link> / <Fa>{data.title}</Fa>
+              <Link to="/">معامله‌ها</Link> / <Link to="/explore">جست‌وجو</Link> / <Fa>{data.title}</Fa>
             </div>
             <div className="detail-layout">
               <div className="gallery card">
-                {(data.image_urls?.length ? data.image_urls : data.primary_image_url ? [data.primary_image_url] : []).map((src) => (
+                {(data.image_urls?.length ? data.image_urls : data.image_url ? [data.image_url] : []).map((src) => (
                   <img key={src} src={src} alt="" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.opacity = "0.3"; }} />
                 ))}
-                {!data.primary_image_url && <div className="thumb-fallback">No photo</div>}
+                {!data.image_url && <div className="thumb-fallback">بدون تصویر</div>}
               </div>
               <div className="stack">
                 <div className="card">
@@ -152,31 +161,29 @@ export function ListingDetail() {
                   <p className="price">{data.current_price != null ? toman(data.current_price) : "—"}</p>
                   {data.price_basis_unclear && (
                     <p className="badge warn">
-                      This number is likely a down payment or installment, not
-                      the full car price — that's why it's excluded from the
-                      deal board.
+                      این عدد به احتمال زیاد پیش‌پرداخت یا قسط است، نه قیمت کامل
+                      خودرو — به همین دلیل از فهرست معامله‌ها کنار گذاشته شده.
                     </p>
                   )}
                   {data.condition_flagged && (
                     <p className="badge warn">
-                      The listing description mentions the car's condition
-                      (accident, free-zone plate, or similar) — read it before
-                      comparing price.
+                      توضیحات آگهی به وضعیت خودرو اشاره کرده (تصادف، پلاک منطقه
+                      آزاد یا مشابه) — پیش از مقایسه قیمت آن را بخوانید.
                     </p>
                   )}
                   <ul className="spec-list">
-                    <li>Year: {data.year_jalali ?? "—"}</li>
-                    <li>Mileage: {data.mileage?.toLocaleString("en-US") ?? "—"}</li>
-                    <li>Transmission: {data.transmission || "—"}</li>
-                    <li>Body: {data.body_type || "—"}</li>
-                    <li>Fuel: {data.fuel || "—"}</li>
-                    <li>City: <Fa>{data.city_name || "—"}</Fa></li>
-                    <li>Verified seller: {data.seller_authenticated == null ? "—" : data.seller_authenticated ? "Yes" : "No"}</li>
+                    <li>سال ساخت: {data.year_jalali ?? "—"}</li>
+                    <li>کارکرد: {data.mileage?.toLocaleString("en-US") ?? "—"}</li>
+                    <li>گیربکس: {data.transmission || "—"}</li>
+                    <li>بدنه: {data.body_type || "—"}</li>
+                    <li>سوخت: {data.fuel || "—"}</li>
+                    <li>شهر: <Fa>{data.city_name || "—"}</Fa></li>
+                    <li>فروشنده احراز شده: {data.seller_authenticated == null ? "—" : data.seller_authenticated ? "بله" : "خیر"}</li>
                     {data.seller_type && (
                       <li>
                         {data.seller_type === "dealer"
-                          ? `Dealership: ${data.dealer_name || "—"}`
-                          : "Private seller"}
+                          ? `نمایشگاه: ${data.dealer_name || "—"}`
+                          : "فروشنده شخصی"}
                       </li>
                     )}
                   </ul>
@@ -185,14 +192,14 @@ export function ListingDetail() {
                       {FLAG_LABEL[f] ?? f}
                     </p>
                   ))}
-                  {data.url && (
-                    <a className="btn" href={data.url} target="_blank" rel="noreferrer">View on Bama</a>
-                  )}
-                  <ListingActions code={data.code} />
+                  <div className="row">
+                    <BamaLink href={data.bama_url} />
+                    <ListingActions code={data.code} />
+                  </div>
                 </div>
                 <div className="card">
-                  <h2>Description</h2>
-                  <p><Fa>{data.description || "No description provided."}</Fa></p>
+                  <h2>توضیحات</h2>
+                  <p><Fa>{data.description || "توضیحی ثبت نشده است."}</Fa></p>
                 </div>
               </div>
             </div>
@@ -201,13 +208,20 @@ export function ListingDetail() {
       </Async>
 
       <div className="card">
-        <h2>Price assessment</h2>
+        <h2>ارزیابی قیمت</h2>
         <Async query={fair}>
-          {(fp) => fp.available === false ? (
-            <p className="muted">Not enough data: {fp.reason}</p>
-          ) : (
+          {(fp) => (
             <>
-              <p>Fair price: {fp.fair_value != null ? toman(fp.fair_value) : "—"}</p>
+              <p>
+                قیمت منصفانه: {fp.fair_value != null ? toman(fp.fair_value) : "—"} تومان
+              </p>
+              {/* Where this car sits among its peers, before the arithmetic. */}
+              <PriceBar distribution={fp.distribution} asking={fp.asking} />
+              {fp.peer_count != null && (
+                <p className="empty-hint">
+                  بر پایه {fp.peer_count} آگهی مشابه با همان مدل، تیپ و سال ساخت.
+                </p>
+              )}
               {fp.as_of && <Provenance envelope={fp as never} />}
             </>
           )}
@@ -215,17 +229,20 @@ export function ListingDetail() {
       </div>
 
       <div className="card">
-        <h2>Price history</h2>
+        <h2>تاریخچه قیمت</h2>
         <Async query={history}>
           {(rows) => {
             const list = Array.isArray(rows) ? rows : rows.results ?? [];
-            if (!list.length) return <p className="muted">No price changes recorded.</p>;
+            if (!list.length) return <p className="muted">تغییر قیمتی ثبت نشده است.</p>;
             return (
               <table className="table">
-                <thead><tr><th>Time</th><th>Price</th></tr></thead>
+                <thead><tr><th>زمان</th><th>قیمت</th></tr></thead>
                 <tbody>
                   {list.slice(0, 20).map((r, i) => (
-                    <tr key={i}><td>{r.observed_at}</td><td>{toman(r.price)}</td></tr>
+                    <tr key={i}>
+                      <td>{new Date(r.observed_at).toLocaleDateString("fa-IR")}</td>
+                      <td>{toman(r.price)}</td>
+                    </tr>
                   ))}
                 </tbody>
               </table>

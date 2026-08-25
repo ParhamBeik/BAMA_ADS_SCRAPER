@@ -48,10 +48,10 @@ function windowLabel(w: MarketIndex["window"]): string {
   const span =
     w.first_date && w.last_date
       ? `${w.first_date} → ${w.last_date}`
-      : "No history recorded yet";
-  const asked = `${w.days}d of ${w.requested_days}d requested`;
+      : "هنوز سابقه‌ای ثبت نشده است";
+  const asked = `${w.days} روز از ${w.requested_days} روز درخواستی`;
   return w.clamped
-    ? `${span} · ${asked} (history is shorter than the requested window)`
+    ? `${span} · ${asked} (سابقه موجود کوتاه‌تر از بازه درخواستی است)`
     : `${span} · ${asked}`;
 }
 
@@ -68,7 +68,7 @@ export function Overview() {
   });
 
   return (
-    <div className="stack" dir="rtl">
+    <div className="stack">
       <Async query={overview}>
         {(data) => (
           <>
@@ -76,18 +76,18 @@ export function Overview() {
                 which is already the subtitle of the first. */}
             <div className="grid cols-3">
               <Stat
-                label="Active listings"
+                label="آگهی‌های فعال"
                 value={data.active_listings.toLocaleString("en-US")}
-                sub={`${data.priced_listings.toLocaleString("en-US")} priced`}
+                sub={`${data.priced_listings.toLocaleString("en-US")} آگهی قیمت‌دار`}
               />
-              <Stat label="Brands" value={data.brands.toLocaleString("en-US")} />
-              <Stat label="Models" value={data.models.toLocaleString("en-US")} />
+              <Stat label="برندها" value={data.brands.toLocaleString("en-US")} />
+              <Stat label="مدل‌ها" value={data.models.toLocaleString("en-US")} />
             </div>
-            <Card title="Top brands">
+            <Card title="پرآگهی‌ترین برندها">
               {/* A bar next to each count. The share is the question being asked
                   of this table, and a column of numbers makes the reader do the
                   division. */}
-              <Table head={["Brand", "Listings", "Share"]}>
+              <Table head={["برند", "تعداد آگهی", "سهم"]}>
                 {data.top_brands.map((b) => (
                   <tr key={b.brand__name_fa}>
                     <td>
@@ -111,39 +111,38 @@ export function Overview() {
         )}
       </Async>
 
-      <Card title="Composition-controlled price index">
+      <Card title="شاخص قیمت با کنترل ترکیب آگهی‌ها">
         <p className="stat-sub" style={{ marginTop: 0 }}>
-          Each cohort is only compared with itself, so a change in listing
-          mix doesn't look like a price move.
+          هر دسته فقط با خودش مقایسه می‌شود، تا تغییر در ترکیب آگهی‌های موجود
+          به‌اشتباه حرکت قیمت به نظر نرسد.
         </p>
-        <Async query={index} empty="No index history yet." shape="chart">
+        <Async query={index} empty="هنوز سابقه‌ای برای شاخص وجود ندارد." shape="chart">
           {(data) => {
             const points = data.series ?? [];
             const last = points[points.length - 1];
             return (
               <>
-                <p className="stat-sub">Actual window: {windowLabel(data.window)}</p>
+                <p className="stat-sub">بازه واقعی: {windowLabel(data.window)}</p>
                 {/* The index's own sample size. The Provenance strip below
                     reports the *sweep's* coverage (~33k ads), which is a much
                     larger and unrelated number — sitting next to the index it
                     read as if the index were built on all of it. */}
                 {last && (
                   <p className="stat-sub">
-                    Built from {last.cohort_count.toLocaleString("en-US")} cohorts
-                    and {last.ad_count.toLocaleString("en-US")} listings on the
-                    latest day
+                    ساخته‌شده از {last.cohort_count.toLocaleString("en-US")} دسته
+                    و {last.ad_count.toLocaleString("en-US")} آگهی در آخرین روز
                   </p>
                 )}
                 <div className="grid cols-2" style={{ marginBottom: 10 }}>
                   <Stat
-                    label="Index"
+                    label="شاخص"
                     value={
                       data.latest_index != null ? data.latest_index.toFixed(1) : "—"
                     }
-                    sub={`Base ${data.base_value}`}
+                    sub={`پایه ${data.base_value}`}
                   />
                   <Stat
-                    label="Window change"
+                    label="تغییر در این بازه"
                     value={pct(data.change_pct)}
                     tone={
                       data.change_pct == null
@@ -160,7 +159,7 @@ export function Overview() {
                       x={points.map((p) => p.date)}
                       series={[
                         {
-                          name: "Index",
+                          name: "شاخص",
                           data: points.map((p) => p.index_value),
                           area: true,
                         },
@@ -169,7 +168,7 @@ export function Overview() {
                     />
                   </Suspense>
                 ) : (
-                  <div className="state">No index history yet.</div>
+                  <div className="state">هنوز سابقه‌ای برای شاخص وجود ندارد.</div>
                 )}
                 <Provenance envelope={data} />
               </>

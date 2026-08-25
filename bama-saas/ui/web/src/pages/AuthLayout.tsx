@@ -35,10 +35,10 @@ export interface Check {
  */
 export function passwordChecks(password: string): Check[] {
   return [
-    { id: "length", label: "At least 8 characters", ok: password.length >= 8 },
+    { id: "length", label: "دست‌کم ۸ نویسه", ok: password.length >= 8 },
     {
       id: "not-numeric",
-      label: "Not only numbers",
+      label: "فقط عدد نباشد",
       ok: Boolean(password) && !/^\d+$/.test(password),
     },
   ];
@@ -50,11 +50,11 @@ export function strengthOf(password: string, checks: Check[]) {
   const required = checks.filter((c) => c.ok).length === checks.length;
   const roomy = password.length >= 12;
   const varied = /[a-zA-Z]/.test(password) && /[\d\W]/.test(password);
-  if (!required) return { label: "Weak", tone: "down" as const, pct: 33 };
+  if (!required) return { label: "ضعیف", tone: "down" as const, pct: 33 };
   // Both, not either: "aaaaaaaaaaaa" is long and "Pa55!" is varied, and calling
   // either one Strong tells the user something untrue about their password.
-  if (roomy && varied) return { label: "Strong", tone: "up" as const, pct: 100 };
-  return { label: "Good", tone: "warn" as const, pct: 66 };
+  if (roomy && varied) return { label: "قوی", tone: "up" as const, pct: 100 };
+  return { label: "خوب", tone: "warn" as const, pct: 66 };
 }
 
 export function AuthLayout({
@@ -75,28 +75,28 @@ export function AuthLayout({
       <section className="auth-visual" aria-hidden="true">
         <div className="auth-brand">
           <BrandMark size={30} />
-          <span>Bama Market</span>
+          <span>بازار خودرو باما</span>
         </div>
         <div className="auth-visual-copy">
-          <p className="auth-eyebrow">Market intelligence, without the noise</p>
-          <h1>Find the listings worth your attention.</h1>
+          <p className="auth-eyebrow">تحلیل بازار، بدون نویز</p>
+          <h1>آگهی‌هایی که ارزش وقت شما را دارند.</h1>
           <p>
-            Track clean market signals, compare fair prices, and move from search
-            to decision with confidence.
+            سیگنال‌های تمیز بازار را دنبال کنید، قیمت منصفانه را بسنجید و از
+            جست‌وجو با اطمینان به تصمیم برسید.
           </p>
         </div>
         <dl className="auth-facts">
           <div>
-            <dt>Listings tracked</dt>
-            <dd>34,000+</dd>
+            <dt>آگهی زیر نظر</dt>
+            <dd>+۳۴٬۰۰۰</dd>
           </div>
           <div>
-            <dt>Refreshed</dt>
-            <dd>Every 15 min</dd>
+            <dt>به‌روزرسانی</dt>
+            <dd>هر ۱۵ دقیقه</dd>
           </div>
           <div>
-            <dt>Price history</dt>
-            <dd>Per listing</dd>
+            <dt>تاریخچه قیمت</dt>
+            <dd>برای هر آگهی</dd>
           </div>
         </dl>
       </section>
@@ -105,7 +105,7 @@ export function AuthLayout({
         <div className="auth-card-inner">
           <div className="auth-brand auth-brand-compact">
             <BrandMark size={24} />
-            <span>Bama Market</span>
+            <span>بازار خودرو باما</span>
           </div>
           <div className="auth-card-header">
             <p className="auth-eyebrow">{eyebrow}</p>
@@ -139,7 +139,7 @@ export function EmailField({
   const invalid = touched && Boolean(value) && !EMAIL_RE.test(value.trim());
   return (
     <label className="auth-field" htmlFor="auth-email">
-      <span>Email address</span>
+      <span>نشانی ایمیل</span>
       <input
         id="auth-email"
         type="email"
@@ -206,7 +206,7 @@ export function PasswordField({
           onClick={onToggle}
           // The label states the action, not the state: a screen reader user
           // pressing this needs to know what happens, not what is.
-          aria-label={show ? `Hide ${label.toLowerCase()}` : `Show ${label.toLowerCase()}`}
+          aria-label={show ? `پنهان کردن ${label}` : `نمایش ${label}`}
           aria-pressed={show}
         >
           {show ? <EyeOff size={17} /> : <Eye size={17} />}
@@ -219,13 +219,13 @@ export function PasswordField({
 export function Requirements({ checks, id }: { checks: Check[]; id: string }) {
   return (
     <div className="auth-requirements" id={id}>
-      <strong>Password requirements</strong>
+      <strong>شرایط گذرواژه</strong>
       <ul>
         {checks.map((check) => (
           <li key={check.id} className={check.ok ? "complete" : ""}>
             <span aria-hidden="true">{check.ok ? "✓" : "○"}</span>
             {check.label}
-            <span className="sr-only">{check.ok ? " — met" : " — not met yet"}</span>
+            <span className="sr-only">{check.ok ? " — رعایت شده" : " — هنوز رعایت نشده"}</span>
           </li>
         ))}
       </ul>

@@ -13,8 +13,31 @@ import json
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import urljoin
 
 import jdatetime
+
+# ---------------------------------------------------------------------------
+# Where an ad lives on the source site
+# ---------------------------------------------------------------------------
+
+SITE_ROOT = "https://bama.ir"
+
+
+def absolute_ad_url(path: str | None) -> str:
+    """The ad's real address on bama.ir.
+
+    Bama sends ``detail.url`` as a site-relative path
+    ("/car/detail-dr769ivm-zamyad-pickup-cng-1394"), so a link rendered straight
+    from the column resolves against *our* origin and dead-ends inside the SPA.
+    The Telegram notifier had its own copy of this fix and the website had none;
+    one function, so a third caller cannot invent a fourth behaviour.
+    """
+    path = (path or "").strip()
+    if not path:
+        return ""
+    return path if path.startswith("http") else urljoin(SITE_ROOT, path)
+
 
 # ---------------------------------------------------------------------------
 # Digits and integers

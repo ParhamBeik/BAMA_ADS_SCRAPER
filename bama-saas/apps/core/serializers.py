@@ -2,9 +2,11 @@
 
 from rest_framework import serializers
 
+from apps.core import images
 from apps.core.models import Ad, Brand, Model, NotifierSettings, Variant
 from apps.core.pricing import MIN_PEERS
 from apps.core.quality import condition_discounted, price_basis_unclear
+from apps.jobs.parsing import absolute_ad_url
 
 
 class BrandSerializer(serializers.ModelSerializer):
@@ -56,9 +58,27 @@ class AdSerializer(serializers.ModelSerializer):
     # apps/core/quality.py for why that asymmetry is deliberate.
     price_basis_unclear = serializers.SerializerMethodField()
     condition_flagged = serializers.SerializerMethodField()
+    # Photos are served from our own origin (apps/core/images.py), not hotlinked
+    # from a CDN that blocks us periodically.
+    image_url = serializers.SerializerMethodField()
+    image_urls = serializers.SerializerMethodField()
+    # The ad on bama.ir. `Ad.url` holds a site-relative PATH, so anything
+    # rendering it straight into an href resolves against our own origin and
+    # dead-ends inside the SPA. Derived here rather than migrated so the ~21k
+    # rows already stored are correct immediately.
+    bama_url = serializers.SerializerMethodField()
 
     def get_seller_type(self, obj) -> str:
         return "dealer" if obj.dealer_id is not None else "private"
+
+    def get_image_url(self, obj) -> str:
+        return images.ad_image_paths(obj)[0]
+
+    def get_image_urls(self, obj) -> list:
+        return images.ad_image_paths(obj)[1]
+
+    def get_bama_url(self, obj) -> str:
+        return absolute_ad_url(obj.url or obj.canonical_path)
 
     def get_price_basis_unclear(self, obj) -> bool:
         return price_basis_unclear(
@@ -75,8 +95,8 @@ class AdSerializer(serializers.ModelSerializer):
             "code", "brand_slug", "brand_name", "model_id", "model_name",
             "variant_id", "variant_name", "year", "year_jalali", "mileage",
             "current_price", "price_type", "publish_at", "last_seen_at", "title",
-            "transmission", "body_type", "fuel", "city_id", "city_name", "url",
-            "description", "primary_image_url", "image_urls", "image_count",
+            "transmission", "body_type", "fuel", "city_id", "city_name",
+            "bama_url", "description", "image_url", "image_urls", "image_count",
             "seller_authenticated", "dealer_name", "seller_type", "status",
             "removed_at", "likely_reason", "reason_confidence", "reposted_from",
             "cohort_flags", "price_basis_unclear", "condition_flagged",

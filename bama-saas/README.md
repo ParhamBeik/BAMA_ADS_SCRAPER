@@ -10,7 +10,9 @@ Telegram notifier. PostgreSQL only — SQLite is not supported.
 
 Django 5.2 + DRF, PostgreSQL 16, `psycopg[binary]`, django-filter,
 django-cors-headers, dj-database-url, jdatetime, requests, gunicorn.
-Python ≥ 3.11. UI: React 19 + Vite + TypeScript. No Celery, no Redis, no message
+Python ≥ 3.11. UI: React 19 + Vite + TypeScript (Persian, RTL). Redis is a
+*cache only* — proxied listing photos and the deal board's computed window,
+both pure derived data, evicted under an LRU cap. Still no Celery and no message
 broker: the scheduler is a shell loop plus `flock`.
 
 ## Layout
@@ -28,8 +30,8 @@ bama-saas/
 ├── ui/web/                  React + Vite + TypeScript
 ├── deploy/                  worker.sh (the scheduler), backup, VPS deploy
 ├── tests/                   pytest-django, 8 files
-├── docker-compose.yml       local: postgres, django, worker, vite
-└── docker-compose.prod.yml  VPS: postgres, gunicorn, worker, nginx
+├── docker-compose.yml       local: postgres, redis, django, worker, vite
+└── docker-compose.prod.yml  VPS: postgres, redis, gunicorn, worker, nginx
 ```
 
 One file per concern. `apps/core` is what the API serves; `apps/jobs` is what
@@ -96,11 +98,12 @@ Cadences bundle jobs; a job name runs that job alone.
 | `hot` | fetch → mark_inactive → deal_scores → notify | 15 min |
 | `coverage` | coverage | 10 min |
 | `warm` | episodes → snapshot → market_index | 30 min |
-| `maintenance` | deal_scores → prune → health | 6 h |
+| `maintenance` | deal_scores → backfill_images → prune → health | 6 h |
 | `full` | every hot + warm step, full deal rebuild | on demand |
 
 Jobs: `fetch`, `mark_inactive`, `episodes`, `snapshot`, `market_index`,
-`deal_scores`, `notify`, `coverage`, `prune`, `health`, `reap_orphans`.
+`deal_scores`, `notify`, `coverage`, `backfill_images`, `prune`, `health`,
+`reap_orphans`.
 Every step writes a `JobRun` row, so "did last night's snapshot run?" is a
 query rather than a log excavation. A step whose declared prerequisite failed is
 recorded as `skipped`, never allowed to publish a number computed from stale
@@ -120,16 +123,19 @@ Everything under `/api/`. Health: `/api/health/`, `/api/db/health/`.
 
 - **Auth** — `/api/auth/{me,register,login,logout}/`
 - **Catalog** — `/api/brands/`, `/api/brands/<slug>/models/`,
+  `/api/models/?q=&brand=` (searchable, with listing counts),
   `/api/models/<pk>/variants/`, `/api/ads/`, `/api/ads/<code>/`
+- **Photos** — `/api/img/<code>/<n>/`, proxied and Redis-cached
 - **Market** — `/api/markets/`, `/api/ads/<code>/price-history/`,
   `/api/ads/<code>/fair-price/`
-- **Analytics** — `/api/analytics/deal-scores/[<code>/]`,
+- **Analytics** — `/api/analytics/deal-scores/?band=top|all|review`,
+  `/api/analytics/deal-scores/<code>/`,
   `/api/analytics/market-index/?scope=market|brand|model&id=&days=`,
   `/api/analytics/overview/`
 - **Research** — `/api/research/{liquidity,depreciation}/<model_id>/`
 - **Saved cars** — `/api/favorites/`, session-scoped to the user
 - **Notifier** — `/api/notifier-settings/` (singleton, disabled by default)
-- **Operator** (staff only) — `POST /api/admin/jobs/{fetch,refresh-analytics,deal-scores}/`
+- **Operator** (staff only) — `POST /api/admin/jobs/{fetch,refresh-analytics,deal-scores,backfill-images}/`
   (202, runs in a thread), `GET /api/admin/jobs/{overview,crawl-health}/`
   (503 when unhealthy), `GET /api/admin/health/`,
   `GET /api/admin/ads/<code>/provenance/`
@@ -138,7 +144,7 @@ Ad responses are curated columns. `raw_payload` is operator-only — it is the
 whole scraped record, not a public field.
 
 ```bash
-curl -s 'http://localhost:8001/api/analytics/deal-scores/?limit=20' | jq
+curl -s 'http://localhost:8001/api/analytics/deal-scores/?band=top&limit=20' | jq
 curl -s 'http://localhost:8001/api/analytics/market-index/?days=90' | jq
 ```
 
@@ -169,6 +175,18 @@ return. Input is `DailyInventorySnapshot`.
   asking price below half the peer median is dropped as a down payment or typo.
   Installment ads are excluded — their "price" is a deposit, and left in they
   were 74% of the top deals.
+- **Freshness ranks before size of discount.** The board groups by how recently
+  an ad was published or bumped (`publish_at`, never `first_seen_at` — that one
+  says when *our crawler* arrived) and the discount only orders within a group.
+  How far back it looks and how good a deal must be are both measured per
+  rebuild from the batch on the board (`pricing.deal_window`), never hardcoded.
+- **Above 25% is a review band, not a recommendation.** The peer key is
+  (model, trim, year) and knows nothing about damage, free-zone plates or
+  pre-sales, so past that the gap is usually an attribute the model cannot see.
+  Nothing is hidden; it moves to a tab that says what it is.
+- **Photos are served from our own origin.** Bama's CDN blocks our egress
+  periodically, so each photo is fetched once and cached in Redis
+  (`apps/core/images.py`, `GET /api/img/<code>/<n>/`).
 
 ## Frontend
 
@@ -179,11 +197,33 @@ npm run build      # tsc -b && vite build
 npm run typecheck
 ```
 
+Persian throughout, RTL from `<html>`. Vazirmatn and JetBrains Mono are
+bundled, never fetched from Google Fonts — that host is unreliable from Iran and
+the fallback was Tahoma. Digits stay Latin: they sit in tabular columns beside
+Latin magnitude suffixes, so "۳.۹۰B" would be two numeral systems in one token.
+
 Filter state lives in the URL, so every view is shareable and the back button
 works. `<Provenance>` renders `as_of` + coverage on every research answer.
 `<Async>` treats *unavailable* — the backend refusing to compute from too little
 data — as a real answer, not an error, and never as an empty chart. A survival
 curve drawn across a coverage hole reads crawler downtime as cars selling.
+
+## Open question: the 25-50% band
+
+272 of 9,075 scored listings sit between 25% and 50% under their peer median.
+That is too many to be a tail of genuine bargains, and the ceiling that moves
+them into the review tab labels the symptom without explaining it. Three
+candidate causes, none yet tested:
+
+- the peer median is not weighted for recency, so a cohort whose live listings
+  are older than the ad being judged reads as expensive;
+- the cars really are discounted for something the cohort key cannot see
+  (damage, plates, provenance) and the description regex in `quality.py` is
+  catching only part of it;
+- some are not real listings.
+
+Distinguishing these needs the review band sampled by hand against the source
+ads, not another threshold.
 
 ## Tests
 

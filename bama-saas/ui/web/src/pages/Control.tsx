@@ -66,6 +66,7 @@ const TRIGGERS = [
   { path: "/api/admin/jobs/fetch/", label: "fetch_live" },
   { path: "/api/admin/jobs/refresh-analytics/", label: "run_pipeline (skip fetch)" },
   { path: "/api/admin/jobs/deal-scores/", label: "compute_deal_scores" },
+  { path: "/api/admin/jobs/backfill-images/", label: "backfill_images" },
 ];
 
 function n(value: number | undefined) {
@@ -109,9 +110,11 @@ export function Control() {
 
   return (
     <div className="stack" dir="ltr">
-      <p className="muted">
-        Crawl checks from FetchRun / PageCoverage / IngestReject; counts from
-        Postgres. Individual records live in <a href="/admin/">Django admin</a>.
+      <p className="muted" dir="rtl">
+        بررسی‌های خزنده از FetchRun / PageCoverage / IngestReject؛ شمارش‌ها از
+        Postgres. رکوردهای منفرد در <a href="/admin/">پنل مدیریت جنگو</a> هستند.
+        نام ستون‌ها در جدول‌های زیر عمداً ترجمه نشده‌اند: این‌ها دقیقاً همان
+        شناسه‌های پایگاه داده‌اند.
       </p>
 
       <Async query={health}>
@@ -120,31 +123,31 @@ export function Control() {
           return (
             <div className="grid cols-4">
               <Stat
-                label="Crawl health"
-                value={failed.length ? `${failed.length} failing` : "Healthy"}
+                label="سلامت خزنده"
+                value={failed.length ? `${failed.length} خطا` : "سالم"}
                 tone={failed.length ? "warn" : "up"}
-                sub={`${data.crawl.length} checks`}
+                sub={`${data.crawl.length} بررسی`}
               />
               <Stat
-                label="Active listings"
+                label="آگهی‌های فعال"
                 value={n(data.catalog.active_ads)}
-                sub={`${n(data.catalog.removed_ads)} delisted, ${n(
+                sub={`${n(data.catalog.removed_ads)} حذف‌شده، ${n(
                   data.catalog.unverified_ads,
-                )} unverified`}
+                )} تأییدنشده`}
               />
               <Stat
-                label="Database"
+                label="پایگاه داده"
                 value={bytes(data.database.size_bytes)}
-                sub={`${n(data.database.connections)} connections`}
+                sub={`${n(data.database.connections)} اتصال`}
               />
               <Stat
-                label="Latest fetch"
+                label="آخرین برداشت"
                 value={data.fetch.latest?.mode ?? "—"}
                 tone={data.fetch.latest?.status === "failed" ? "warn" : "up"}
                 sub={
                   data.fetch.latest
-                    ? `${data.fetch.latest.stop_reason || "running"} · depth ${n(data.fetch.latest.deepest_rank ?? 0)}`
-                    : "No fetch recorded"
+                    ? `${data.fetch.latest.stop_reason || "running"} · عمق ${n(data.fetch.latest.deepest_rank ?? 0)}`
+                    : "برداشتی ثبت نشده"
                 }
               />
             </div>
@@ -152,7 +155,7 @@ export function Control() {
         }}
       </Async>
 
-      <Card title="Crawl checks">
+      <Card title="بررسی‌های خزنده">
         <Async query={health}>
           {(data) => (
             <div className="check-grid">
@@ -172,21 +175,21 @@ export function Control() {
         </Async>
       </Card>
 
-      <Card title="Coverage ledger">
+      <Card title="دفتر پوشش خزنده">
         <div className="row between wrap">
           <span>
-            Depth ceiling: <code>{n(health.data?.fetch.coverage_depth ?? 0)}</code>
+            سقف عمق: <code>{n(health.data?.fetch.coverage_depth ?? 0)}</code>
           </span>
           <span>
-            Gaps: <code>{n(health.data?.fetch.coverage_gap_count ?? 0)}</code>
+            شکاف‌ها: <code>{n(health.data?.fetch.coverage_gap_count ?? 0)}</code>
           </span>
           <span className="stat-sub">
-            Rolling window: {health.data?.fetch.coverage_window_hours ?? 24}h
+            پنجره چرخشی: {health.data?.fetch.coverage_window_hours ?? 24} ساعت
           </span>
         </div>
       </Card>
 
-      <Card title="Run a job">
+      <Card title="اجرای دستی کار">
         <div className="row">
           {TRIGGERS.map((t) => (
             <button
@@ -194,26 +197,26 @@ export function Control() {
               className="btn"
               disabled={trigger.isPending}
               onClick={() => {
-                if (confirm(`Run ${t.label}?`)) trigger.mutate(t.path);
+                if (confirm(`«${t.label}» اجرا شود؟`)) trigger.mutate(t.path);
               }}
             >
-              {trigger.isPending ? "starting…" : t.label}
+              {trigger.isPending ? "در حال شروع…" : t.label}
             </button>
           ))}
         </div>
         {trigger.isSuccess && (
           <p className="stat-sub">
-            Job accepted. Its final status will appear below after the next refresh.
+            کار پذیرفته شد. وضعیت نهایی آن پس از تازه‌سازی بعدی در جدول زیر می‌آید.
           </p>
         )}
         {trigger.isError && (
           <p className="warn">
-            {(trigger.error as Error).message || "The job could not be started."}
+            {(trigger.error as Error).message || "کار شروع نشد."}
           </p>
         )}
       </Card>
 
-      <Card title="Latest run per job">
+      <Card title="آخرین اجرای هر کار">
         <Async query={jobs}>
           {(data) => (
             <table className="table inspect-table">
@@ -241,10 +244,10 @@ export function Control() {
       </Card>
 
       <Card
-        title="Recent runs"
+        title="اجراهای اخیر"
         action={
           <button className="ghost" onClick={() => setShowAllRuns((v) => !v)}>
-            {showAllRuns ? "show fewer" : "show all"}
+            {showAllRuns ? "نمایش کمتر" : "نمایش همه"}
           </button>
         }
       >
@@ -270,7 +273,7 @@ export function Control() {
                 </table>
                 {!showAllRuns && data.recent.length > RECENT_RUNS_COLLAPSED && (
                   <p className="stat-sub" style={{ marginTop: 8 }}>
-                    {data.recent.length - RECENT_RUNS_COLLAPSED} more run(s) hidden.
+                    {data.recent.length - RECENT_RUNS_COLLAPSED} اجرای دیگر پنهان است.
                   </p>
                 )}
               </>
@@ -279,7 +282,7 @@ export function Control() {
         </Async>
       </Card>
 
-      <Card title="Catalog and database">
+      <Card title="کاتالوگ و پایگاه داده">
         <Async query={health}>
           {(data) => (
             <>

@@ -31,6 +31,7 @@ x-django-env: &django-env
   BAMA_REQUEST_TIMEOUT: ${BAMA_REQUEST_TIMEOUT:-20}
   BAMA_COOKIE: ${BAMA_COOKIE:-}
   BAMA_TELEGRAM_TOKEN: ${BAMA_TELEGRAM_TOKEN:-}
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
 
 services:
   postgres:
@@ -50,6 +51,27 @@ services:
       retries: 10
     networks: [internal]
 
+  # Proxied listing photos and the deal board's computed window. Capped and
+  # LRU-evicting rather than unbounded: this VPS runs more than one stack, and
+  # an image cache is exactly the kind of thing that grows until something else
+  # gets OOM-killed. Nothing in here is authoritative, so eviction is free.
+  # `--save ""` disables snapshotting for the same reason.
+  redis:
+    image: redis:7-alpine
+    container_name: bama-redis
+    restart: unless-stopped
+    logging: *logging
+    command: >
+      redis-server --maxmemory ${REDIS_MAXMEMORY:-512mb}
+                   --maxmemory-policy allkeys-lru
+                   --save ""
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [internal]
+
   django:
     build: .
     container_name: bama-django
@@ -59,6 +81,7 @@ services:
     volumes: [staticfiles:/app/staticfiles]
     depends_on:
       postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
     # No account seeding. Staff is granted by createsuperuser, not by signup.
     command: >
       sh -c "python manage.py migrate --noinput &&

@@ -14,6 +14,7 @@ import pytest
 from rest_framework.test import APIClient
 
 from apps.accounts.models import User
+from apps.core import pricing
 from apps.core.models import (
     Ad,
     Brand,
@@ -451,13 +452,18 @@ def test_deal_scores_return_envelope_with_evidence(api_client, catalog):
             "age_days": 3,
         },
     )
-    resp = api_client.get("/api/analytics/deal-scores/?limit=10")
+    # band=all, because this test is about the envelope, not about freshness:
+    # the default band windows on publish_at against the real clock, which the
+    # fixture's fixed dates would fall outside of as soon as the suite is a
+    # month old.
+    resp = api_client.get("/api/analytics/deal-scores/?band=all&limit=10")
     assert resp.status_code == 200, resp.content
     body = resp.json()
     assert "results" in body
     assert "as_of" in body
     assert "coverage" in body
     assert "methodology_version" in body
+    assert body["window"]["ceiling_pct"] == pricing.TRUSTED_MAX_DISCOUNT
     row = body["results"][0]
     assert row["code"] == ad.code
     assert row["peer_count"] == 11
@@ -476,7 +482,7 @@ def test_deal_scores_price_bounds(api_client, catalog):
         )
 
     resp = api_client.get(
-        f"/api/analytics/deal-scores/?price_min={cheap.current_price}"
+        f"/api/analytics/deal-scores/?band=all&price_min={cheap.current_price}"
         f"&price_max={cheap.current_price}"
     )
     assert resp.status_code == 200, resp.content
@@ -493,7 +499,9 @@ def test_deal_scores_exclude_unclear_price_basis(api_client, catalog):
 
     compute_deal_scores()
 
-    rows = api_client.get("/api/analytics/deal-scores/?limit=200").json()["results"]
+    rows = api_client.get(
+        "/api/analytics/deal-scores/?band=all&limit=200"
+    ).json()["results"]
     assert deposit.code not in {row["code"] for row in rows}
 
 
@@ -508,14 +516,108 @@ def test_deal_score_pagination_is_stable_when_scores_tie(api_client, catalog):
             components={"peer_count": 11, "confidence": "low", "age_days": 3},
         )
 
-    first = api_client.get("/api/analytics/deal-scores/?limit=3&offset=0").json()
-    second = api_client.get("/api/analytics/deal-scores/?limit=3&offset=3").json()
+    first = api_client.get("/api/analytics/deal-scores/?band=all&limit=3&offset=0").json()
+    second = api_client.get("/api/analytics/deal-scores/?band=all&limit=3&offset=3").json()
 
     assert first["count"] == 8
     assert len(first["results"]) == len(second["results"]) == 3
     assert not {
         row["code"] for row in first["results"]
     } & {row["code"] for row in second["results"]}
+
+
+# ---------------------------------------------------------------------------
+# The board's three bands
+# ---------------------------------------------------------------------------
+#
+# Integration level, not unit: the thing being asserted is which listings a
+# reader is shown under each tab, and the banding, the window and the ordering
+# only combine at the HTTP boundary.
+
+
+@pytest.fixture
+def dated_deals(catalog):
+    """Deals at known ages and discounts, relative to the real clock.
+
+    Ages are anchored on ``timezone.now()`` rather than the module's fixed
+    ``_NOW`` because the window is measured against the real clock — a fixture
+    pinned to a date in the past drops out of every window as the suite ages.
+    """
+    from django.utils import timezone
+
+    now = timezone.now()
+    made = {}
+    for ad, days, discount in zip(
+        catalog["ads"],
+        (0, 0, 2, 2, 5, 5, 40, 40),
+        (8.0, 30.0, 12.0, 6.0, 20.0, 9.0, 22.0, 11.0),
+        strict=True,
+    ):
+        ad.publish_at = now - timedelta(days=days)
+        ad.save(update_fields=["publish_at"])
+        made[ad.code] = DealScoreCache.objects.create(
+            ad=ad, score=discount, discount_pct=discount,
+            peer_median=1_200_000_000,
+            components={"peer_count": 11, "confidence": "low", "age_days": days},
+        )
+    return made
+
+
+@pytest.mark.django_db
+def test_review_band_holds_everything_above_the_ceiling(api_client, dated_deals):
+    """A 30% gap is not hidden — it is moved off the page that recommends."""
+    rows = api_client.get("/api/analytics/deal-scores/?band=review").json()["results"]
+    assert {r["code"] for r in rows} == {"ad1"}  # the only one over 25%
+    assert all(r["discount_pct"] > pricing.TRUSTED_MAX_DISCOUNT for r in rows)
+
+
+@pytest.mark.django_db
+def test_trusted_bands_never_show_a_listing_above_the_ceiling(api_client, dated_deals):
+    for band in ("top", "all"):
+        rows = api_client.get(f"/api/analytics/deal-scores/?band={band}").json()["results"]
+        assert all(r["discount_pct"] <= pricing.TRUSTED_MAX_DISCOUNT for r in rows), band
+
+
+@pytest.mark.django_db
+def test_board_ranks_freshness_before_discount(api_client, dated_deals):
+    """A fresh 8% outranks a five-day-old 20%. That is the whole point."""
+    rows = api_client.get("/api/analytics/deal-scores/?band=all").json()["results"]
+    order = [r["code"] for r in rows]
+    assert order.index("ad0") < order.index("ad4")   # today's 8% before day-5's 20%
+    assert order.index("ad2") < order.index("ad4")   # day-2's 12% before day-5's 20%
+    # ...but within one band the discount still decides.
+    assert order.index("ad2") < order.index("ad3")   # 12% before 6%, both day 2
+    assert order.index("ad4") < order.index("ad5")   # 20% before 9%, both day 5
+
+
+@pytest.mark.django_db
+def test_top_band_excludes_listings_older_than_the_window(api_client, dated_deals):
+    body = api_client.get("/api/analytics/deal-scores/?band=top").json()
+    codes = {r["code"] for r in body["results"]}
+    # The 40-day-old rows are past MAX_WINDOW_DAYS however good they look.
+    assert not codes & {"ad6", "ad7"}
+    assert body["window"]["window_days"] <= pricing.MAX_WINDOW_DAYS
+    assert all(
+        r["discount_pct"] >= body["window"]["min_discount_pct"] for r in body["results"]
+    )
+
+
+@pytest.mark.django_db
+def test_unknown_band_is_rejected_rather_than_silently_defaulted(api_client, catalog):
+    resp = api_client.get("/api/analytics/deal-scores/?band=everything")
+    assert resp.status_code == 400
+    assert "band" in resp.json()["detail"]
+
+
+@pytest.mark.django_db
+def test_row_carries_a_link_that_resolves_on_bama(api_client, dated_deals, catalog):
+    ad = catalog["ads"][0]
+    ad.url = "/car/detail-dr769ivm-zamyad-pickup-cng-1394"
+    ad.save(update_fields=["url"])
+
+    rows = api_client.get("/api/analytics/deal-scores/?band=all").json()["results"]
+    row = next(r for r in rows if r["code"] == ad.code)
+    assert row["bama_url"] == "https://bama.ir/car/detail-dr769ivm-zamyad-pickup-cng-1394"
 
 
 @pytest.mark.django_db

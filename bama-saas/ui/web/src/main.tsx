@@ -5,6 +5,13 @@ import { BrowserRouter } from "react-router-dom";
 import { App } from "./App";
 import { AuthProvider } from "./auth";
 import { ThemeProvider } from "./theme";
+// Bundled, not fetched from fonts.googleapis.com. That host is unreliable from
+// Iran, which is where this app's users are, so the entire interface was
+// silently falling back to Tahoma — the one thing a Persian-first UI cannot
+// afford. Vazirmatn carries the Persian glyphs and a Latin set good enough that
+// Inter is no longer needed; JetBrains Mono stays for the audited numbers.
+import "@fontsource-variable/vazirmatn";
+import "@fontsource-variable/jetbrains-mono";
 import "./styles.css";
 
 const queryClient = new QueryClient({

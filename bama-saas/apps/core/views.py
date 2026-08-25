@@ -13,20 +13,23 @@ They are computed in Python: there is no portable ORM median aggregate.
 
 from __future__ import annotations
 
+import hashlib
 import statistics
 from collections import defaultdict
 from datetime import timedelta
 
-from django.db.models import Count, F
+from django.conf import settings
+from django.db.models import Case, Count, F, IntegerField, Q, Value, When
+from django.http import HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.views.decorators.cache import cache_page
 from rest_framework import status, viewsets
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, throttle_classes
 from rest_framework.generics import ListAPIView
 from rest_framework.response import Response
 
-from apps.core import pricing, research
+from apps.core import images, pricing, research
 from apps.core.filters import AdFilter
 from apps.core.models import (
     Ad,
@@ -53,6 +56,7 @@ from apps.core.serializers import (
     VariantSerializer,
 )
 from apps.jobs.fetcher import COVERAGE_WINDOW_HOURS, consecutive_blocks, find_gaps, known_feed_depth
+from apps.jobs.parsing import absolute_ad_url
 
 # Bumped whenever a formula changes, so a screenshotted answer can be traced to
 # the logic that produced it.
@@ -153,6 +157,44 @@ class ModelVariantsView(ListAPIView):
         return Variant.objects.filter(model=model).order_by("name_fa")
 
 
+# How many models a search returns. The catalog has a long tail of one-listing
+# models; a picker that lists all of them is a scroll, not a choice.
+MODEL_SEARCH_LIMIT = 60
+
+
+@api_view(["GET"])
+def model_search(request):
+    """Models across every brand, searchable, with how many listings each has.
+
+    The filter panel used to force brand-then-model: to find a 206 you first had
+    to know it is a پژو and pick that. This is the flat list behind a single
+    "which car" box, so typing the model name is enough.
+
+    Counted over the same population the Explorer lists, or the number beside a
+    model would promise listings the next screen does not show.
+    """
+    params = request.query_params
+    qs = Model.objects.select_related("brand")
+    if brand := params.get("brand"):
+        qs = qs.filter(brand__slug=brand)
+    if q := (params.get("q") or "").strip():
+        qs = qs.filter(Q(name_fa__icontains=q) | Q(brand__name_fa__icontains=q))
+
+    listable = without_high_outliers(
+        verified(Ad.objects).filter(status=Ad.Status.ACTIVE, current_price__gt=0)
+    )
+    rows = (
+        qs.annotate(ad_count=Count("ads", filter=Q(ads__in=listable), distinct=True))
+        .filter(ad_count__gt=0)
+        .order_by("-ad_count", "name_fa")[:MODEL_SEARCH_LIMIT]
+    )
+    return Response([
+        {"id": m.id, "name_fa": m.name_fa, "brand_slug": m.brand_id,
+         "brand_name": m.brand.name_fa, "ad_count": m.ad_count}
+        for m in rows
+    ])
+
+
 class AdViewSet(viewsets.ReadOnlyModelViewSet):
     """GET /api/ads/ and /api/ads/<code>/.
 
@@ -183,6 +225,49 @@ class AdViewSet(viewsets.ReadOnlyModelViewSet):
             if self.request.query_params.get("include_outliers", "").lower() != "true":
                 qs = without_high_outliers(qs)
         return qs
+
+
+# ---------------------------------------------------------------------------
+# Listing photos
+# ---------------------------------------------------------------------------
+
+
+@api_view(["GET"])
+@throttle_classes([])
+def listing_image(request, code: str, index: int):
+    """One listing photo, cached in Redis and served from our own origin.
+
+    Throttle-exempt on purpose. A card page is 24 photos and the detail gallery
+    is up to 12 more, so the global per-user rate would start rejecting images
+    part-way down the first scroll — and a rate limiter that fires on a page's
+    own assets is indistinguishable from the broken CDN this endpoint exists to
+    work around. The cost is bounded elsewhere: a response is only ever produced
+    for a URL already stored on an ad, and every byte after the first fetch
+    comes from cache.
+
+    A cold cache during a Bama block redirects to the CDN rather than 404ing —
+    the block is on *our* egress, and the user's own browser can usually still
+    reach the picture.
+    """
+    ad = get_object_or_404(Ad.objects.only("code", "image_urls", "primary_image_url"),
+                           code=code)
+    url = images.source_url(ad, index)
+    if not url:
+        return Response({"detail": "no such image"}, status=status.HTTP_404_NOT_FOUND)
+
+    fetched = images.fetch(url)
+    if fetched is None:
+        return HttpResponseRedirect(url)
+
+    content_type, body = fetched
+    response = HttpResponse(body, content_type=content_type)
+    # Bama's image URLs are content-addressed, so the bytes behind one of our
+    # paths cannot change without the ad's stored URL changing too — which makes
+    # this genuinely immutable rather than optimistically so.
+    response["Cache-Control"] = f"public, max-age={settings.IMAGE_CACHE_SECONDS}, immutable"
+    response["ETag"] = f'"{hashlib.sha256(body).hexdigest()[:32]}"'
+    response["Content-Length"] = str(len(body))
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -267,8 +352,10 @@ def _opt(params, key, cast):
         ) from exc
 
 
-def _deal_score_row(obj):
+def _deal_score_row(obj, *, now=None):
     components = obj.components or {}
+    published = obj.ad.publish_at
+    now = now or timezone.now()
     return {
         "code": obj.ad_id,
         "score": obj.score,
@@ -276,16 +363,22 @@ def _deal_score_row(obj):
         "peer_median": obj.peer_median,
         "peer_count": components.get("peer_count"),
         "confidence": components.get("confidence"),
+        # Two different facts, deliberately not merged. `age_days` is how long
+        # WE have known about the ad; `days_listed` is how long it has been on
+        # Bama by Bama's own reckoning, which is what the ordering uses and what
+        # a buyer means by "how long has this been sitting".
         "age_days": components.get("age_days"),
+        "days_listed": (now - published).days if published else None,
+        "publish_at": published,
         "price": obj.ad.current_price,
         # year_jalali, never Ad.year: the raw column mixes 1399 and 2025.
         "year": obj.ad.year_jalali,
         "mileage": obj.ad.mileage,
-        "url": obj.ad.url,
+        "bama_url": absolute_ad_url(obj.ad.url or obj.ad.canonical_path),
         "title": obj.ad.title,
         "model_name": getattr(obj, "model_name", None),
         "brand_name": getattr(obj, "brand_name", None),
-        "primary_image_url": obj.ad.primary_image_url,
+        "image_url": images.ad_image_paths(obj.ad)[0],
         "city_name": obj.ad.city.name_fa if obj.ad.city_id else "",
         # The listing's own explanation for being cheap. Not a reason to hide it,
         # but the cohort key has no condition dimension, so without this the gap
@@ -297,23 +390,60 @@ def _deal_score_row(obj):
     }
 
 
-def _deal_score_qs():
+def _freshness_band(now):
+    """A 0..4 rank for how recently the ad was published or bumped.
+
+    Computed in SQL so the board can order on it under LIMIT/OFFSET. Nulls sort
+    into the last band: an ad with no publish time is not evidence of freshness.
+    """
+    whens = [
+        When(ad__publish_at__gte=now - timedelta(days=days), then=Value(rank))
+        for rank, (days, _) in enumerate(pricing.FRESHNESS_BANDS)
+    ]
+    return Case(*whens, default=Value(len(pricing.FRESHNESS_BANDS)),
+                output_field=IntegerField())
+
+
+def _deal_score_qs(*, now=None, by_freshness: bool = True):
     # Gated on read as well as at build time: the cache is rebuilt periodically,
     # so between an ad going bad and the next rebuild its stale score is still
     # served — and a deal score is the most acted-upon number on the site.
-    return (
+    qs = (
         verified_by_ad(DealScoreCache.objects.select_related("ad", "ad__city"))
         .annotate(model_name=F("ad__model__name_fa"), brand_name=F("ad__brand__name_fa"))
-        # Tie-break on ad_id: hundreds of rows share a score to one decimal, and
-        # an unstable sort under LIMIT/OFFSET drops and repeats listings as the
-        # reader pages through.
-        .order_by("-score", "ad_id")
     )
+    # Tie-break on ad_id in both orders: hundreds of rows share a score to one
+    # decimal, and an unstable sort under LIMIT/OFFSET drops and repeats
+    # listings as the reader pages through.
+    if not by_freshness:
+        return qs.order_by("-score", "ad_id")
+    return (
+        qs.annotate(freshness=_freshness_band(now or timezone.now()))
+        .order_by("freshness", "-score", "ad_id")
+    )
+
+
+BANDS = ("top", "all", "review")
 
 
 @api_view(["GET"])
 def deal_scores(request):
-    """Deal scores joined to their ad; filtered, ordered by discount, paginated.
+    """The board: three bands, freshest first, paginated.
+
+    ``band`` decides which population is being asked for, and the two that are
+    ranked put freshness ahead of size of discount. A three-week-old asking
+    price is a worse guide to what a car costs today than a fresh one, however
+    large the gap looks — the discount still decides order *within* a band.
+
+    * ``top`` (default) — inside ``deal_window()``: recent enough, and in the
+      better part of that window's own discount distribution. Both thresholds
+      are measured from the current board, not hardcoded, so a quiet day widens
+      the window instead of showing three cars.
+    * ``all`` — everything at or below the trusted ceiling, no window, no floor.
+    * ``review`` — above the ceiling. Not hidden, but not recommended either:
+      past ~25% the gap is an attribute the cohort key cannot see far more
+      often than it is a bargain. Ranked by discount, since that is the thing
+      being reviewed.
 
     Returns ``count`` alongside ``results``: the cache holds ~9,800 rows and the
     screen used to show a hard-coded top 50 with no way forward, which put every
@@ -323,8 +453,6 @@ def deal_scores(request):
     try:
         model = _opt(params, "model", int)
         year = _opt(params, "year", int)
-        min_score = _opt(params, "min_score", float)
-        max_score = _opt(params, "max_score", float)
         price_min = _opt(params, "price_min", int)
         price_max = _opt(params, "price_max", int)
         limit = max(1, min(_opt(params, "limit", int) or 50, 200))
@@ -332,13 +460,29 @@ def deal_scores(request):
     except ValueError as exc:
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-    qs = _deal_score_qs()
+    band = params.get("band") or "top"
+    if band not in BANDS:
+        return Response({"detail": f"band must be one of {', '.join(BANDS)}"},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    now = timezone.now()
+    window = pricing.deal_window(now=now)
+    qs = _deal_score_qs(now=now, by_freshness=band != "review")
+
+    if band == "review":
+        qs = qs.filter(discount_pct__gt=window["ceiling_pct"])
+    else:
+        qs = qs.filter(discount_pct__lte=window["ceiling_pct"])
+        if band == "top":
+            qs = qs.filter(
+                discount_pct__gte=window["min_discount_pct"],
+                ad__publish_at__gte=now - timedelta(days=window["window_days"]),
+            )
+
     filters = {
         "ad__model__brand__slug": params.get("brand") or None,
         "ad__model_id": model,
         "ad__year_jalali": year,
-        "score__gte": min_score,
-        "score__lte": max_score,
         "ad__current_price__gte": price_min,
         "ad__current_price__lte": price_max,
     }
@@ -355,8 +499,11 @@ def deal_scores(request):
 
     count = qs.count()
     return envelope({
-        "count": count, "limit": limit, "offset": offset,
-        "results": [_deal_score_row(o) for o in qs[offset:offset + limit]],
+        "count": count, "limit": limit, "offset": offset, "band": band,
+        # The thresholds the page is standing on, so the screen can state them
+        # rather than describing a filter it does not know the value of.
+        "window": window,
+        "results": [_deal_score_row(o, now=now) for o in qs[offset:offset + limit]],
     })
 
 

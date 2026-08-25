@@ -10,8 +10,9 @@ One module per concern, no `services/` packages, no per-command modules:
 
 - `apps/core/` — `models.py` (all 15 models, four commented sections),
   `views.py`, `serializers.py`, `filters.py`, plus the analytics:
-  `pricing.py` (fair price + deal board), `quality.py` (the read-side filters),
-  `research.py` (index, survival, depreciation), `notify.py`.
+  `pricing.py` (fair price + deal board + the board's dynamic window),
+  `quality.py` (the read-side filters), `research.py` (index, survival,
+  depreciation), `notify.py`, `images.py` (the Redis-cached photo proxy).
 - `apps/jobs/` — `parsing.py` (no Django import), `fetcher.py` (HTTP + crawl
   gate + coverage arithmetic), `ingest.py`, `verify.py`, `jobs.py` (one function
   per job, each returning a dict), `pipeline.py` (which jobs, in what order),
@@ -40,11 +41,40 @@ schema is independent of the Python layout. Do not remove those pins.
   adjustment, no regression. Below 8 peers it refuses to answer rather than
   quoting a median of three cars. `MIN_ASK_VS_MEDIAN = 0.5` drops asks below
   half the peer median as deposits or typos, as do حواله titles and the
-  10M-toman sentinel. Age is reported, not multiplied in.
+  10M-toman sentinel. Age is *not* multiplied into the score — it orders the
+  board instead (below).
+- **The board is banded by freshness, then by discount.** Recency is
+  `Ad.publish_at` (Bama's own phrase, which also moves when a seller bumps),
+  never `first_seen_at` — that says when our crawler arrived, so a deep backfill
+  would make a year-old listing rank as new. `pricing.deal_window()` measures
+  both thresholds from the current board rather than hardcoding them: it widens
+  the window a day at a time until `MIN_CANDIDATES` listings clear that width's
+  own 75th-percentile discount. It is cached in Redis and **dropped by
+  `compute_deal_scores`** — the window is computed from exactly the rows a
+  rebuild deletes.
+- **`TRUSTED_MAX_DISCOUNT = 25.0` splits recommend from review.** Above it the
+  gap is an attribute the (model, variant, year) key cannot see far more often
+  than a bargain. Production carries 272 such rows against 8,803 below it, which
+  is a systematic signal, not a tail — see the open question in the README.
+  The constant lives in `pricing.py` because the API filters on it and the UI
+  narrates it; it used to live only in `Deals.tsx`.
 - **Installment ads are not cheap cars.** Their lump-sum price field holds a
   down payment. Anything ranked by price gap must exclude them
   (`quality.price_basis_unclear`) or the top of the board is entirely artifact —
   it was 74% of the top 200 rows.
+- **Photos come from the payload, and the payload is the whole payload.**
+  The gallery is `payload["images"]`, one level *above* `detail`;
+  `_image_urls` was handed `detail` alone, so `_MAX_GALLERY` never applied and
+  no ad in production had more than one photo. `detail.image` is a *fallback*,
+  never appended — it is `images[0]` at another width, so adding it to a real
+  gallery duplicates the first photo. `backfill_images` refills from
+  `raw_payload` with no network; 45% of the catalog was photoless and 78% of
+  those had a usable URL already stored.
+- **`Ad.url` is a path, not a URL.** Every row in production stores
+  `/car/detail-...`, so anything rendering it into an href resolves against our
+  own origin. `parsing.absolute_ad_url` is the only place that fixes it — the
+  notifier used to carry a private copy, which is why the Telegram alerts worked
+  and the website never did.
 - **Append-only provenance.** `AdVersion` dedups on the *semantic* hash
   (volatile payload paths excluded), `AdObservation` is one row per run per ad,
   `PriceObservation` is one row per actual price change, not per sighting.
