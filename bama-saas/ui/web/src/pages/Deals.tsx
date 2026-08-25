@@ -40,8 +40,16 @@ import {
 
 const PAGE_SIZE = 24;
 
-/** Freshness bands, matching pricing.FRESHNESS_BANDS on the backend — the API
- *  orders by them, this only has to name them. */
+/**
+ * Names for the freshness bands. The *index* comes from the API (`freshness`),
+ * which is the same value SQL ordered by — this file only labels it.
+ *
+ * Deliberately not recomputed here from `days_listed`: that number is floored to
+ * whole days, so every band edge lands on the wrong side (an ad aged 3.5 days
+ * floors to 3 and would read as "۱ تا ۳ روز" while the backend sorted it into
+ * "۴ تا ۷ روز"), and a row placed in an earlier band than its neighbours drew a
+ * second copy of that band's heading further down the grid.
+ */
 const BAND_LABEL = [
   "امروز",
   "۱ تا ۳ روز پیش",
@@ -50,13 +58,12 @@ const BAND_LABEL = [
   "بیش از دو هفته پیش",
 ];
 
-function bandOf(daysListed: number | null): number {
-  if (daysListed == null) return BAND_LABEL.length - 1;
-  if (daysListed < 1) return 0;
-  if (daysListed <= 3) return 1;
-  if (daysListed <= 7) return 2;
-  if (daysListed <= 14) return 3;
-  return 4;
+const LAST_BAND = BAND_LABEL.length - 1;
+
+function bandOf(deal: Deal): number {
+  const band = deal.freshness;
+  if (band == null || band < 0 || band > LAST_BAND) return LAST_BAND;
+  return band;
 }
 
 interface NotifierSettings {
@@ -78,6 +85,8 @@ interface Deal {
   confidence: string | null;
   age_days: number | null;
   days_listed: number | null;
+  /** Band index the API ordered by; see BAND_LABEL. */
+  freshness: number | null;
   year: number | null;
   mileage: number | null;
   city_name: string;
@@ -308,7 +317,7 @@ function BandedGrid({ rows, ceiling }: { rows: Deal[]; ceiling: number }) {
   };
 
   for (const deal of rows) {
-    const band = bandOf(deal.days_listed);
+    const band = bandOf(deal);
     if (band !== current) {
       flush();
       current = band;

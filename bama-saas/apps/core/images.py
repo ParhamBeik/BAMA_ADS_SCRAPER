@@ -12,10 +12,12 @@ are content-addressed (a GUID per upload), so a cached entry can never go stale
 against a changed picture — the URL changes when the picture does.
 
 The proxy will only ever fetch a URL that is already stored on the ad *and*
-still passes the CDN host allowlist. That check is re-run here rather than
+still passes ``parsing.is_cdn_url``. That check is re-run here rather than
 trusted from ingest: this endpoint turns a request parameter into an outbound
 HTTP call, which is the one place in the app where a stored value being wrong
-would become a server-side request to somewhere of an attacker's choosing.
+would become a server-side request to somewhere of an attacker's choosing. One
+shared predicate, so the writer and the reader cannot disagree about which hosts
+are allowed.
 """
 
 from __future__ import annotations
@@ -28,7 +30,7 @@ from django.conf import settings
 from django.core.cache import cache
 
 from apps.jobs.fetcher import HEADERS
-from apps.jobs.ingest import _CDN_HOSTS
+from apps.jobs.parsing import is_cdn_url
 
 log = logging.getLogger("bama.images")
 
@@ -62,12 +64,7 @@ def source_url(ad, index: int) -> str:
         url = ad.primary_image_url
     else:
         return ""
-    if not isinstance(url, str) or not url.startswith("https://"):
-        return ""
-    host = url.split("/")[2].lower()
-    if not any(host == h or host.endswith("." + h) for h in _CDN_HOSTS):
-        return ""
-    return url
+    return url if is_cdn_url(url) else ""
 
 
 def fetch(url: str) -> tuple[str, bytes] | None:

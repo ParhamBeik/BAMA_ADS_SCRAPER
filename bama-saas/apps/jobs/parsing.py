@@ -23,6 +23,33 @@ import jdatetime
 
 SITE_ROOT = "https://bama.ir"
 
+# Hosts a listing photo is allowed to come from. The real CDN is a numbered
+# subdomain (`cdn-sth1.bama.ir`), which the suffix match covers.
+#
+# Lives here, with the other facts about the source site, because it has two
+# consumers that must agree: ingest, which decides what to store, and the image
+# proxy, which re-checks before turning a stored value into an outbound request.
+# It used to be private to ingest and imported through the underscore, which
+# both broke encapsulation and coupled the read path to the writer.
+CDN_HOSTS = ("cdn.bama.ir", "bama.ir", "media.bama.ir")
+
+
+def is_cdn_url(url: str) -> bool:
+    """True for an HTTPS URL served from Bama's own image CDN.
+
+    The guard on the one path that turns stored data into an outbound HTTP
+    request, so it is deliberately strict: HTTPS only, and the host must be the
+    apex or a subdomain of an allowlisted domain — never a substring match,
+    which `bama.ir.evil.com` would pass.
+    """
+    if not isinstance(url, str) or not url.startswith("https://"):
+        return False
+    try:
+        host = url.split("/")[2].lower()
+    except IndexError:
+        return False
+    return any(host == h or host.endswith("." + h) for h in CDN_HOSTS)
+
 
 def absolute_ad_url(path: str | None) -> str:
     """The ad's real address on bama.ir.

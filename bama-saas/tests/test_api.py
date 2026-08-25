@@ -603,6 +603,34 @@ def test_top_band_excludes_listings_older_than_the_window(api_client, dated_deal
 
 
 @pytest.mark.django_db
+def test_rows_carry_the_band_they_were_ordered_by(api_client, dated_deals):
+    """The client must not re-derive the band from `days_listed`.
+
+    `days_listed` floors to whole days, so recomputing lands on the wrong side
+    of every edge: an ad aged 3.5 days floors to 3, reads as the 1-3 band, and
+    is drawn under a heading the SQL ordering had already moved it out of.
+    """
+    rows = api_client.get("/api/analytics/deal-scores/?band=all").json()["results"]
+    assert rows
+
+    for row in rows:
+        assert row["freshness"] is not None
+
+    # Whatever the bands are, the ordering must be non-decreasing in them — that
+    # is the property the grid's headings depend on to stay contiguous.
+    bands = [r["freshness"] for r in rows]
+    assert bands == sorted(bands)
+
+    # And the band must agree with the age it was computed from.
+    for row in rows:
+        edges = [days for days, _ in pricing.FRESHNESS_BANDS]
+        expected = next(
+            (i for i, edge in enumerate(edges) if row["days_listed"] < edge), len(edges)
+        )
+        assert row["freshness"] == expected, row
+
+
+@pytest.mark.django_db
 def test_unknown_band_is_rejected_rather_than_silently_defaulted(api_client, catalog):
     resp = api_client.get("/api/analytics/deal-scores/?band=everything")
     assert resp.status_code == 400

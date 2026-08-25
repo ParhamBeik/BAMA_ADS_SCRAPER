@@ -34,6 +34,7 @@ from apps.core.models import (
 from apps.jobs.parsing import (
     SEMANTIC_HASH_VERSION,
     fingerprint,
+    is_cdn_url,
     listing_fingerprint,
     normalize_model_year,
     parse_int,
@@ -193,7 +194,6 @@ PRICE_DROP_SANITY_FACTOR = 3.0
 # as UTC would shift every value by Tehran's offset.
 _SOURCE_TZ = ZoneInfo("Asia/Tehran")
 
-_CDN_HOSTS = ("cdn.bama.ir", "bama.ir", "media.bama.ir")
 _MAX_GALLERY = 12
 
 
@@ -265,10 +265,7 @@ def _cdn_urls(candidates: list) -> list[str]:
         if not isinstance(raw, str):
             continue
         u = raw.strip()
-        if not u.startswith("https://"):
-            continue
-        host = u.split("/")[2].lower()
-        if not any(host == h or host.endswith("." + h) for h in _CDN_HOSTS):
+        if not is_cdn_url(u):
             continue
         if u not in urls:
             urls.append(u)

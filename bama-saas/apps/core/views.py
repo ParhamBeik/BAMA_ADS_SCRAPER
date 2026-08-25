@@ -370,6 +370,12 @@ def _deal_score_row(obj, *, now=None):
         "age_days": components.get("age_days"),
         "days_listed": (now - published).days if published else None,
         "publish_at": published,
+        # The band this row was ORDERED by, not one the client re-derives.
+        # `days_listed` is a floor to whole days, so recomputing the band from it
+        # lands on the wrong side of every edge (an ad aged 3.5 days floors to 3
+        # and reads as the 1-3 band while SQL sorted it into 4-7) — which drew a
+        # second, out-of-order heading further down the same grid.
+        "freshness": getattr(obj, "freshness", None),
         "price": obj.ad.current_price,
         # year_jalali, never Ad.year: the raw column mixes 1399 and 2025.
         "year": obj.ad.year_jalali,

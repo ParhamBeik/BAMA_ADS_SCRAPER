@@ -258,3 +258,44 @@ def test_an_unidentifiable_ad_gets_no_fingerprint():
 def test_missing_mileage_is_still_identifiable():
     """Bama omits mileage on some ads; that is not enough to give up on."""
     assert _fp(mileage=None) != ""
+
+
+# --- the source site: links out, and which hosts a photo may come from -------
+
+
+@pytest.mark.parametrize("stored,expected", [
+    # What every one of the 81,490 production rows actually holds.
+    ("/car/detail-dr769ivm-zamyad-pickup-cng-1394",
+     "https://bama.ir/car/detail-dr769ivm-zamyad-pickup-cng-1394"),
+    # Already absolute: left alone, not double-prefixed.
+    ("https://bama.ir/cad/abc123", "https://bama.ir/cad/abc123"),
+    ("", ""),
+    (None, ""),
+    ("   ", ""),
+])
+def test_absolute_ad_url_resolves_against_the_source_site(stored, expected):
+    assert P.absolute_ad_url(stored) == expected
+
+
+@pytest.mark.parametrize("url", [
+    "https://cdn-sth1.bama.ir/uploads/BamaImages/x.jpg",   # the real CDN
+    "https://bama.ir/x.jpg",
+    "https://cdn.bama.ir/x.jpg",
+])
+def test_is_cdn_url_accepts_bama_hosts(url):
+    assert P.is_cdn_url(url)
+
+
+@pytest.mark.parametrize("url", [
+    "http://cdn-sth1.bama.ir/x.jpg",        # plaintext
+    "https://bama.ir.evil.com/x.jpg",       # suffix-of-host, not a subdomain
+    "https://evilbama.ir/x.jpg",            # substring, not a domain boundary
+    "https://evil.com/?u=https://bama.ir",  # bama.ir only in the query
+    "file:///etc/passwd",
+    "https://169.254.169.254/latest/meta-data/",  # cloud metadata
+    "", None, 12345, "not a url",
+])
+def test_is_cdn_url_refuses_everything_else(url):
+    """The guard on the one path that turns stored data into an outbound
+    request, so a near-miss must fail closed."""
+    assert not P.is_cdn_url(url)
