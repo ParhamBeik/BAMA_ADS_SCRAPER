@@ -19,6 +19,9 @@ urlpatterns = [
 
     # Listing photos, proxied and cached. Not under /ads/ because it is bytes,
     # not JSON, and it is the one route the SPA points an <img> at.
+    # `thumb` is the card-sized file, a genuinely different (narrower) upload
+    # than gallery photo 0 — see images.thumb_path.
+    path("img/<str:code>/thumb/", views.listing_image, name="listing-thumb"),
     path("img/<str:code>/<int:index>/", views.listing_image, name="listing-image"),
 
     path("markets/", views.markets, name="markets"),

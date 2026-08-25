@@ -14,7 +14,7 @@ import pytest
 from rest_framework.test import APIClient
 
 from apps.accounts.models import User
-from apps.core import pricing
+from apps.core import images, pricing
 from apps.core.models import (
     Ad,
     Brand,
@@ -27,7 +27,7 @@ from apps.core.models import (
     Variant,
 )
 from apps.core.pricing import compute_deal_scores
-from tests.conftest import NOW, UTC
+from tests.conftest import CDN, NOW, UTC
 
 # A fixed "now" so publish_at / observed_at derived from it are deterministic.
 _NOW = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
@@ -1057,3 +1057,60 @@ def test_a_rotated_refresh_token_cannot_be_reused(api_client):
     replay = api_client.post("/api/auth/token/refresh/",
                              {"refresh": tokens["refresh"]}, format="json")
     assert replay.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Photo addressing
+# ---------------------------------------------------------------------------
+#
+# Unit level, not API: these are pure functions of an ad's two image columns, so
+# an unsaved instance exercises every branch without a database or a socket.
+# They earn a test because the two columns hold *different files* — Bama's
+# `resize,w_450` thumbnail and its `w_600` gallery photo — and an addressing
+# scheme that conflates them silently serves the large file to every card.
+
+_SMALL = f"{CDN}/uploads/resize,w_450/thumb.jpg"
+_LARGE = [f"{CDN}/uploads/w_600/{i}.jpg" for i in range(3)]
+
+
+def test_thumbnail_and_gallery_resolve_to_different_files():
+    ad = Ad(code="pic00001", primary_image_url=_SMALL, image_urls=list(_LARGE))
+    thumb, gallery = images.ad_image_paths(ad)
+
+    assert thumb == "/api/img/pic00001/thumb/"
+    assert gallery == [f"/api/img/pic00001/{i}/" for i in range(3)]
+    # The point of the split: the card does not fetch the 600px file.
+    assert images.source_url(ad, None) == _SMALL
+    assert images.source_url(ad, 0) == _LARGE[0]
+
+
+def test_thumbnail_falls_back_to_the_gallery_when_unset():
+    ad = Ad(code="pic00002", primary_image_url="", image_urls=list(_LARGE))
+    assert images.ad_image_paths(ad)[0] == "/api/img/pic00002/thumb/"
+    assert images.source_url(ad, None) == _LARGE[0]
+
+
+def test_a_lone_thumbnail_is_still_addressable():
+    """Rows whose gallery was never filled have one photo and no gallery."""
+    ad = Ad(code="pic00003", primary_image_url=_SMALL, image_urls=[])
+    assert images.ad_image_paths(ad) == ("/api/img/pic00003/thumb/", [])
+    assert images.source_url(ad, None) == _SMALL
+    assert images.source_url(ad, 0) == _SMALL
+
+
+def test_a_photoless_ad_has_no_address_at_all():
+    ad = Ad(code="pic00004", primary_image_url="", image_urls=[])
+    assert images.ad_image_paths(ad) == ("", [])
+    assert images.source_url(ad, None) == ""
+    assert images.source_url(ad, 7) == ""
+
+
+def test_out_of_range_and_non_cdn_urls_resolve_to_nothing():
+    """The allowlist is re-applied on read, so a poisoned row cannot make the
+    proxy fetch from somewhere else."""
+    ad = Ad(code="pic00005", primary_image_url="https://evil.example/x.jpg",
+            image_urls=["https://bama.ir@evil.example/x.jpg"])
+    assert images.source_url(ad, None) == ""
+    assert images.source_url(ad, 0) == ""
+    assert images.source_url(ad, 99) == ""
+    assert images.source_url(ad, -1) == ""

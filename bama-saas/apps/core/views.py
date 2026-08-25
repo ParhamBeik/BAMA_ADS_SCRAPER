@@ -234,8 +234,11 @@ class AdViewSet(viewsets.ReadOnlyModelViewSet):
 
 @api_view(["GET"])
 @throttle_classes([])
-def listing_image(request, code: str, index: int):
+def listing_image(request, code: str, index: int | None = None):
     """One listing photo, cached in Redis and served from our own origin.
+
+    ``index`` addresses the gallery; the ``/thumb/`` route omits it and gets the
+    narrower card-sized file instead.
 
     Throttle-exempt on purpose. A card page is 24 photos and the detail gallery
     is up to 12 more, so the global per-user rate would start rejecting images
