@@ -291,8 +291,13 @@ def test_is_cdn_url_accepts_bama_hosts(url):
     "https://bama.ir.evil.com/x.jpg",       # suffix-of-host, not a subdomain
     "https://evilbama.ir/x.jpg",            # substring, not a domain boundary
     "https://evil.com/?u=https://bama.ir",  # bama.ir only in the query
+    # Userinfo: everything before the @ is a credential, so this resolves to
+    # evil.com. Pinned because the obvious "tidy this up with urlparse" or a
+    # substring check would start accepting it.
+    "https://bama.ir@evil.com/x.jpg",
     "file:///etc/passwd",
     "https://169.254.169.254/latest/meta-data/",  # cloud metadata
+    "https://", "https:///x.jpg",           # degenerate, must not IndexError
     "", None, 12345, "not a url",
 ])
 def test_is_cdn_url_refuses_everything_else(url):
