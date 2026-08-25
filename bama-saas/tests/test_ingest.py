@@ -347,6 +347,9 @@ def test_backfill_deletes_what_it_cannot_fill(known_catalog):
     result = backfill_images()
 
     assert result["filled"] == 0
+    # Ads, not CASCADEd rows: the first production run reported 155,240 for the
+    # 8,889 ads it actually removed, because `.delete()` counts everything it
+    # reached through observations, versions, episodes and prices.
     assert result["pruned"] == 1
     assert not Ad.objects.filter(code="nophoto1").exists()
 
@@ -1062,3 +1065,21 @@ def test_a_long_dead_listing_is_not_called_the_origin_of_a_new_one(catalog):
     ancient.refresh_from_db()
     assert fresh.reposted_from_id is None
     assert ancient.likely_reason == ""
+
+
+@pytest.mark.django_db
+def test_pruned_counts_ads_not_cascaded_rows(known_catalog, make_payload):
+    """`.delete()` returns every row it reached, which is not the ad count."""
+    run = FetchRun.objects.create(source=FetchRun.Source.LIVE_FETCH)
+    observed = datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc)
+    # A real ad, so it carries observations/versions/prices that CASCADE.
+    _ing(extract_ad(make_payload("cascade1", 1_000_000_000), observed),
+         run=run, observed_at=observed, publish_at=observed)
+    # Strip the photo from the payload too, or the backfill simply refills it.
+    Ad.objects.filter(code="cascade1").update(
+        primary_image_url="", image_urls=[], raw_payload={"detail": {"code": "cascade1"}},
+    )
+    assert PriceObservation.objects.filter(ad__code="cascade1").exists(), "needs cascade rows"
+
+    # 1 ad, not the handful of related rows deleted alongside it.
+    assert backfill_images()["pruned"] == 1

@@ -773,9 +773,14 @@ def backfill_images(*, limit: int | None = None, prune: bool = True) -> dict:
     # Everything still photoless after the fill genuinely has no image in its
     # payload. Batched, because CASCADE reaches observations, versions, episodes
     # and price rows, and one 8k-row DELETE takes locks for the whole statement.
+    # Counted before the delete, not from its return value: `.delete()` reports
+    # every CASCADEd row (observations, versions, episodes, price rows), so the
+    # first production run said it pruned 155,240 when it removed 8,889 ads.
     pruned = 0
     if prune and limit is None:
-        pruned = _batched_delete(Ad.objects.filter(primary_image_url=""))
+        photoless = Ad.objects.filter(primary_image_url="")
+        pruned = photoless.count()
+        _batched_delete(photoless)
 
     return {"scanned": scanned, "filled": filled, "pruned": pruned,
             "remaining": Ad.objects.filter(primary_image_url="").count()}
