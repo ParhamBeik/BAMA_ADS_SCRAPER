@@ -319,6 +319,18 @@ def check_gate() -> None:
 SEARCH_URL = "https://bama.ir/cad/api/search"
 WARMUP_URL = "https://bama.ir/car?image=1&priced=1"
 
+# The population this app collects: listings that have a photo and a price.
+#
+# These belong on the *data* request, not only on the warm-up page load. For a
+# long time they were set only on WARMUP_URL — which just establishes cookies —
+# so every sweep actually paged through the unfiltered feed. Measured on page 3:
+# without them 4 of 30 ads have no photo, with them 0 of 30. That is where the
+# 8,889 photoless rows came from, and why `photo_missing` was still quarantining
+# ~2.3k ads a day after the rule shipped.
+#
+# `1`, not `true` — the API answers 500 to the boolean spelling.
+FEED_FILTERS = "image=1&priced=1"
+
 HEADERS: dict[str, str] = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -404,7 +416,8 @@ def warmup(session: requests.Session, request_timeout: int) -> None:
 
 def fetch_page(session: requests.Session, page: int, request_timeout: int) -> list[dict[str, Any]]:
     """One page, with banner rows dropped."""
-    response = session.get(f"{SEARCH_URL}?pageIndex={page}", timeout=request_timeout)
+    response = session.get(f"{SEARCH_URL}?pageIndex={page}&{FEED_FILTERS}",
+                           timeout=request_timeout)
     try:
         response.raise_for_status()
     except requests.HTTPError as exc:

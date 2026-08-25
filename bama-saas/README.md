@@ -184,15 +184,17 @@ return. Input is `DailyInventorySnapshot`.
   (model, trim, year) and knows nothing about damage, free-zone plates or
   pre-sales, so past that the gap is usually an attribute the model cannot see.
   Nothing is hidden; it moves to a tab that says what it is.
-- **Every stored ad has a photo.** The feed is crawled with `image=1&priced=1`,
-  so a photoless ad is outside the collected population, not a listing with a
-  field missing. `verify._photo_missing` is hard — it quarantines rather than
-  stores — and `backfill_images` fills what it can from `raw_payload` then
-  deletes the rest. There is no `has_image` filter, because there is nothing
-  for it to exclude.
+- **Every stored ad has a photo.** Every feed request carries
+  `fetcher.FEED_FILTERS` (`image=1&priced=1`), so a photoless ad is outside the
+  collected population, not a listing with a field missing.
+  `verify._photo_missing` is hard — it quarantines rather than stores — and
+  `backfill_images` fills what it can from `raw_payload` then deletes the rest.
+  There is no `has_image` filter, because there is nothing for it to exclude.
 - **Photos are served from our own origin.** Bama's CDN blocks our egress
   periodically, so each photo is fetched once and cached in Redis
-  (`apps/core/images.py`, `GET /api/img/<code>/<n>/`).
+  (`apps/core/images.py`). The card thumbnail and the gallery are *different
+  files* — `resize,w_450` and `w_600` — and have separate addresses:
+  `GET /api/img/<code>/thumb/` and `GET /api/img/<code>/<n>/`.
 
 ## Frontend
 

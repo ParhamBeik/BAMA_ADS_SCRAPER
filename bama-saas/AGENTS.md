@@ -76,6 +76,17 @@ schema is independent of the Python layout. Do not remove those pins.
   delete second; reversed it would destroy the ~28.5k rows whose photos were
   merely unread). Test fixtures must therefore carry an `images` block —
   `tests/conftest.gallery()` builds one.
+- **The feed filters belong on the data request.** `FEED_FILTERS` goes on every
+  `fetch_page` call, not just `WARMUP_URL` — the warm-up only sets cookies. They
+  lived there alone for a long time, so every sweep paged the *unfiltered* feed:
+  measured on page 3, 4 of 30 ads had no photo without them and 0 of 30 with.
+  That is where the 8,889 deleted rows came from, and why `_photo_missing` was
+  still quarantining ~2.3k ads a day after it shipped. Spell them `=1`; the API
+  answers 500 to `=true`.
+- **Thumbnail and gallery photo 0 are different files.** `primary_image_url` is
+  the CDN's `resize,w_450` upload and `image_urls[0]` is its `w_600` one, so
+  they get separate proxy addresses (`/thumb/` vs `/<n>/`). Addressing both
+  through one index served the large file to all 24 cards on a grid page.
 - **`Ad.url` is a path, not a URL.** Every row in production stores
   `/car/detail-...`, so anything rendering it into an href resolves against our
   own origin. `parsing.absolute_ad_url` is the only place that fixes it — the

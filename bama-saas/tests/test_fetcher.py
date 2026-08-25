@@ -14,6 +14,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 import requests
@@ -91,6 +92,15 @@ class FakeResponse:
         return {"data": {"ads": self._ads}}
 
 
+def _page_index(url: str) -> int:
+    """The requested page, parsed properly rather than off the end of the URL.
+
+    The feed request carries the photo/price filters after ``pageIndex``, so
+    splitting on the last ``=`` reads ``0&image=1&priced=1``.
+    """
+    return int(parse_qs(urlparse(url).query)["pageIndex"][0])
+
+
 class FakeSession:
     """Records every requested URL; serves ``pages`` by 0-based index."""
 
@@ -102,7 +112,7 @@ class FakeSession:
 
     def get(self, url, timeout=None):
         self.urls.append(url)
-        index = int(url.rsplit("pageIndex=", 1)[1])
+        index = _page_index(url)
         if self.fail_on is not None and index == self.fail_on:
             return FakeResponse([], status_code=self.fail_status)
         ads = self.pages[index] if 0 <= index < len(self.pages) else []
@@ -110,7 +120,7 @@ class FakeSession:
 
     @property
     def page_indices(self) -> list[int]:
-        return [int(u.rsplit("pageIndex=", 1)[1]) for u in self.urls]
+        return [_page_index(u) for u in self.urls]
 
 
 def run_with(session, **kwargs) -> FetchRun:
@@ -127,8 +137,24 @@ def test_first_request_is_page_index_zero():
     session = FakeSession(make_feed(3, "A"))
     run_with(session, mode="full")
 
-    assert session.urls[0].endswith("pageIndex=0")
-    assert "pageIndex=1" not in session.urls[0]
+    assert _page_index(session.urls[0]) == 0
+
+
+@pytest.mark.django_db
+def test_every_feed_request_asks_for_photos_and_prices():
+    """The population this app collects is photo-and-price ads only.
+
+    These filters used to sit on the warm-up URL alone, which only sets cookies,
+    so every sweep paged the unfiltered feed and pulled in ads with no photo.
+    """
+    session = FakeSession(make_feed(3, "A"))
+    run_with(session, mode="full")
+
+    assert session.urls
+    for url in session.urls:
+        query = parse_qs(urlparse(url).query)
+        assert query["image"] == ["1"], url
+        assert query["priced"] == ["1"], url
 
 
 def test_403_is_logged_once_without_retry(caplog):
