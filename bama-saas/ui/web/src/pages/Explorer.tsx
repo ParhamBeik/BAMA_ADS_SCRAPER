@@ -158,6 +158,7 @@ export function Explorer() {
               <option value="current_price">ارزان‌ترین</option>
               <option value="-current_price">گران‌ترین</option>
               <option value="mileage">کمترین کارکرد</option>
+              <option value="-mileage">بیشترین کارکرد</option>
               <option value="-year_jalali">جدیدترین سال ساخت</option>
             </select>
             <div className="segmented">
@@ -210,9 +211,9 @@ export function Explorer() {
                         <strong><Fa>{ad.title}</Fa></strong>
                         <span className="deal-price">{toman(ad.current_price)}</span>
                         <div className="row">
-                          <span>{ad.year_jalali ?? ad.year ?? "—"}</span>
-                          <span>·</span>
                           <span>{km(ad.mileage)}</span>
+                          <span>·</span>
+                          <span>{ad.year_jalali ?? ad.year ?? "—"}</span>
                         </div>
                         <div className="row">
                           <Fa>{ad.city_name || "—"}</Fa>

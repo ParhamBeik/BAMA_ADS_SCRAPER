@@ -43,6 +43,15 @@ class AdFilter(django_filters.FilterSet):
         method="filter_seller_type",
     )
     q = django_filters.CharFilter(method="filter_q")
+    condition = django_filters.ChoiceFilter(
+        choices=(
+            ("clean", "clean"),
+            ("cosmetic", "cosmetic"),
+            ("painted", "painted"),
+            ("structural", "structural"),
+        ),
+        method="filter_condition",
+    )
 
     def filter_seller_type(self, queryset, name, value):
         return queryset.filter(dealer__isnull=value != "dealer")
@@ -56,6 +65,22 @@ class AdFilter(django_filters.FilterSet):
             | Q(model__name_fa__icontains=value)
             | Q(description__icontains=value)
         )
+
+    def filter_condition(self, queryset, name, value):
+        """Four-band body condition, matching ``quality.condition_band``."""
+        if value == "structural":
+            return queryset.filter(body_status__regex=r"تعویض|تصادفی|سوخته|اوراقی")
+        if value == "cosmetic":
+            return queryset.filter(body_status__regex=r"لکه|صافکاری|خط.?و.?خش")
+        if value == "clean":
+            return queryset.filter(body_status__regex=r"بدون.?رنگ").exclude(
+                body_status__regex=r"صافکاری|لکه|خط.?و.?خش"
+            )
+        if value == "painted":
+            return queryset.filter(body_status__regex=r"رنگ").exclude(
+                body_status__regex=r"تعویض|تصادفی|سوخته|اوراقی|لکه|صافکاری|خط.?و.?خش|بدون.?رنگ"
+            )
+        return queryset
 
     class Meta:
         model = Ad

@@ -1,8 +1,9 @@
 """What a car is worth, and how far below that it is listed.
 
-One cohort median, one optional mileage adjustment, and the sample size behind
-both. The listing page and the deal board read the *same* ``Baseline``, so the
-two can no longer disagree about what a car is worth.
+One cohort median, a condition-band adjustment, a mileage-bucket adjustment,
+and the sample size behind all three. The listing page and the deal board read
+the *same* ``Baseline``, so the two can no longer disagree about what a car is
+worth.
 
 Three things this deliberately does not do, each having produced a wrong number
 in a previous generation:
@@ -35,13 +36,16 @@ from django.utils import timezone
 from apps.core.models import Ad, DealScoreCache
 from apps.core.quality import (
     COHORT_FLAGS,
+    CONDITION_BANDS,
     FLAG_OUTLIER_HIGH,
+    FLAG_OUTLIER_LOW,
+    condition_band,
     exclude_unclear_price,
     verified,
     verified_by_ad,
     without_cohort_outliers,
 )
-from apps.jobs.verify import MIN_PLAUSIBLE_PRICE
+from apps.jobs.verify import MAX_PLAUSIBLE_MILEAGE, MIN_PLAUSIBLE_PRICE
 
 # A cohort needs this many priced peers before it has an opinion worth quoting.
 MIN_PEERS = 8
@@ -52,7 +56,20 @@ TIERS = ((40, "high"), (15, "medium"), (MIN_PEERS, "low"))
 
 # Mileage buckets in km. Per-bucket rather than one straight line because
 # depreciation is steep early and flattens later.
-MILEAGE_BUCKETS = (0, 20_000, 50_000, 100_000, 150_000, 200_000, 300_000)
+#
+# The top edge used to be 300k and unbounded, so 574 production rows from
+# 300,000km to a 9,000,000km typo all priced against one median. Extended so the
+# genuinely worn-out end is separated from the merely high, and anything past
+# `MAX_PLAUSIBLE_MILEAGE` is treated as unknown rather than as a valid point.
+MILEAGE_BUCKETS = (0, 20_000, 50_000, 100_000, 150_000, 200_000,
+                   300_000, 400_000, 600_000)
+
+# Measured condition haircuts are pooled across the whole catalogue, so they
+# must not be recomputed per model on an incremental rescore (218 models a
+# tick). Cached like `deal_window` and dropped by the same full rebuild.
+_HAIRCUT_CACHE_KEY = "pricing:condition_haircuts:v1"
+_MILEAGE_HAIRCUT_CACHE_KEY = "pricing:mileage_haircuts:v1"
+HAIRCUT_CACHE_SECONDS = 6 * 60 * 60
 
 
 def tier(n: int) -> str:
@@ -63,7 +80,14 @@ def tier(n: int) -> str:
 
 
 def bucket(mileage: int | None) -> int | None:
-    if mileage is None:
+    """Mileage bucket edge, or None when the reading cannot be believed.
+
+    An odometer past ``MAX_PLAUSIBLE_MILEAGE`` is a typo, not a worn-out car
+    (production holds a 9,000,000km row). ``verify`` flags it softly and keeps
+    the ad; pricing must decline to *adjust* on it, which lands the car on the
+    unadjusted cohort median rather than in the deepest bucket.
+    """
+    if mileage is None or mileage < 0 or mileage > MAX_PLAUSIBLE_MILEAGE:
         return None
     for edge in reversed(MILEAGE_BUCKETS):
         if mileage >= edge:
@@ -73,12 +97,19 @@ def bucket(mileage: int | None) -> int | None:
 
 @dataclass
 class Adjusted:
-    """One car's fair value, and the adjustment that produced it."""
+    """One car's fair value, and the adjustments that produced it."""
 
     fair_value: int
     adjustment: int | None = None
     bucket: int | None = None
     bucket_peers: int = 0
+    band: str | None = None
+    band_adjustment: int | None = None
+    band_peers: int = 0
+    # "peers" when the band's own median was thick enough, "measured" when the
+    # pooled haircut stood in for it, None when neither applied.
+    band_basis: str | None = None
+    mileage_basis: str | None = None
 
 
 @dataclass
@@ -88,39 +119,192 @@ class Baseline:
     base: float
     peer_count: int
     bucket_medians: dict[int, tuple[float, int]] = field(default_factory=dict)
+    band_medians: dict[str, tuple[float, int]] = field(default_factory=dict)
 
     @property
     def confidence(self) -> str:
         return tier(self.peer_count)
 
-    def adjusted(self, mileage: int | None) -> Adjusted:
-        """Fair value at this odometer. No usable bucket means no adjustment —
-        the cohort median stands on its own rather than being nudged by a number
-        nobody can defend."""
+    def adjusted(self, mileage: int | None, band: str | None = None,
+                 haircuts: dict[str, float] | None = None,
+                 mileage_haircuts: dict[int, float] | None = None) -> Adjusted:
+        """Fair value for this car's condition and odometer.
+
+        Condition first, because it is the larger effect and the one the cohort
+        key cannot see: a repainted car judged against clean peers reads as a
+        16.5% bargain, which is simply what a repainted car costs. Where the
+        band has ``MIN_PEERS`` of its own the band median *is* the answer;
+        below that the pooled haircut measured across the whole catalogue
+        stands in, because the alternative — comparing it to clean cars — is the
+        exact defect being fixed. Unknown band, no adjustment.
+
+        Mileage then applies as an absolute delta off the cohort median, exactly
+        as before. The two are treated as additive because production says they
+        are: measured jointly, clean/low reads -1.4% and severe/high +13.5%,
+        with the middle cells landing near the sum of the parts.
+        """
+        base = self.base
+        band_adj: int | None = None
+        band_peers = 0
+        band_basis: str | None = None
+        if band:
+            med, n = self.band_medians.get(band, (None, 0))
+            if med is not None and n >= MIN_PEERS:
+                band_adj, band_peers, band_basis = int(med - base), n, "peers"
+            elif haircuts and band in haircuts:
+                band_adj, band_basis = int(-base * haircuts[band]), "measured"
+
+        value = base + (band_adj or 0)
+
         key = bucket(mileage)
+        mileage_adj: int | None = None
+        bucket_peers = 0
+        mileage_basis: str | None = None
         if key is not None:
             med, n = self.bucket_medians.get(key, (None, 0))
             if med is not None and n >= MIN_PEERS:
-                delta = med - self.base
-                return Adjusted(int(self.base + delta), int(delta), key, n)
-        return Adjusted(int(self.base), None, key, 0)
+                mileage_adj, bucket_peers, mileage_basis = int(med - base), n, "peers"
+                value += mileage_adj
+            elif mileage_haircuts and key in mileage_haircuts:
+                # Thin bucket: the cars that most need a mileage correction
+                # used to get none, because MIN_PEERS starved them.
+                mileage_adj, mileage_basis = int(-base * mileage_haircuts[key]), "measured"
+                value += mileage_adj
+
+        return Adjusted(int(value), mileage_adj, key, bucket_peers,
+                        band, band_adj, band_peers, band_basis, mileage_basis)
 
 
-def cohort_baseline(peers: Iterable[tuple[int, int | None]]) -> Baseline | None:
-    """Median price of a cohort plus its per-bucket medians, or None if too thin."""
-    pairs = [(p, m) for p, m in peers if p]
-    if len(pairs) < MIN_PEERS:
+def cohort_baseline(
+    peers: Iterable[tuple[int, int | None] | tuple[int, int | None, str | None]],
+) -> Baseline | None:
+    """Median price of a cohort plus its per-bucket and per-band medians.
+
+    Accepts ``(price, mileage)`` as well as ``(price, mileage, band)`` so a
+    caller that has no condition to offer still gets a usable baseline — it just
+    gets no band strata, and therefore no condition adjustment.
+    """
+    triples = [(p, m, (t[0] if t else None))
+               for p, m, *t in peers if p]
+    if len(triples) < MIN_PEERS:
         return None
     by_bucket: dict[int, list[int]] = {}
-    for price, mileage in pairs:
+    by_band: dict[str, list[int]] = {}
+    for price, mileage, band in triples:
         key = bucket(mileage)
         if key is not None:
             by_bucket.setdefault(key, []).append(price)
+        if band:
+            by_band.setdefault(band, []).append(price)
     return Baseline(
-        base=statistics.median([p for p, _ in pairs]),
-        peer_count=len(pairs),
+        base=statistics.median([p for p, _, _ in triples]),
+        peer_count=len(triples),
         bucket_medians={k: (statistics.median(v), len(v)) for k, v in by_bucket.items()},
+        band_medians={k: (statistics.median(v), len(v)) for k, v in by_band.items()},
     )
+
+
+def condition_haircuts(rows: Iterable[dict] | None = None) -> dict[str, float]:
+    """How far under its cohort each condition band trades, catalogue-wide.
+
+    The fallback for a cohort too thin to have its own opinion about a band, and
+    deliberately *measured* rather than chosen: the number comes from every
+    cohort that does have ``MIN_PEERS`` in both the band and the cohort, pooled
+    as the median of per-cohort ratios. A constant here would be inventing the
+    haircut, which is the thing this design is trying not to do.
+
+    Ratios, not absolute toman, so one expensive model cannot dominate the pool.
+    """
+    cached = cache.get(_HAIRCUT_CACHE_KEY)
+    if cached is not None and rows is None:
+        return cached
+
+    if rows is None:
+        rows = without_cohort_outliers(_scorable_rows()).values(
+            "model_id", "variant_id", "year_jalali", "current_price",
+            "body_status", "cohort_flags",
+        )
+
+    by_cohort: dict[tuple, list[tuple[int, str | None]]] = defaultdict(list)
+    for r in rows:
+        key = (r["model_id"], r["variant_id"], r["year_jalali"])
+        # Same rule as any other baseline: a price nobody believes must not help
+        # measure what a band is worth.
+        if None in key or set(r.get("cohort_flags") or []) & COHORT_FLAGS:
+            continue
+        by_cohort[key].append((r["current_price"], condition_band(r.get("body_status"))))
+
+    ratios: dict[str, list[float]] = defaultdict(list)
+    for peers in by_cohort.values():
+        prices = [p for p, _ in peers if p]
+        if len(prices) < MIN_PEERS:
+            continue
+        cohort_median = statistics.median(prices)
+        if cohort_median <= 0:
+            continue
+        for band in CONDITION_BANDS:
+            in_band = [p for p, b in peers if b == band and p]
+            if len(in_band) >= MIN_PEERS:
+                ratios[band].append(statistics.median(in_band) / cohort_median)
+
+    # A *discount*: positive means the band trades under its cohort. Clean cars
+    # sit marginally above, which would be a negative haircut — clamped to zero
+    # rather than used to mark clean cars up, because "cheap for a clean car"
+    # should stay a discount the board can find.
+    haircuts = {
+        band: max(0.0, round(1 - statistics.median(vals), 4))
+        for band, vals in ratios.items()
+    }
+    cache.set(_HAIRCUT_CACHE_KEY, haircuts, HAIRCUT_CACHE_SECONDS)
+    return haircuts
+
+
+def mileage_haircuts(rows: Iterable[dict] | None = None) -> dict[int, float]:
+    """How far under its cohort each mileage bucket trades, catalogue-wide.
+
+    Same shape as ``condition_haircuts``: the fallback for a bucket too thin
+    to have its own median. High-mileage cars were the ones that never cleared
+    ``MIN_PEERS``, so they got no correction — the opposite of what we want.
+    """
+    cached = cache.get(_MILEAGE_HAIRCUT_CACHE_KEY)
+    if cached is not None and rows is None:
+        return cached
+
+    if rows is None:
+        rows = without_cohort_outliers(_scorable_rows()).values(
+            "model_id", "variant_id", "year_jalali", "current_price",
+            "mileage", "cohort_flags",
+        )
+
+    by_cohort: dict[tuple, list[tuple[int, int | None]]] = defaultdict(list)
+    for r in rows:
+        key = (r["model_id"], r["variant_id"], r["year_jalali"])
+        if None in key or set(r.get("cohort_flags") or []) & COHORT_FLAGS:
+            continue
+        by_cohort[key].append((r["current_price"], bucket(r.get("mileage"))))
+
+    ratios: dict[int, list[float]] = defaultdict(list)
+    for peers in by_cohort.values():
+        prices = [p for p, _ in peers if p]
+        if len(prices) < MIN_PEERS:
+            continue
+        cohort_median = statistics.median(prices)
+        if cohort_median <= 0:
+            continue
+        by_bucket: dict[int, list[int]] = defaultdict(list)
+        for price, key in peers:
+            if key is not None and price:
+                by_bucket[key].append(price)
+        for key, bucket_prices in by_bucket.items():
+            if len(bucket_prices) >= MIN_PEERS:
+                ratios[key].append(statistics.median(bucket_prices) / cohort_median)
+
+    haircuts = {
+        key: max(0.0, round(1 - statistics.median(vals), 4))
+        for key, vals in ratios.items()
+    }
+    cache.set(_MILEAGE_HAIRCUT_CACHE_KEY, haircuts, HAIRCUT_CACHE_SECONDS)
+    return haircuts
 
 
 def dispersion(prices: list[int], base: float) -> float | None:
@@ -144,20 +328,44 @@ def percentile(values: list[float], p: int) -> float:
     return ordered[rank - 1]
 
 
-def cohort_peers(*, model_id: int, variant_id, year_jalali) -> list[tuple[int, int]]:
-    """Priced, active, verified ``(price, mileage)`` peers of one cohort.
+def _scorable_rows():
+    """The population both the board and the haircut pool are measured over.
+
+    One definition, because two drifted apart once already: `cohort_peers` used
+    `current_price > 0` and no instalment filter while the board used the 10M
+    sentinel and `exclude_unclear_price`, so the listing page quoted a median
+    dragged down by down-payments the board had thrown out — 11.7% of active
+    priced ads. AGENTS.md asserts the two agree; this is what makes that true.
+
+    Cohort outliers are deliberately NOT excluded here. They must be dropped
+    from a *baseline* (an unbelievable price cannot help define believability)
+    but kept as *candidates* — an outlier-low row is a genuinely underpriced car,
+    and hiding it from the one board a buyer reads is the opposite of the job.
+    `cohort_peers` adds that filter; `compute_deal_scores` applies it per cohort.
+    """
+    return exclude_unclear_price(
+        verified(Ad.objects).filter(
+            status=Ad.Status.ACTIVE,
+            # The 10M floor is the unit-switch sentinel, not a car.
+            current_price__gt=MIN_PLAUSIBLE_PRICE,
+            publish_at__isnull=False,
+        )
+    )
+
+
+def cohort_peers(*, model_id: int, variant_id, year_jalali
+                 ) -> list[tuple[int, int, str | None]]:
+    """Priced, active, verified ``(price, mileage, condition_band)`` peers.
 
     Cohort outliers excluded: a price that is not believable must not help define
     the baseline that judges believability.
     """
-    return list(
-        without_cohort_outliers(verified(Ad.objects))
-        .filter(
-            model_id=model_id, variant_id=variant_id, year_jalali=year_jalali,
-            current_price__gt=0, status=Ad.Status.ACTIVE,
-        )
-        .values_list("current_price", "mileage")
-    )
+    return [
+        (price, mileage, condition_band(status))
+        for price, mileage, status in without_cohort_outliers(_scorable_rows())
+        .filter(model_id=model_id, variant_id=variant_id, year_jalali=year_jalali)
+        .values_list("current_price", "mileage", "body_status")
+    ]
 
 
 def fair_price(code: str) -> dict:
@@ -182,7 +390,10 @@ def fair_price(code: str) -> dict:
             "min_peers": MIN_PEERS,
         }
 
-    adjusted = baseline.adjusted(ad.mileage)
+    adjusted = baseline.adjusted(
+        ad.mileage, condition_band(ad.body_status),
+        condition_haircuts(), mileage_haircuts(),
+    )
     components = [{
         "name": "cohort_median",
         "amount": int(baseline.base),
@@ -191,6 +402,16 @@ def fair_price(code: str) -> dict:
             f"{ad.model.name_fa if ad.model else ''} peers"
         ),
     }]
+    if adjusted.band_adjustment is not None:
+        components.append({
+            "name": "condition",
+            "amount": adjusted.band_adjustment,
+            "detail": (
+                f"{adjusted.band_peers} peers with {ad.body_status}"
+                if adjusted.band_basis == "peers"
+                else f"catalogue-wide gap for {adjusted.band} bodywork"
+            ),
+        })
     if adjusted.adjustment is not None:
         components.append({
             "name": "mileage",
@@ -210,13 +431,13 @@ def fair_price(code: str) -> dict:
         ),
         "components": components,
         "peer_count": baseline.peer_count,
-        "dispersion": dispersion([p for p, _ in peers], baseline.base),
+        "dispersion": dispersion([p for p, _, _ in peers], baseline.base),
         "confidence": baseline.confidence,
         # Where this car sits among its peers, as a shape rather than a verdict.
         # A components table answers "how was the number built"; this answers
         # "is this cheap", which is the question people actually arrive with.
         # Free: it is the same peer list the baseline was computed from.
-        "distribution": peer_distribution([p for p, _ in peers]),
+        "distribution": peer_distribution([p for p, _, _ in peers]),
     }
 
 
@@ -361,7 +582,10 @@ TRUSTED_MAX_DISCOUNT = 25.0
 # pages' worth, so the board is worth paging through, but small enough that a
 # normal day resolves in a handful of days rather than falling back to a month.
 MIN_CANDIDATES = 200
-MAX_WINDOW_DAYS = 30
+# Pinned at 7 days (the last freshness band that is still "recent"). Widening
+# out to 30 to refill the board after scoring got stricter would put old
+# listings back on the suggestions page — the thing we just stopped doing.
+MAX_WINDOW_DAYS = 7
 # "Top suggestions" means the best quarter of what the window holds.
 CANDIDATE_PERCENTILE = 75
 # Recomputed on the worker's tick anyway; five minutes keeps the page honest
@@ -379,11 +603,10 @@ LAST_BAND = "d15_plus"
 def deal_window(*, now=None) -> dict:
     """How far back the board looks today, and how good a deal has to be.
 
-    Walks the window out one day at a time and stops at the first width that
-    holds ``MIN_CANDIDATES`` listings at or above that width's own
-    ``CANDIDATE_PERCENTILE`` discount. A thin day therefore widens the window
-    instead of showing three cars, and a busy day tightens it instead of
-    burying today's arrivals under last month's.
+    Walks the window out one day at a time, up to ``MAX_WINDOW_DAYS``, and
+    stops at the first width that holds ``MIN_CANDIDATES`` listings at or above
+    that width's own ``CANDIDATE_PERCENTILE`` discount. A quiet day is a short
+    board, not a month of stale listings.
 
     Recency is measured on ``publish_at``, never ``first_seen_at``:
     ``first_seen_at`` is when *our crawler* got there, so an old listing found
@@ -439,21 +662,20 @@ def compute_deal_scores(*, model_id: int | None = None) -> dict:
     refresh drops only that model's.
     """
     outliers = flag_high_outliers(model_id=model_id)
-    base = exclude_unclear_price(
-        verified(Ad.objects).filter(
-            status=Ad.Status.ACTIVE,
-            # The 10M floor is the unit-switch sentinel, not a car.
-            current_price__gt=MIN_PLAUSIBLE_PRICE,
-            publish_at__isnull=False,
-        )
-    )
+    base = _scorable_rows()
     if model_id is not None:
         base = base.filter(model_id=model_id)
 
     rows = list(base.values(
         "code", "model_id", "variant_id", "year_jalali",
-        "current_price", "first_seen_at", "mileage", "cohort_flags",
+        "current_price", "first_seen_at", "mileage", "cohort_flags", "body_status",
     ))
+
+    # Pooled across the whole catalogue, never just this model's slice — a
+    # per-model rescore would otherwise measure the haircut on a handful of rows
+    # and get a different answer every tick. Cached; the full rebuild drops it.
+    haircuts = condition_haircuts(rows if model_id is None else None)
+    mile_haircuts = mileage_haircuts(rows if model_id is None else None)
 
     peers_by_cohort: dict = defaultdict(list)
     for r in rows:
@@ -462,6 +684,8 @@ def compute_deal_scores(*, model_id: int | None = None) -> dict:
 
     now = timezone.now()
     objs: list[DealScoreCache] = []
+    explained_low: list[Ad] = []
+    cleared_low: list[Ad] = []
     for (mid, vid, yj), peers in peers_by_cohort.items():
         # The baseline is built from unflagged peers, but every peer is still
         # scored against it. Both halves matter: an outlier that helps set the
@@ -471,7 +695,8 @@ def compute_deal_scores(*, model_id: int | None = None) -> dict:
         clean = [r for r in peers if not set(r["cohort_flags"] or []) & COHORT_FLAGS]
         baseline_rows = clean if len(clean) >= MIN_PEERS else peers
         baseline = cohort_baseline(
-            [(r["current_price"], r["mileage"]) for r in baseline_rows]
+            [(r["current_price"], r["mileage"], condition_band(r["body_status"]))
+             for r in baseline_rows]
         )
         if baseline is None:
             continue
@@ -481,9 +706,28 @@ def compute_deal_scores(*, model_id: int | None = None) -> dict:
         floor = MIN_ASK_VS_MEDIAN * baseline.base
 
         for r in peers:
-            adjusted = baseline.adjusted(r["mileage"])
+            adjusted = baseline.adjusted(
+                r["mileage"], condition_band(r["body_status"]),
+                haircuts, mile_haircuts,
+            )
             fair_value = adjusted.fair_value
             price = r["current_price"]
+            has_low = FLAG_OUTLIER_LOW in (r["cohort_flags"] or [])
+            explained = (
+                price < baseline.base * 0.9
+                and ((adjusted.band_adjustment or 0) + (adjusted.adjustment or 0)) != 0
+                and (fair_value <= 0 or (fair_value - price) / max(fair_value, 1) * 100 <= 0)
+            )
+            if explained and not has_low:
+                flags = [f for f in (r["cohort_flags"] or []) if f != FLAG_OUTLIER_LOW]
+                flags.append(FLAG_OUTLIER_LOW)
+                explained_low.append(Ad(code=r["code"], cohort_flags=flags))
+            elif has_low and not explained:
+                cleared_low.append(Ad(
+                    code=r["code"],
+                    cohort_flags=[f for f in (r["cohort_flags"] or [])
+                                  if f != FLAG_OUTLIER_LOW],
+                ))
             # fair_value <= 0 means the adjustment ate the car. Bucket medians
             # cannot produce one, but the last generation shipped 123% discounts
             # because nothing ever checked.
@@ -514,6 +758,12 @@ def compute_deal_scores(*, model_id: int | None = None) -> dict:
                     "mileage_adjustment": adjusted.adjustment,
                     "mileage_bucket": adjusted.bucket,
                     "mileage_bucket_peers": adjusted.bucket_peers,
+                    "mileage_basis": adjusted.mileage_basis,
+                    "body_status": r["body_status"],
+                    "condition_band": adjusted.band,
+                    "condition_adjustment": adjusted.band_adjustment,
+                    "condition_band_peers": adjusted.band_peers,
+                    "condition_basis": adjusted.band_basis,
                 },
             ))
 
@@ -523,14 +773,23 @@ def compute_deal_scores(*, model_id: int | None = None) -> dict:
         DealScoreCache.objects.all().delete()
     if objs:
         DealScoreCache.objects.bulk_create(objs, batch_size=500)
+    for batch in (explained_low, cleared_low):
+        if batch:
+            Ad.objects.bulk_update(batch, ["cohort_flags"], batch_size=500)
 
     # The window is measured from these rows, so it is wrong the instant they
     # are replaced. Dropped rather than recomputed here: the next reader pays
     # for it, and a rebuild that crashes afterwards leaves no stale answer.
     cache.delete(_WINDOW_CACHE_KEY)
+    # The haircuts are NOT dropped here: unlike the window, a full rebuild has
+    # just re-measured them from the same rows and `condition_haircuts` already
+    # wrote that answer through. Deleting it would force the next reader to
+    # recompute the identical figure over a fresh 25k-row scan.
 
     return {
         "scored": len(objs),
+        "condition_haircuts": haircuts,
+        "mileage_haircuts": mile_haircuts,
         "min_peers": MIN_PEERS,
         "model_id": model_id,
         "outliers_flagged": outliers["flagged"],

@@ -160,6 +160,40 @@ def test_havaleh_is_still_excluded_after_the_special_case_was_removed(cohort):
     assert not DealScoreCache.objects.filter(ad_id="havale01").exists()
 
 
+def test_a_thin_mileage_bucket_uses_the_measured_haircut():
+    """High-mileage cars used to get no correction because MIN_PEERS starved them."""
+    base = FP.Baseline(base=2_000_000_000, peer_count=10,
+                       bucket_medians={50_000: (2_000_000_000, 10)})
+    adj = base.adjusted(400_000, None, None, {400_000: 0.10})
+    assert adj.mileage_basis == "measured"
+    assert adj.adjustment == -200_000_000
+    assert adj.fair_value == 1_800_000_000
+
+
+def test_a_thin_condition_band_uses_the_measured_haircut():
+    base = FP.Baseline(base=2_000_000_000, peer_count=10,
+                       band_medians={"painted": (1_670_000_000, 2)})
+    adj = base.adjusted(50_000, "painted", {"painted": 0.165})
+    assert adj.band_basis == "measured"
+    assert adj.fair_value < 2_000_000_000
+
+
+@pytest.mark.django_db
+def test_a_repainted_car_is_not_a_bargain_against_clean_peers(cohort):
+    """Unit of the product: paint is a price, not a discount."""
+    from apps.core.models import Ad as AdModel
+    AdModel.objects.filter(code__startswith="peer").update(body_status="بدون رنگ")
+    for i in range(8):
+        cohort(f"paint{i:02d}", 1_700_000_000, body_status="کامل رنگ")
+
+    compute_deal_scores()
+
+    assert not DealScoreCache.objects.filter(ad_id="paint00").exists()
+    cohort("cleancp1", 1_700_000_000, body_status="بدون رنگ")
+    compute_deal_scores()
+    assert DealScoreCache.objects.filter(ad_id="cleancp1").exists()
+
+
 # --- the dynamic top-suggestions window --------------------------------------
 #
 # Unit level for `percentile` (pure arithmetic); integration for `deal_window`,

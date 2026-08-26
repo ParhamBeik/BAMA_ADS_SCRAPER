@@ -87,7 +87,10 @@ class AdSerializer(serializers.ModelSerializer):
         )
 
     def get_condition_flagged(self, obj) -> bool:
-        return condition_discounted(title=obj.title, description=obj.description)
+        return condition_discounted(
+            title=obj.title, description=obj.description,
+            body_status=obj.body_status,
+        )
 
     class Meta:
         model = Ad
@@ -96,6 +99,7 @@ class AdSerializer(serializers.ModelSerializer):
             "variant_id", "variant_name", "year", "year_jalali", "mileage",
             "current_price", "price_type", "publish_at", "last_seen_at", "title",
             "transmission", "body_type", "fuel", "city_id", "city_name",
+            "district", "body_status",
             "bama_url", "description", "image_url", "image_urls", "image_count",
             "seller_authenticated", "dealer_name", "seller_type", "status",
             "removed_at", "likely_reason", "reason_confidence", "reposted_from",

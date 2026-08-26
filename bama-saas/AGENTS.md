@@ -38,20 +38,22 @@ schema is independent of the Python layout. Do not remove those pins.
   Analytics reads go through `quality.verified` / `verified_by_ad` /
   `without_cohort_outliers` — never a raw `Ad.objects` queryset.
 - **Fair price *is* the deal board.** `MIN_PEERS = 8`, bucket-median mileage
-  adjustment, no regression. Below 8 peers it refuses to answer rather than
-  quoting a median of three cars. `MIN_ASK_VS_MEDIAN = 0.5` drops asks below
-  half the peer median as deposits or typos, as do حواله titles and the
-  10M-toman sentinel. Age is *not* multiplied into the score — it orders the
-  board instead (below).
+  adjustment, four-band body-condition stratum (or a catalogue-wide measured
+  haircut when a band/bucket is thin), no regression. Below 8 peers it refuses
+  to answer rather than quoting a median of three cars. `MIN_ASK_VS_MEDIAN = 0.5`
+  drops asks below half the peer median as deposits or typos, as do حواله titles
+  and the 10M-toman sentinel. Age is *not* multiplied into the score — it orders
+  the board instead (below). Recency-weighting the median was measured and
+  rejected (0.07% move, 48% cohort loss).
 - **The board is banded by freshness, then by discount.** Recency is
   `Ad.publish_at` (Bama's own phrase, which also moves when a seller bumps),
   never `first_seen_at` — that says when our crawler arrived, so a deep backfill
   would make a year-old listing rank as new. `pricing.deal_window()` measures
-  both thresholds from the current board rather than hardcoding them: it widens
-  the window a day at a time until `MIN_CANDIDATES` listings clear that width's
-  own 75th-percentile discount. It is cached in Redis and **dropped by
-  `compute_deal_scores`** — the window is computed from exactly the rows a
-  rebuild deletes.
+  the discount floor from the current board and **stops widening at 7 days**.
+  A short board is the honest signal that today has few good buys; widening
+  to refill after scoring got stricter would put old listings back. It is
+  cached in Redis and **dropped by `compute_deal_scores`**. The same window
+  applies to `band=review` and `band=all`, not only `top`.
 - **`TRUSTED_MAX_DISCOUNT = 25.0` splits recommend from review.** Above it the
   gap is an attribute the (model, variant, year) key cannot see far more often
   than a bargain. Production carries 272 such rows against 8,803 below it, which
@@ -116,10 +118,13 @@ schema is independent of the Python layout. Do not remove those pins.
   The third exists because leaving unprovable ads `ACTIVE` had the app
   advertising 546 cars nobody had seen in 48 hours. `UNVERIFIED` is a holding
   state: the next complete pair of windows resolves it either way.
-- **Why an ad left is inferred, never observed.** Bama's feed carries no reason,
-  so `likely_reason` / `reason_confidence` are kept out of `status` — the status
-  column says what we saw, those say what we guess. The "likely expired"
-  threshold is the P90 of measured `ListingEpisode` tenure, never a constant.
+- **Why an ad left is inferred, except when we opened the page.** Bama's feed
+  carries no reason, so `likely_reason` / `reason_confidence` stay out of
+  `status`. Tenure vs the P90 of `ListingEpisode` is a guess (medium). A
+  detail-page probe of the bargain board that gets HTTP 410 / "این آگهی فروخته
+  شد" is an observation: `REMOVED`, reason sold, confidence high, immediately.
+  That probe must persist a `FetchRun` with `stop_reason=blocked` on 403 or it
+  would hammer an IP ban while the feed crawler sits in cooldown.
 - **Anything credible may lower the depth ratchet, not just a full sweep.**
   `known_feed_depth` is a one-way high-water mark and the feed shrinks daily, so
   something has to bring it down. Requiring `mode=FULL` for that was the bug that

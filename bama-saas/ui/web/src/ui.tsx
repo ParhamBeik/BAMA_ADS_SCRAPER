@@ -132,9 +132,7 @@ export function Card({
   return (
     <section className="card">
       {(title || action) && (
-        <header
-          style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}
-        >
+        <header className="card-head">
           {title && <h3 className="card-title">{title}</h3>}
           {action}
         </header>

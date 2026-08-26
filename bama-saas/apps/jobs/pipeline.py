@@ -44,6 +44,7 @@ JOBS: dict[str, Callable[..., dict]] = {
     "snapshot": jobs.daily_snapshot,
     "market_index": jobs.market_index,
     "deal_scores": jobs.deal_scores,
+    "probe_sold": jobs.probe_sold,
     "notify": jobs.notify,
     "coverage": jobs.coverage,
     "backfill_images": jobs.backfill_images,
@@ -59,11 +60,11 @@ JOBS: dict[str, Callable[..., dict]] = {
 # link_reposts sits between removal marking and episodes: it needs the
 # delisted set to be current, and episodes reads the links it writes.
 STEP_ORDER = ("fetch", "mark_inactive", "link_reposts", "episodes", "snapshot",
-              "market_index", "deal_scores", "notify", "coverage",
+              "market_index", "deal_scores", "probe_sold", "notify", "coverage",
               "backfill_images", "prune", "health")
 
 CADENCES = {
-    "hot": ("fetch", "mark_inactive", "deal_scores", "notify"),
+    "hot": ("fetch", "mark_inactive", "deal_scores", "probe_sold", "notify"),
     "warm": ("link_reposts", "episodes", "snapshot", "market_index"),
     "coverage": ("coverage",),
     # backfill_images is local and idempotent: it sweeps up rows whose photos
@@ -71,7 +72,7 @@ CADENCES = {
     # the board can show it.
     "maintenance": ("deal_scores", "backfill_images", "prune", "health"),
     "full": ("fetch", "mark_inactive", "link_reposts", "episodes", "snapshot",
-             "market_index", "deal_scores", "notify"),
+             "market_index", "deal_scores", "probe_sold", "notify"),
 }
 
 # A failed *fetch* deliberately does not cascade: the local steps are idempotent

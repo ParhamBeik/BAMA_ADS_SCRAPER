@@ -1067,3 +1067,11 @@ def test_stale_agreement_expires():
     _end_unconfirmed(600, started_at=old)
 
     assert F.end_is_corroborated(20) is False
+
+
+def test_a_410_detail_page_is_sold():
+    """Measured: Bama answers 410 with this alt text for a sold listing."""
+    assert F.detail_says_sold(410, 'alt="این آگهی فروخته شد!"')
+    assert F.detail_says_sold(410, "")
+    assert F.detail_says_sold(200, "این آگهی فروخته شد!")
+    assert not F.detail_says_sold(200, "چری آریزو 5T IE فروشی امروز چهارشنبه")

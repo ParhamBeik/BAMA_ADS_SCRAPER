@@ -43,6 +43,7 @@ from apps.core.models import (
     Variant,
 )
 from apps.core.quality import (
+    condition_band,
     condition_discounted,
     verified,
     verified_by_ad,
@@ -393,8 +394,12 @@ def _deal_score_row(obj, *, now=None):
         # but the cohort key has no condition dimension, so without this the gap
         # looks like free money instead of accident damage.
         "condition_flagged": condition_discounted(
-            title=obj.ad.title, description=obj.ad.description
+            title=obj.ad.title, description=obj.ad.description,
+            body_status=obj.ad.body_status,
         ),
+        "body_status": obj.ad.body_status,
+        "condition_band": condition_band(obj.ad.body_status),
+        "district": getattr(obj.ad, "district", "") or "",
         "components": components,
     }
 
@@ -477,16 +482,15 @@ def deal_scores(request):
     now = timezone.now()
     window = pricing.deal_window(now=now)
     qs = _deal_score_qs(now=now, by_freshness=band != "review")
+    cutoff = now - timedelta(days=window["window_days"])
 
     if band == "review":
         qs = qs.filter(discount_pct__gt=window["ceiling_pct"])
     else:
         qs = qs.filter(discount_pct__lte=window["ceiling_pct"])
         if band == "top":
-            qs = qs.filter(
-                discount_pct__gte=window["min_discount_pct"],
-                ad__publish_at__gte=now - timedelta(days=window["window_days"]),
-            )
+            qs = qs.filter(discount_pct__gte=window["min_discount_pct"])
+    qs = qs.filter(ad__publish_at__gte=cutoff)
 
     filters = {
         "ad__model__brand__slug": params.get("brand") or None,

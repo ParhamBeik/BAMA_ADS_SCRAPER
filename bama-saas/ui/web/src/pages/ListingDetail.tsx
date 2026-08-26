@@ -19,6 +19,8 @@ type Ad = {
   body_type: string;
   fuel: string;
   city_name: string;
+  district?: string;
+  body_status?: string;
   description: string;
   // Proxied through our own origin (apps/core/images.py), not hotlinked.
   image_url: string;
@@ -174,10 +176,11 @@ export function ListingDetail() {
                   <ul className="spec-list">
                     <li>سال ساخت: {data.year_jalali ?? "—"}</li>
                     <li>کارکرد: {data.mileage?.toLocaleString("en-US") ?? "—"}</li>
+                    <li>وضعیت بدنه: <Fa>{data.body_status || "—"}</Fa></li>
                     <li>گیربکس: {data.transmission || "—"}</li>
                     <li>بدنه: {data.body_type || "—"}</li>
                     <li>سوخت: {data.fuel || "—"}</li>
-                    <li>شهر: <Fa>{data.city_name || "—"}</Fa></li>
+                    <li>شهر: <Fa>{data.city_name || "—"}</Fa>{data.district ? ` / ${data.district}` : ""}</li>
                     <li>فروشنده احراز شده: {data.seller_authenticated == null ? "—" : data.seller_authenticated ? "بله" : "خیر"}</li>
                     {data.seller_type && (
                       <li>
@@ -235,6 +238,7 @@ export function ListingDetail() {
             const list = Array.isArray(rows) ? rows : rows.results ?? [];
             if (!list.length) return <p className="muted">تغییر قیمتی ثبت نشده است.</p>;
             return (
+              <div className="table-wrap">
               <table className="table">
                 <thead><tr><th>زمان</th><th>قیمت</th></tr></thead>
                 <tbody>
@@ -246,6 +250,7 @@ export function ListingDetail() {
                   ))}
                 </tbody>
               </table>
+              </div>
             );
           }}
         </Async>

@@ -51,9 +51,9 @@ from apps.jobs.verify import verify_extracted
 # A process-local cache so a bulk import of ~44k ads does O(unique values)
 # lookups instead of O(ads). `reset_cache` at the start and end of every run.
 
-# Location strings look like "تهران - منطقه ۱" or "بابل"; the first segment is
-# the city.
-_LOCATION_SEP = re.compile(r"\s*[-–،,]\s*")
+# Location strings look like "تهران - منطقه ۱" or "تهران / فاطمی"; the first
+# segment is the city, the rest is kept as the district.
+_LOCATION_SEP = re.compile(r"\s*[-–،,/]\s*")
 
 _DIM_CACHE: dict = {}
 
@@ -110,10 +110,20 @@ def _variant(model, name: str | None):
     return _DIM_CACHE[key]
 
 
+def split_location(location: str | None) -> tuple[str, str]:
+    """``(city, district)`` from Bama's location string.
+
+    Bama sends ``تهران / فاطمی`` as well as ``تهران - منطقه ۱``. Without ``/``
+    in the separator, 1,174 neighbourhoods were stored as cities.
+    """
+    parts = [p.strip() for p in _LOCATION_SEP.split((location or "").strip()) if p.strip()]
+    if not parts:
+        return "", ""
+    return parts[0], " / ".join(parts[1:])
+
+
 def _city(location: str | None):
-    if not location:
-        return None
-    first = _LOCATION_SEP.split(location.strip())[0].strip()
+    first, _ = split_location(location)
     if not first:
         return None
     key = ("city", first)
@@ -363,6 +373,7 @@ def _ad_defaults(extracted: dict, dims: dict, observed_at, publish_at, quality_f
         "last_seen_at": observed_at,
         "trim": g("trim") or "",
         "location": g("location") or "",
+        "district": split_location(g("location") or "")[1],
         "body_type": g("body_type") or "",
         "body_color": g("body_color") or "",
         "body_status": g("body_status") or "",

@@ -216,22 +216,17 @@ works. `<Provenance>` renders `as_of` + coverage on every research answer.
 data — as a real answer, not an error, and never as an empty chart. A survival
 curve drawn across a coverage hole reads crawler downtime as cars selling.
 
-## Open question: the 25-50% band
+## Open question: the 25-50% band — closed 2026-08-26
 
-272 of 9,075 scored listings sit between 25% and 50% under their peer median.
-That is too many to be a tail of genuine bargains, and the ceiling that moves
-them into the review tab labels the symptom without explaining it. Three
-candidate causes, none yet tested:
-
-- the peer median is not weighted for recency, so a cohort whose live listings
-  are older than the ad being judged reads as expensive;
-- the cars really are discounted for something the cohort key cannot see
-  (damage, plates, provenance) and the description regex in `quality.py` is
-  catching only part of it;
-- some are not real listings.
-
-Distinguishing these needs the review band sampled by hand against the source
-ads, not another threshold.
+272 of 9,075 scored listings sat between 25% and 50% under their peer median.
+Measured against production: **condition explains it**. Bama's `body_status` is
+populated on every ad and was read by no scoring code; a full respray trades
+~16.5% under its cohort, and 69% of the served board was a damage-declared car
+against 26% of the catalogue. Recency-weighting the median was tested and
+**rejected** (0.07% move at the median, 48% of cohorts lost). The remaining
+review-band rows are cars whose gap the (model, variant, year, condition) key
+still cannot see (plates, provenance) — they stay in review, labelled, not
+recommended.
 
 ## Tests
 

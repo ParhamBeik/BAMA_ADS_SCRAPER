@@ -211,6 +211,7 @@ class Ad(models.Model):
 
     trim = models.CharField(max_length=200, blank=True)
     location = models.CharField(max_length=200, blank=True)
+    district = models.CharField(max_length=200, blank=True)
     body_type = models.CharField(max_length=120, blank=True)
     body_color = models.CharField(max_length=120, blank=True)
     body_status = models.CharField(max_length=120, blank=True)

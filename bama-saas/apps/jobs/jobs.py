@@ -7,11 +7,14 @@ management commands, stdout capture or cadences.
 
 from __future__ import annotations
 
+import os
 import statistics
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import timedelta
 
+from django.conf import settings
+from django.core.cache import cache
 from django.db import transaction
 from django.db.models import Count, Sum
 from django.utils import timezone
@@ -20,6 +23,7 @@ from apps.core.models import (
     Ad,
     AdObservation,
     DailyInventorySnapshot,
+    DealScoreCache,
     FetchRun,
     IngestReject,
     JobRun,
@@ -28,7 +32,7 @@ from apps.core.models import (
     PageCoverage,
 )
 from apps.core.notify import notify_deals
-from apps.core.pricing import compute_deal_scores, refresh_cohort_deal_scores
+from apps.core.pricing import compute_deal_scores, deal_window, refresh_cohort_deal_scores
 from apps.core.quality import verified
 from apps.core.research import build_index
 from apps.jobs.fetcher import (
@@ -39,13 +43,17 @@ from apps.jobs.fetcher import (
     check_gate,
     coverage_is_complete,
     create_session,
+    detail_says_sold,
+    fetch_ad_page,
     fetch_live,
     fetch_page_with_backoff,
     find_gaps,
+    is_waf_block,
     known_feed_depth,
     plan_backfill,
     warmup,
 )
+from apps.jobs.parsing import absolute_ad_url
 
 # ---------------------------------------------------------------------------
 # Removal detection
@@ -503,6 +511,111 @@ def deal_scores(*, incremental: bool = False, model: int | None = None) -> dict:
 def notify(*, dry_run: bool = False) -> dict:
     """Telegram for deals clearing the notifier bars. Must follow ``deal_scores``."""
     return notify_deals(dry_run=dry_run)
+
+
+SOLD_PROBE_BATCH = int(os.environ.get("BAMA_SOLD_PROBE_ADS", "20"))
+SOLD_PROBE_TTL = 6 * 60 * 60
+SOLD_PROBE_KEY = "sold_probe:{code}"
+
+
+def probe_sold() -> dict:
+    """Visit bargain-board detail pages and mark ones Bama already sold.
+
+    Feed-absence proof takes two 24h windows, so a just-sold car can sit on
+    the suggestions grid until then. This checks the served board against the
+    detail page (HTTP 410 / "این آگهی فروخته شد") and removes a hit immediately
+    with high confidence. Capped and gated so a 403 is a FetchRun block, not a
+    hammer on the shared VPS IP.
+    """
+    check_gate()
+    now = timezone.now()
+    window = deal_window(now=now)
+    qs = (
+        DealScoreCache.objects.filter(
+            discount_pct__gt=0,
+            discount_pct__lte=window["ceiling_pct"],
+            discount_pct__gte=window["min_discount_pct"],
+            ad__status=Ad.Status.ACTIVE,
+            ad__publish_at__gte=now - timedelta(days=window["window_days"]),
+        )
+        .select_related("ad")
+        .order_by("-score")
+    )
+
+    run = FetchRun.objects.create(
+        source=FetchRun.Source.LIVE_FETCH,
+        mode=FetchRun.Mode.DELTA,
+        status=FetchRun.Status.RUNNING,
+        started_at=now,
+    )
+    session = create_session()
+    timeout = settings.BAMA_REQUEST_TIMEOUT
+    warmup(session, timeout)
+
+    sold: list[Ad] = []
+    probed = 0
+    skipped_recent = 0
+    try:
+        for row in qs.iterator(chunk_size=50):
+            if probed >= SOLD_PROBE_BATCH:
+                break
+            key = SOLD_PROBE_KEY.format(code=row.ad_id)
+            if cache.get(key):
+                skipped_recent += 1
+                continue
+            url = absolute_ad_url(row.ad.url or row.ad.canonical_path)
+            if not url:
+                continue
+            try:
+                status, body = fetch_ad_page(session, url, timeout)
+            except Exception as exc:
+                if is_waf_block(exc):
+                    run.status = FetchRun.Status.FAILED
+                    run.stop_reason = FetchRun.StopReason.BLOCKED
+                    run.error = str(exc)[:4000]
+                    run.finished_at = timezone.now()
+                    run.save(update_fields=[
+                        "status", "stop_reason", "error", "finished_at",
+                    ])
+                    raise CrawlBlocked(str(exc)) from exc
+                raise
+            probed += 1
+            cache.set(key, 1, SOLD_PROBE_TTL)
+            if not detail_says_sold(status, body):
+                continue
+            ad = row.ad
+            ad.status = Ad.Status.REMOVED
+            ad.removed_at = now
+            ad.likely_reason = Ad.Reason.SOLD
+            ad.reason_confidence = Ad.Confidence.HIGH
+            sold.append(ad)
+
+        if sold:
+            Ad.objects.bulk_update(
+                sold, ["status", "removed_at", "likely_reason", "reason_confidence"],
+                batch_size=100,
+            )
+            DealScoreCache.objects.filter(ad_id__in=[a.code for a in sold]).delete()
+
+        run.status = FetchRun.Status.SUCCEEDED
+        run.fetched_count = probed
+        run.finished_at = timezone.now()
+        run.save(update_fields=["status", "fetched_count", "finished_at"])
+    except CrawlBlocked:
+        raise
+    except Exception:
+        run.status = FetchRun.Status.FAILED
+        run.stop_reason = FetchRun.StopReason.ERROR
+        run.finished_at = timezone.now()
+        run.save(update_fields=["status", "stop_reason", "finished_at"])
+        raise
+
+    return {
+        "probed": probed,
+        "sold": len(sold),
+        "skipped_recent": skipped_recent,
+        "run_id": str(run.pk),
+    }
 
 
 # ---------------------------------------------------------------------------

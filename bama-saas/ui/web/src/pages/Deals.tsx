@@ -90,6 +90,9 @@ interface Deal {
   year: number | null;
   mileage: number | null;
   city_name: string;
+  district?: string;
+  body_status?: string;
+  condition_band?: string | null;
   image_url: string;
   bama_url: string;
   condition_flagged: boolean;
@@ -256,9 +259,9 @@ function DealCard({ deal, suspect }: { deal: Deal; suspect: boolean }) {
           <span className="card-badges">
             <span
               className="badge warn"
-              title="توضیحات آگهی به تصادف، پلاک منطقه آزاد یا وضعیت بدنه اشاره کرده است"
+              title={deal.body_status || "توضیحات آگهی به تصادف، پلاک منطقه آزاد یا وضعیت بدنه اشاره کرده است"}
             >
-              <AlertTriangle size={11} /> وضعیت بدنه
+              <AlertTriangle size={11} /> {deal.body_status || "وضعیت بدنه"}
             </span>
           </span>
         )}
@@ -269,6 +272,7 @@ function DealCard({ deal, suspect }: { deal: Deal; suspect: boolean }) {
         </strong>
         <div className="row">
           <span className="deal-price">{toman(deal.price)}</span>
+          <span>{km(deal.mileage)}</span>
           <span className="deal-median">{toman(deal.peer_median)}</span>
         </div>
         <div className="row">
@@ -276,11 +280,10 @@ function DealCard({ deal, suspect }: { deal: Deal; suspect: boolean }) {
           <span>{deal.peer_count ?? "—"} آگهی مشابه</span>
           <span>·</span>
           <span>{deal.year ?? "—"}</span>
-          <span>·</span>
-          <span>{km(deal.mileage)}</span>
         </div>
         <div className="row">
           <Fa>{deal.city_name || "—"}</Fa>
+          {deal.district ? <><span>·</span><Fa>{deal.district}</Fa></> : null}
           <span>·</span>
           <span>{ageLabel(deal.days_listed)}</span>
         </div>

@@ -49,8 +49,8 @@ const MILEAGE_PRESETS: [string, number][] = [
 
 export const FILTER_KEYS = [
   "brand", "model", "variant", "q", "price_min", "price_max",
-  "year_min", "year_max", "mileage_max", "transmission", "fuel",
-  "body_type", "seller_type", "confidence",
+  "year_min", "year_max", "mileage_min", "mileage_max", "transmission", "fuel",
+  "body_type", "condition", "seller_type", "confidence",
 ];
 
 interface Brand { slug: string; name_fa: string }
@@ -391,6 +391,13 @@ export function FilterPanel({
               );
             })}
           </div>
+          <RangeField
+            label="کارکرد (کیلومتر)"
+            minKey="mileage_min"
+            maxKey="mileage_max"
+            placeholderMin="از"
+            placeholderMax="تا"
+          />
         </div>
 
         {showSpecs && (
@@ -419,6 +426,19 @@ export function FilterPanel({
               value={filters.get("body_type")}
               onChange={(v) => filters.set({ body_type: v, page: null })}
               options={BODY_TYPES.map((b) => ({ value: b, label: b }))}
+            />
+            <Select
+              id="condition"
+              label="وضعیت بدنه"
+              anyLabel="همه"
+              value={filters.get("condition")}
+              onChange={(v) => filters.set({ condition: v, page: null })}
+              options={[
+                { value: "clean", label: "بدون رنگ" },
+                { value: "cosmetic", label: "لکه / خط و خش" },
+                { value: "painted", label: "رنگ‌شده" },
+                { value: "structural", label: "تعویض / تصادفی" },
+              ]}
             />
           </div>
         )}
@@ -461,7 +481,10 @@ function chipLabel(key: string, value: string): string {
     case "price_max": return `تا ${toman(Number(value))} تومان`;
     case "year_min": return `از سال ${value}`;
     case "year_max": return `تا سال ${value}`;
+    case "mileage_min": return `کارکرد از ${Number(value).toLocaleString("en-US")}`;
     case "mileage_max": return `کارکرد زیر ${Number(value).toLocaleString("en-US")}`;
+    case "condition":
+      return `بدنه: ${{ clean: "بدون رنگ", cosmetic: "لکه/خط و خش", painted: "رنگ‌شده", structural: "تعویض/تصادفی" }[value] ?? value}`;
     case "transmission": return `گیربکس: ${value}`;
     case "fuel": return `سوخت: ${value}`;
     case "body_type": return `بدنه: ${value}`;

@@ -433,6 +433,38 @@ def warmup(session: requests.Session, request_timeout: int) -> None:
         logger.warning("event=bama_warmup_failed error=%s", exc)
 
 
+# Sold-page characterisation, measured 2026-08-26 from a Mac (not the VPS):
+# a listing Bama has taken down answers HTTP 410 with the image alt
+# "این آگهی فروخته شد!" and a Nuxt payload of "حذف شده است". Live ads answer
+# 200. Some rows we already marked removed still answer 200 with a dated
+# title — those stay a feed-absence question, not a detail-page one.
+SOLD_PAGE_MARKERS = ("این آگهی فروخته شد", "حذف شده است")
+DETAIL_ACCEPT = "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8"
+
+
+def detail_says_sold(status: int, body: str = "") -> bool:
+    """True when Bama's own detail page says this listing is gone."""
+    if status == 410:
+        return True
+    text = body or ""
+    return any(marker in text for marker in SOLD_PAGE_MARKERS)
+
+
+def fetch_ad_page(session: requests.Session, url: str, request_timeout: int
+                  ) -> tuple[int, str]:
+    """One listing page. 410 is a successful observation, not an error.
+
+    Overrides the session's JSON Accept: this is an HTML document. A 403 still
+    raises so the crawl gate can see it.
+    """
+    response = session.get(
+        url, timeout=request_timeout, headers={"Accept": DETAIL_ACCEPT},
+    )
+    if response.status_code == WAF_STATUS:
+        response.raise_for_status()
+    return response.status_code, response.text or ""
+
+
 def fetch_page(session: requests.Session, page: int, request_timeout: int) -> list[dict[str, Any]]:
     """One page, with banner rows dropped."""
     response = session.get(f"{SEARCH_URL}?pageIndex={page}&{FEED_FILTERS}",
