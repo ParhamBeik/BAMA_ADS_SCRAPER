@@ -128,6 +128,33 @@ schema is independent of the Python layout. Do not remove those pins.
   0 full sweeps. `end_of_feed_is_credible` is the guard — a bounded run also
   needs an existing ceiling to be measured against, so a cold database cannot be
   taught a bogus depth by one empty page.
+- **A disbelieved end-of-feed is still recorded, and agreement eventually wins.**
+  The 5% bounded bar is right for organic drift (measured: under 1% a day), but
+  nothing could ever clear it after a *step* change — on 2026-08-25 adding
+  `image=1&priced=1` to the data request cut the feed from ~34,500 ranks to
+  ~28,710, a 192-page shortfall against a 57-page tolerance. Every coverage run
+  then walked to page 957, was disbelieved, wrote no `PageCoverage` **and
+  discarded the observation**, so the identical gap was re-derived ten minutes
+  later. Removal detection froze for a day. The fix is not a looser bar: a
+  disbelieved empty page now persists `feed_end_rank` under
+  `StopReason.END_UNCONFIRMED` (with `reached_end` still False, so the ratchet
+  ignores it), and `end_is_corroborated` believes any depth that
+  `END_AGREEMENT_RUNS` recent runs independently found within
+  `END_AGREEMENT_RATIO` of each other. Size, not agreement, is what a spurious
+  blip can fake. Corroboration only *lowers* an existing ceiling — a cold
+  database still cannot be taught a depth by empty pages alone.
+- **`max_ads` on delta is a backstop, not the intended stop.** The saturation
+  rule (`max_stale_pages` consecutive pages with nothing new) is what should end
+  a delta, so a busy feed is followed as deep as it is still moving. At
+  `BAMA_WORKER_FETCH_ADS = 500` it was the routine stop instead: 365 runs ended
+  on `max_ads` at exactly 17 pages against 228 on `stale_pages` at ~8.8, i.e.
+  the crawl walked away from a moving feed 62% of the time. Raised to 1500.
+  If runs still stop on `max_ads` often, raise it again — that reading is the
+  signal, not the page count.
+- **Coverage backfill must not stop early on staleness.** Its job is to *prove*
+  a rank range was looked at, not to find new ads; a saturation stop would leave
+  the gap open and `coverage_is_complete` false, which is the same freeze by
+  another route. Only `mode=DELTA` gets the stale-page rule.
 - **Reposts are linked, never merged.** A relist gets a fresh Bama code, so
   `listing_fingerprint` (content identity, price deliberately excluded) ties the
   pair together via `Ad.reposted_from`. Both rows stay; a wrong link is one

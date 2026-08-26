@@ -300,6 +300,11 @@ class FetchRun(models.Model):
         STALE_PAGES = "stale_pages", "Consecutive pages with nothing new"
         MAX_ADS = "max_ads", "Hit the max_ads cap"
         MAX_PAGES = "max_pages", "Hit the page-range end (backfill)"
+        # A confirmed empty page that was too shallow to be believed as the end
+        # of the feed. Distinct from MAX_PAGES because it is an *observation*,
+        # not a budget: `end_is_corroborated` counts these rows to decide when
+        # a persistent disagreement has earned the right to lower the ratchet.
+        END_UNCONFIRMED = "end_unconfirmed", "Empty page too shallow to believe"
         ERROR = "error", "Aborted on an unrecoverable error"
         INTERRUPTED = "interrupted", "Interrupted by the operator"
         # Distinct from ERROR because it is a policy decision by the source, not

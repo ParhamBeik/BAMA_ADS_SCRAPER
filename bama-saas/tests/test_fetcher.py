@@ -458,11 +458,16 @@ def test_delta_that_runs_out_of_feed_reports_end_of_feed():
 
 
 @pytest.mark.django_db
-def test_backfill_empty_page_is_range_end_not_global_feed_end():
+def test_backfill_empty_page_is_recorded_but_not_believed():
+    """An unbelievable empty page is still evidence; it just is not proof yet."""
     run = run_delta([[]], mode="backfill", start_page=20, end_page=20)
 
-    assert run.stop_reason == FetchRun.StopReason.MAX_PAGES
+    assert run.stop_reason == FetchRun.StopReason.END_UNCONFIRMED
     assert run.reached_end is False
+    # Refetched, not the in-memory object: `end_is_corroborated` reads this back
+    # out of Postgres on a *later* run, so an unsaved field would be a silent
+    # no-op that an in-memory assertion happily passes.
+    assert FetchRun.objects.get(pk=run.pk).feed_end_rank == 30 * 20
 
 
 @pytest.mark.django_db
@@ -775,6 +780,18 @@ def _run():
     )
 
 
+def _end_unconfirmed(rank, *, started_at=None):
+    """A run that saw the feed end at ``rank`` and was not believed."""
+    return FetchRun.objects.create(
+        source=FetchRun.Source.LIVE_FETCH,
+        status=FetchRun.Status.SUCCEEDED,
+        mode=FetchRun.Mode.BACKFILL,
+        stop_reason=FetchRun.StopReason.END_UNCONFIRMED,
+        started_at=started_at or djtz.now(),
+        feed_end_rank=rank,
+    )
+
+
 def _cover(run, pages, *, page_size=30, fetched_at=None):
     """Write one PageCoverage row per page index in ``pages``."""
     at = fetched_at or djtz.now()
@@ -990,5 +1007,63 @@ def test_a_spurious_mid_feed_empty_page_cannot_collapse_the_ceiling():
                    start_page=20, end_page=25)
 
     assert run.reached_end is False
-    assert run.feed_end_rank is None
     assert F.known_feed_depth() == 1230
+    # The reading is *recorded* — one disagreement is evidence, not proof — but
+    # `reached_end` stays False, so the ratchet does not see it.
+    assert run.feed_end_rank == 600
+    assert run.stop_reason == FetchRun.StopReason.END_UNCONFIRMED
+
+
+@pytest.mark.django_db
+def test_one_disagreeing_run_is_not_enough_to_lower_the_ceiling():
+    _cover(_run(), [40], fetched_at=djtz.now() - timedelta(days=3))
+    _end_unconfirmed(600)
+
+    assert F.end_is_corroborated(20) is False
+
+
+@pytest.mark.django_db
+def test_repeated_agreement_lowers_the_ceiling():
+    """2026-08-25: the feed really did shrink 17% in one step and every run
+    said so, but each was judged alone and disbelieved forever."""
+    _cover(_run(), [40], fetched_at=djtz.now() - timedelta(days=3))
+    assert F.known_feed_depth() == 1230
+    assert F.end_of_feed_is_credible(20, 40, bounded=True) is False
+
+    # Three *real* runs against a feed that truly ends at page 20, so the whole
+    # loop is exercised: each run must persist its own disbelieved observation
+    # for the next one to be able to count it.
+    def sweep():
+        return run_with(FakeSession(make_feed(20, "W")), mode="backfill",
+                        start_page=20, end_page=25)
+
+    first, second = sweep(), sweep()
+    assert [r.stop_reason for r in (first, second)] == [
+        FetchRun.StopReason.END_UNCONFIRMED] * 2
+    assert F.known_feed_depth() == 1230, "two runs must not be enough"
+
+    third = sweep()
+    assert third.reached_end is True
+    assert third.stop_reason == FetchRun.StopReason.END_OF_FEED
+    assert F.known_feed_depth() == 600
+
+
+@pytest.mark.django_db
+def test_runs_ending_at_different_places_do_not_corroborate_each_other():
+    """Agreement means the same rank, not merely repeated failure."""
+    _cover(_run(), [40], fetched_at=djtz.now() - timedelta(days=3))
+    _end_unconfirmed(600)
+    _end_unconfirmed(900)      # a different page: no agreement
+
+    assert F.end_is_corroborated(20) is False
+
+
+@pytest.mark.django_db
+def test_stale_agreement_expires():
+    """A feed that shrank yesterday and recovered must not still be believed."""
+    _cover(_run(), [40], fetched_at=djtz.now() - timedelta(days=3))
+    old = djtz.now() - timedelta(hours=F.END_AGREEMENT_WINDOW_HOURS + 1)
+    _end_unconfirmed(600, started_at=old)
+    _end_unconfirmed(600, started_at=old)
+
+    assert F.end_is_corroborated(20) is False

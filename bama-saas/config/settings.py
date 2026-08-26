@@ -247,9 +247,20 @@ BAMA_PAGE_PAUSE = float(os.environ.get("BAMA_PAGE_PAUSE", "1.5"))
 BAMA_REQUEST_TIMEOUT = int(os.environ.get("BAMA_REQUEST_TIMEOUT", "20"))
 BAMA_COOKIE = os.environ.get("BAMA_COOKIE", "")
 
-# Per-tick fetch size. Intentionally small: the worker runs every ~15 minutes and
-# only needs the newest pages. Deep coverage comes from the rolling chunk below.
-BAMA_WORKER_FETCH_ADS = int(os.environ.get("BAMA_WORKER_FETCH_ADS", "500"))
+# Per-tick fetch ceiling — a backstop, NOT the intended stop. The delta run is
+# meant to end on `max_stale_pages` consecutive pages carrying nothing new, so
+# that a busy feed is followed as deep as it is still moving and a quiet one
+# costs almost nothing.
+#
+# At 500 it was not a backstop, it was the routine stop: over 7 days production
+# ended 365 delta runs on `max_ads` at exactly 17 pages against 228 on
+# `stale_pages` at ~8.8. That is the saturation rule being pre-empted 62% of the
+# time — the crawl walking away from a feed that was still yielding new ads.
+#
+# 1500 (50 pages) sits well past where a quiet feed saturates while bounding a
+# busy tick to ~2.5 min, comfortably inside the ~15 min cadence. Raise it if
+# runs still stop on `max_ads` often; lower it if bama.ir starts refusing.
+BAMA_WORKER_FETCH_ADS = int(os.environ.get("BAMA_WORKER_FETCH_ADS", "1500"))
 # How far down the feed each rolling coverage tick walks, so full coverage
 # accumulates across many short runs instead of relying on one ~936-page sweep.
 BAMA_COVERAGE_CHUNK_PAGES = int(os.environ.get("BAMA_COVERAGE_CHUNK_PAGES", "120"))

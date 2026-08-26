@@ -387,6 +387,25 @@ MIN_END_OF_FEED_DEPTH_RATIO = 0.5
 BOUNDED_END_SHORTFALL_RATIO = 0.05
 MIN_BOUNDED_END_SHORTFALL_PAGES = 1
 
+# ...but a shortfall the ratio rejects can still be true, and on 2026-08-25 it
+# was: adding `image=1&priced=1` to the data request shortened the feed from
+# ~34,500 ads to ~28,710 in one step. That is a 192-page shortfall against a
+# 57-page tolerance, so every coverage run walked to page 957, got a confirmed
+# empty page, was disbelieved, and recorded nothing — leaving 5,700 ranks
+# permanently "uncovered" and freezing removal detection for a day.
+#
+# The bar was not wrong; nothing could ever clear it. Measured day-over-day feed
+# drift is under 1% (29,121 -> 35,000 across August, reversing some days), so
+# several independent runs agreeing on the same ending rank cannot be noise —
+# whereas one spurious empty page reads exactly like the 2026-08-16 blip the
+# ratio exists to reject. Agreement, not size, is what earns belief.
+#
+# Deliberately narrow: corroboration only *lowers* an existing ceiling. A cold
+# database still cannot be taught a depth by empty pages alone.
+END_AGREEMENT_RUNS = 3            # including the run asking
+END_AGREEMENT_RATIO = 0.01        # "the same place" = within 1% of each other
+END_AGREEMENT_WINDOW_HOURS = 6
+
 # Delta depth floor. Measured churn is ~1.5 new ads/min; after downtime we scan
 # at least deep enough to cover what landed while we were away.
 CHURN_ADS_PER_MIN = 1.5
@@ -638,6 +657,33 @@ def end_of_feed_is_credible(depth_reached: int, expected_depth: int | None,
     return expected_depth - depth_reached <= tolerance
 
 
+def end_is_corroborated(depth_reached: int) -> bool:
+    """Have enough recent runs independently ended at this same rank?
+
+    The escape hatch for a feed that genuinely shrank further than
+    ``end_of_feed_is_credible`` will accept on one reading. Kept out of that
+    function so it stays pure and unit-testable on plain integers; this one
+    needs the database.
+
+    Counts only ``END_UNCONFIRMED`` rows — a run that was already believed moved
+    the ratchet, so it would not be asking.
+    """
+    rank = PAGE_SIZE * depth_reached
+    if rank <= 0:
+        return False
+    since = djtz.now() - timedelta(hours=END_AGREEMENT_WINDOW_HOURS)
+    band = max(1, round(rank * END_AGREEMENT_RATIO))
+    agreeing = FetchRun.objects.filter(
+        source=FetchRun.Source.LIVE_FETCH,
+        stop_reason=FetchRun.StopReason.END_UNCONFIRMED,
+        started_at__gte=since,
+        feed_end_rank__gte=rank - band, feed_end_rank__lte=rank + band,
+    ).count()
+    # `agreeing` excludes the asking run, whose row is still RUNNING and carries
+    # no stop_reason yet — hence the -1.
+    return agreeing >= END_AGREEMENT_RUNS - 1
+
+
 def _delta_floor_pages(now: datetime) -> int:
     """Minimum pages a delta run should read, from the newest coverage row.
 
@@ -781,8 +827,13 @@ def _fetch_live(*, mode: str = "delta", max_ads: int | None = None,
                     # without a yardstick.
                     credible = (
                         (expected_depth is not None or mode == FetchRun.Mode.FULL)
-                        and end_of_feed_is_credible(
-                            page, expected_depth, bounded=mode != FetchRun.Mode.FULL
+                        and (
+                            end_of_feed_is_credible(
+                                page, expected_depth, bounded=mode != FetchRun.Mode.FULL
+                            )
+                            # ...or too shallow on its own evidence, but several
+                            # recent runs independently found the same ending.
+                            or end_is_corroborated(page)
                         )
                     )
                     if credible:
@@ -796,13 +847,23 @@ def _fetch_live(*, mode: str = "delta", max_ads: int | None = None,
                             "as the end of the feed."
                         )
                         stop_reason = FetchRun.StopReason.ERROR
+                    elif mode == FetchRun.Mode.DELTA:
+                        # A delta that ran out of new ads. It is bounded by
+                        # max_ads far above the feed's end, so its empty page
+                        # says nothing about depth. Local stop signal only.
+                        stop_reason = FetchRun.StopReason.END_OF_FEED
                     else:
-                        # Too shallow to be the end of the feed — a delta that
-                        # ran out of new ads, or a backfill range that simply
-                        # finished. A local stop signal and nothing more.
-                        stop_reason = (FetchRun.StopReason.END_OF_FEED
-                                       if mode == FetchRun.Mode.DELTA
-                                       else FetchRun.StopReason.MAX_PAGES)
+                        # Too shallow to believe on this run's own evidence —
+                        # but record *what we saw*, because a feed that really
+                        # shrank keeps producing this same reading and
+                        # `end_is_corroborated` counts these rows. Discarding
+                        # the observation is what made the 2026-08-25 stall
+                        # unrecoverable: the ratchet had no route down.
+                        #
+                        # `reached_end` stays False, so `known_feed_depth` still
+                        # ignores this run until agreement promotes a later one.
+                        run.feed_end_rank = PAGE_SIZE * page
+                        stop_reason = FetchRun.StopReason.END_UNCONFIRMED
                     break
 
                 resume_page = page
