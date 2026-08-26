@@ -452,10 +452,11 @@ def test_deal_scores_return_envelope_with_evidence(api_client, catalog):
             "age_days": 3,
         },
     )
-    # band=all, because this test is about the envelope, not about freshness:
-    # the default band windows on publish_at against the real clock, which the
-    # fixture's fixed dates would fall outside of as soon as the suite is a
-    # month old.
+    # band=all still recency-windows; pin this ad to now so the envelope
+    # test is not hostage to the fixture's July dates.
+    from django.utils import timezone
+    ad.publish_at = timezone.now()
+    ad.save(update_fields=["publish_at"])
     resp = api_client.get("/api/analytics/deal-scores/?band=all&limit=10")
     assert resp.status_code == 200, resp.content
     body = resp.json()
@@ -474,7 +475,12 @@ def test_deal_scores_return_envelope_with_evidence(api_client, catalog):
 
 @pytest.mark.django_db
 def test_deal_scores_price_bounds(api_client, catalog):
+    from django.utils import timezone
+
     cheap, pricey = catalog["ads"][0], catalog["ads"][7]  # 1.00bn vs 1.14bn
+    Ad.objects.filter(code__in=(cheap.code, pricey.code)).update(
+        publish_at=timezone.now(),
+    )
     for ad, score in ((cheap, 10.0), (pricey, 20.0)):
         DealScoreCache.objects.create(
             ad=ad, score=score, discount_pct=score, peer_median=1_200_000_000,
@@ -507,6 +513,11 @@ def test_deal_scores_exclude_unclear_price_basis(api_client, catalog):
 
 @pytest.mark.django_db
 def test_deal_score_pagination_is_stable_when_scores_tie(api_client, catalog):
+    from django.utils import timezone
+
+    Ad.objects.filter(code__in=[ad.code for ad in catalog["ads"]]).update(
+        publish_at=timezone.now(),
+    )
     for ad in catalog["ads"]:
         DealScoreCache.objects.create(
             ad=ad,

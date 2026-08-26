@@ -156,7 +156,9 @@ def test_hot_cadence_skips_warm_steps(stub_jobs):
     report = P.run(cadence="hot", skip_fetch=True)
 
     assert "episodes" not in seen and "snapshot" not in seen
-    assert [s.name for s in report.steps] == ["mark_inactive", "deal_scores", "notify"]
+    assert [s.name for s in report.steps] == [
+        "mark_inactive", "deal_scores", "probe_sold", "notify",
+    ]
 
 
 @pytest.mark.django_db
