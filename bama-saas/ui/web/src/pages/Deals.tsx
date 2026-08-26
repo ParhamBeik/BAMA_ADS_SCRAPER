@@ -352,6 +352,10 @@ export function Deals() {
     model: filters.get("model"),
     price_min: filters.get("price_min"),
     price_max: filters.get("price_max"),
+    year_min: filters.get("year_min"),
+    year_max: filters.get("year_max"),
+    mileage_min: filters.get("mileage_min"),
+    mileage_max: filters.get("mileage_max"),
     confidence: filters.get("confidence"),
   };
 
@@ -393,8 +397,9 @@ export function Deals() {
         {band === "all" && (
           <>
             همه آگهی‌های زیر میانه قیمت آگهی‌های مشابه، تا سقف{" "}
-            <b>{w?.ceiling_pct ?? "—"}٪</b>. گروه‌بندی بر پایه تازگی آگهی است و
-            میزان تخفیف تنها ترتیب درون هر گروه را تعیین می‌کند.
+            <b>{w?.ceiling_pct ?? "—"}٪</b>، در همان بازه{" "}
+            <b>{w?.window_days ?? "—"} روزه</b>. گروه‌بندی بر پایه تازگی آگهی
+            است و میزان تخفیف تنها ترتیب درون هر گروه را تعیین می‌کند.
           </>
         )}
         {band === "review" && (
@@ -485,7 +490,7 @@ export function Deals() {
                           </Link>
                           {d.condition_flagged && (
                             <div className="badge warn" style={{ marginTop: 4 }}>
-                              <AlertTriangle size={11} /> توضیحات وضعیت را بخوانید
+                              <AlertTriangle size={11} /> {d.body_status || "توضیحات وضعیت را بخوانید"}
                             </div>
                           )}
                         </td>

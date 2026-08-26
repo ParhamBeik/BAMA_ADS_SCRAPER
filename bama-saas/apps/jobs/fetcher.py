@@ -465,6 +465,26 @@ def fetch_ad_page(session: requests.Session, url: str, request_timeout: int
     return response.status_code, response.text or ""
 
 
+def fetch_ad_page_with_backoff(session: requests.Session, url: str,
+                               request_timeout: int) -> tuple[int, str]:
+    """``fetch_ad_page`` with the same Retry-After-aware backoff as the feed."""
+    delay = BACKOFF_BASE
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            return fetch_ad_page(session, url, request_timeout)
+        except Exception as exc:  # noqa: BLE001
+            if attempt >= MAX_RETRIES or not _retryable(exc):
+                raise
+            sleep_for = backoff_delay(exc, delay)
+            logger.warning(
+                "event=bama_detail_retry attempt=%d delay_s=%.1f error=%s",
+                attempt + 1, sleep_for, exc,
+            )
+            time.sleep(sleep_for)
+            delay = min(delay * 2, BACKOFF_CAP)
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
 def fetch_page(session: requests.Session, page: int, request_timeout: int) -> list[dict[str, Any]]:
     """One page, with banner rows dropped."""
     response = session.get(f"{SEARCH_URL}?pageIndex={page}&{FEED_FILTERS}",

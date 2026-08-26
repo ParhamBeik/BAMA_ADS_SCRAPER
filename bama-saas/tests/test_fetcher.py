@@ -1075,3 +1075,21 @@ def test_a_410_detail_page_is_sold():
     assert F.detail_says_sold(410, "")
     assert F.detail_says_sold(200, "این آگهی فروخته شد!")
     assert not F.detail_says_sold(200, "چری آریزو 5T IE فروشی امروز چهارشنبه")
+
+
+def test_403_on_a_detail_page_is_not_retried():
+    """A WAF block on a sold probe must trip the gate, not hammer the listing."""
+    class DetailSession:
+        def __init__(self):
+            self.n = 0
+
+        def get(self, url, timeout=None, headers=None):
+            self.n += 1
+            resp = requests.Response()
+            resp.status_code = 403
+            return resp
+
+    session = DetailSession()
+    with pytest.raises(requests.HTTPError):
+        F.fetch_ad_page_with_backoff(session, "https://bama.ir/cad/x", 5)
+    assert session.n == 1

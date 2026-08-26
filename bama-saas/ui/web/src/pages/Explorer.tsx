@@ -47,6 +47,7 @@ interface AdRow {
   mileage: number | null;
   current_price: number | null;
   city_name: string;
+  body_status?: string;
   cohort_flags: string[];
   image_url?: string;
   bama_url?: string;
@@ -98,9 +99,9 @@ function AdWarnings({ ad }: { ad: AdRow }) {
       {ad.condition_flagged && (
         <span
           className="badge warn"
-          title="توضیحات آگهی به تصادف، پلاک منطقه آزاد یا وضعیت بدنه اشاره کرده است"
+          title={ad.body_status || "توضیحات آگهی به تصادف، پلاک منطقه آزاد یا وضعیت بدنه اشاره کرده است"}
         >
-          <AlertTriangle size={11} /> وضعیت بدنه
+          <AlertTriangle size={11} /> {ad.body_status || "وضعیت بدنه"}
         </span>
       )}
       {flag && (
@@ -130,10 +131,13 @@ export function Explorer() {
     price_max: filters.get("price_max"),
     year_min: filters.get("year_min"),
     year_max: filters.get("year_max"),
+    mileage_min: filters.get("mileage_min"),
     mileage_max: filters.get("mileage_max"),
     transmission: filters.get("transmission"),
     fuel: filters.get("fuel"),
     body_type: filters.get("body_type"),
+    condition: filters.get("condition"),
+    seller_type: filters.get("seller_type"),
   };
 
   const ads = useQuery({

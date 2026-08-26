@@ -256,6 +256,7 @@ export function Control() {
             const rows = showAllRuns ? data.recent : data.recent.slice(0, RECENT_RUNS_COLLAPSED);
             return (
               <>
+                <div className="table-wrap">
                 <table className="table inspect-table">
                   <thead>
                     <tr><th>started_at</th><th>name</th><th>status</th><th>detail</th></tr>
@@ -271,6 +272,7 @@ export function Control() {
                     ))}
                   </tbody>
                 </table>
+                </div>
                 {!showAllRuns && data.recent.length > RECENT_RUNS_COLLAPSED && (
                   <p className="stat-sub" style={{ marginTop: 8 }}>
                     {data.recent.length - RECENT_RUNS_COLLAPSED} اجرای دیگر پنهان است.
@@ -286,6 +288,7 @@ export function Control() {
         <Async query={health}>
           {(data) => (
             <>
+              <div className="table-wrap">
               <table className="table inspect-table">
                 <tbody>
                   <tr><th>ads</th><td>{n(data.catalog.ads)}</td></tr>
@@ -302,7 +305,9 @@ export function Control() {
                   <tr><th>migrations_applied</th><td>{n(data.database.migrations_applied)}</td></tr>
                 </tbody>
               </table>
+              </div>
               {data.catalog.reject_rules_24h?.length > 0 && (
+                <div className="table-wrap">
                 <table className="table inspect-table">
                   <thead><tr><th>reject rule (24h)</th><th>n</th></tr></thead>
                   <tbody>
@@ -314,6 +319,7 @@ export function Control() {
                     ))}
                   </tbody>
                 </table>
+                </div>
               )}
             </>
           )}

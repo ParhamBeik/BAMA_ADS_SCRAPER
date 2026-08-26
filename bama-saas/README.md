@@ -95,14 +95,14 @@ Cadences bundle jobs; a job name runs that job alone.
 
 | Cadence | Jobs | Worker interval |
 | --- | --- | --- |
-| `hot` | fetch → mark_inactive → deal_scores → notify | 15 min |
+| `hot` | fetch → mark_inactive → deal_scores → probe_sold → notify | 15 min |
 | `coverage` | coverage | 10 min |
 | `warm` | episodes → snapshot → market_index | 30 min |
 | `maintenance` | deal_scores → backfill_images → prune → health | 6 h |
 | `full` | every hot + warm step, full deal rebuild | on demand |
 
 Jobs: `fetch`, `mark_inactive`, `episodes`, `snapshot`, `market_index`,
-`deal_scores`, `notify`, `coverage`, `backfill_images`, `prune`, `health`,
+`deal_scores`, `probe_sold`, `notify`, `coverage`, `backfill_images`, `prune`, `health`,
 `reap_orphans`.
 Every step writes a `JobRun` row, so "did last night's snapshot run?" is a
 query rather than a log excavation. A step whose declared prerequisite failed is

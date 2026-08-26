@@ -40,11 +40,12 @@ from apps.jobs.fetcher import (
     FIRST_PAGE,
     PAGE_SIZE,
     CrawlBlocked,
+    _fetch_lease,
     check_gate,
     coverage_is_complete,
     create_session,
     detail_says_sold,
-    fetch_ad_page,
+    fetch_ad_page_with_backoff,
     fetch_live,
     fetch_page_with_backoff,
     find_gaps,
@@ -548,47 +549,49 @@ def probe_sold() -> dict:
         status=FetchRun.Status.RUNNING,
         started_at=now,
     )
-    session = create_session()
-    timeout = settings.BAMA_REQUEST_TIMEOUT
-    warmup(session, timeout)
-
     sold: list[Ad] = []
     probed = 0
     skipped_recent = 0
     try:
-        for row in qs.iterator(chunk_size=50):
-            if probed >= SOLD_PROBE_BATCH:
-                break
-            key = SOLD_PROBE_KEY.format(code=row.ad_id)
-            if cache.get(key):
-                skipped_recent += 1
-                continue
-            url = absolute_ad_url(row.ad.url or row.ad.canonical_path)
-            if not url:
-                continue
-            try:
-                status, body = fetch_ad_page(session, url, timeout)
-            except Exception as exc:
-                if is_waf_block(exc):
-                    run.status = FetchRun.Status.FAILED
-                    run.stop_reason = FetchRun.StopReason.BLOCKED
-                    run.error = str(exc)[:4000]
-                    run.finished_at = timezone.now()
-                    run.save(update_fields=[
-                        "status", "stop_reason", "error", "finished_at",
-                    ])
-                    raise CrawlBlocked(str(exc)) from exc
-                raise
-            probed += 1
-            cache.set(key, 1, SOLD_PROBE_TTL)
-            if not detail_says_sold(status, body):
-                continue
-            ad = row.ad
-            ad.status = Ad.Status.REMOVED
-            ad.removed_at = now
-            ad.likely_reason = Ad.Reason.SOLD
-            ad.reason_confidence = Ad.Confidence.HIGH
-            sold.append(ad)
+        with _fetch_lease():
+            session = create_session(settings.BAMA_COOKIE or None)
+            timeout = settings.BAMA_REQUEST_TIMEOUT
+            warmup(session, timeout)
+            for row in qs.iterator(chunk_size=50):
+                if probed >= SOLD_PROBE_BATCH:
+                    break
+                key = SOLD_PROBE_KEY.format(code=row.ad_id)
+                if cache.get(key):
+                    skipped_recent += 1
+                    continue
+                url = absolute_ad_url(row.ad.url or row.ad.canonical_path)
+                if not url:
+                    continue
+                try:
+                    status, body = fetch_ad_page_with_backoff(
+                        session, url, timeout,
+                    )
+                except Exception as exc:
+                    if is_waf_block(exc):
+                        run.status = FetchRun.Status.FAILED
+                        run.stop_reason = FetchRun.StopReason.BLOCKED
+                        run.error = str(exc)[:4000]
+                        run.finished_at = timezone.now()
+                        run.save(update_fields=[
+                            "status", "stop_reason", "error", "finished_at",
+                        ])
+                        raise CrawlBlocked(str(exc)) from exc
+                    raise
+                probed += 1
+                cache.set(key, 1, SOLD_PROBE_TTL)
+                if not detail_says_sold(status, body):
+                    continue
+                ad = row.ad
+                ad.status = Ad.Status.REMOVED
+                ad.removed_at = now
+                ad.likely_reason = Ad.Reason.SOLD
+                ad.reason_confidence = Ad.Confidence.HIGH
+                sold.append(ad)
 
         if sold:
             Ad.objects.bulk_update(

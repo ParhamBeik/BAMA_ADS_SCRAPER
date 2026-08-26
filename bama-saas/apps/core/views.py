@@ -451,13 +451,14 @@ def deal_scores(request):
 
     * ``top`` (default) — inside ``deal_window()``: recent enough, and in the
       better part of that window's own discount distribution. Both thresholds
-      are measured from the current board, not hardcoded, so a quiet day widens
-      the window instead of showing three cars.
-    * ``all`` — everything at or below the trusted ceiling, no window, no floor.
-    * ``review`` — above the ceiling. Not hidden, but not recommended either:
-      past ~25% the gap is an attribute the cohort key cannot see far more
-      often than it is a bargain. Ranked by discount, since that is the thing
-      being reviewed.
+      are measured from the current board, not hardcoded, so a quiet day is a
+      short board rather than a month of stale listings.
+    * ``all`` — everything at or below the trusted ceiling, same recency
+      window, no discount floor.
+    * ``review`` — above the ceiling, same recency window. Not hidden, but not
+      recommended either: past ~25% the gap is an attribute the cohort key
+      cannot see far more often than it is a bargain. Ranked by discount, since
+      that is the thing being reviewed.
 
     Returns ``count`` alongside ``results``: the cache holds ~9,800 rows and the
     screen used to show a hard-coded top 50 with no way forward, which put every
@@ -467,8 +468,12 @@ def deal_scores(request):
     try:
         model = _opt(params, "model", int)
         year = _opt(params, "year", int)
+        year_min = _opt(params, "year_min", int)
+        year_max = _opt(params, "year_max", int)
         price_min = _opt(params, "price_min", int)
         price_max = _opt(params, "price_max", int)
+        mileage_min = _opt(params, "mileage_min", int)
+        mileage_max = _opt(params, "mileage_max", int)
         limit = max(1, min(_opt(params, "limit", int) or 50, 200))
         offset = max(0, _opt(params, "offset", int) or 0)
     except ValueError as exc:
@@ -496,8 +501,12 @@ def deal_scores(request):
         "ad__model__brand__slug": params.get("brand") or None,
         "ad__model_id": model,
         "ad__year_jalali": year,
+        "ad__year_jalali__gte": year_min,
+        "ad__year_jalali__lte": year_max,
         "ad__current_price__gte": price_min,
         "ad__current_price__lte": price_max,
+        "ad__mileage__gte": mileage_min,
+        "ad__mileage__lte": mileage_max,
     }
     qs = qs.filter(**{k: v for k, v in filters.items() if v is not None})
 
