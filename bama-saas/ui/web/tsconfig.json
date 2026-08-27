@@ -6,6 +6,7 @@
     "module": "esnext",
     "moduleResolution": "bundler",
     "moduleDetection": "force",
+    "paths": { "@/*": ["./src/*"] },
     "jsx": "react-jsx",
     "verbatimModuleSyntax": true,
     "allowImportingTsExtensions": true,

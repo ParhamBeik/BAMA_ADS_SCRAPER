@@ -14,11 +14,14 @@ from datetime import date, timedelta
 
 import pytest
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.core.models import (
+    Ad,
     Brand,
     DailyInventorySnapshot,
+    ListingEpisode,
     MarketIndex,
     Model,
     Variant,
@@ -26,9 +29,15 @@ from apps.core.models import (
 from apps.core.research import (
     BASE_VALUE,
     MIN_COHORT_ADS,
+    MIN_DISTRIBUTION_ADS,
+    MOVER_MIN_DAYS,
+    TURNOVER_MIN_EPISODES,
     build_index,
     cohort_series,
     compute_index,
+    movers,
+    price_distribution,
+    turnover,
 )
 
 D0 = date(2026, 8, 1)
@@ -233,3 +242,305 @@ def test_market_index_endpoint(cohorts):
     # A non-market scope without ?id is a client error, not an empty series.
     assert client.get(url, {"scope": "brand"}).status_code == 400
     assert client.get(url, {"scope": "nonsense"}).status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Narrowing below the persisted scopes
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_cohort_series_narrows_to_one_trim_and_year(cohorts):
+    """Unit: the filter that makes a trim-level index possible at all.
+
+    Pure queryset arithmetic over snapshot rows, so the cheapest test that can
+    fail is one that writes those rows and reads the grouping back.
+
+    Two trims and two model years of the same model exist. Asking for one trim
+    must leave one cohort per date, and asking for the wrong year must leave
+    none — an empty series, not a series quietly built from the other year.
+    """
+    model, cheap, dear = cohorts["model"], cohorts["cheap"], cohorts["dear"]
+    _snap(model, cheap, D0, price=500_000_000, count=10, year=1399)
+    _snap(model, dear, D0, price=900_000_000, count=10, year=1399)
+    _snap(model, cheap, D0, price=600_000_000, count=10, year=1400)
+
+    everything = cohort_series(MarketIndex.Scope.MODEL, str(model.pk))
+    assert len(everything[D0]) == 3
+
+    one_trim = cohort_series(MarketIndex.Scope.MODEL, str(model.pk), variant_id=cheap.pk)
+    assert len(one_trim[D0]) == 2  # same trim, two model years
+
+    one_cohort = cohort_series(
+        MarketIndex.Scope.MODEL, str(model.pk), variant_id=cheap.pk, year_jalali=1400,
+    )
+    assert list(one_cohort[D0].values()) == [(600_000_000, 10)]
+
+    assert cohort_series(
+        MarketIndex.Scope.MODEL, str(model.pk), variant_id=dear.pk, year_jalali=1400,
+    ) == {}
+
+
+# ---------------------------------------------------------------------------
+# Movers
+# ---------------------------------------------------------------------------
+
+def _index_row(scope, scope_id, on, value, *, cohorts_n=8, ads=40):
+    return MarketIndex.objects.create(
+        scope=scope, scope_id=scope_id, date=on, index_value=value,
+        return_pct=None, cohort_count=cohorts_n, ad_count=ads,
+    )
+
+
+@pytest.mark.django_db
+def test_movers_ranks_by_change_and_splits_on_sign(db):
+    """Unit: ranking is over stored index rows, so this writes them directly.
+
+    Three models: one up 20%, one down 10%, one flat. A model that rose must
+    never appear among the fallers — slicing the two ends of a sorted list would
+    put the flat one there, and with fewer scopes than the limit it would put
+    the *riser* there too.
+    """
+    today = timezone.now().date()
+    for offset in range(5):
+        on = today - timedelta(days=4 - offset)
+        _index_row(MarketIndex.Scope.MODEL, "1", on, 100.0 + offset * 5)   # +20%
+        _index_row(MarketIndex.Scope.MODEL, "2", on, 100.0 - offset * 2.5)  # -10%
+        _index_row(MarketIndex.Scope.MODEL, "3", on, 100.0)                 # flat
+
+    result = movers(MarketIndex.Scope.MODEL, days=30, limit=10)
+    assert result["available"] is True
+    assert result["scopes_ranked"] == 3
+
+    assert [r["scope_id"] for r in result["risers"]] == ["1"]
+    assert result["risers"][0]["change_pct"] == pytest.approx(20.0)
+    assert [r["scope_id"] for r in result["fallers"]] == ["2"]
+    assert result["fallers"][0]["change_pct"] == pytest.approx(-10.0)
+
+    # The sample behind the move rides along, because a move off three cohorts
+    # and a move off forty are not the same claim.
+    assert result["risers"][0]["cohort_count"] == 8
+    assert result["risers"][0]["ad_count"] == 40
+    assert result["risers"][0]["series"] == [100.0, 105.0, 110.0, 115.0, 120.0]
+
+
+@pytest.mark.django_db
+def test_movers_refuses_a_scope_with_too_little_history(db):
+    """Two dates is a gap between two days, not a trend."""
+    today = timezone.now().date()
+    for offset in range(MOVER_MIN_DAYS - 1):
+        _index_row(MarketIndex.Scope.MODEL, "1", today - timedelta(days=offset), 100.0 + offset)
+
+    assert movers(MarketIndex.Scope.MODEL, days=30)["available"] is False
+
+
+@pytest.mark.django_db
+def test_movers_ignores_dates_outside_the_window(db):
+    """The window is applied to the stored dates, not assumed to be the series.
+
+    A scope whose series runs far back must be measured across the requested
+    window only — otherwise every "30 day" figure silently reports all of
+    history, which is the same bug the market-index window clamp exists for.
+    """
+    today = timezone.now().date()
+    for offset in range(40):
+        on = today - timedelta(days=39 - offset)
+        # Doubles over the first ten days, then holds perfectly flat.
+        _index_row(MarketIndex.Scope.MODEL, "1", on, 100.0 + min(offset, 10) * 10)
+
+    windowed = movers(MarketIndex.Scope.MODEL, days=7)
+    assert windowed["available"] is True
+    # Nothing moved inside the last seven days, so there is no riser to report.
+    assert windowed["risers"] == []
+    assert windowed["scopes_ranked"] == 1
+
+    lifetime = movers(MarketIndex.Scope.MODEL, days=365)
+    assert lifetime["risers"][0]["change_pct"] == pytest.approx(100.0)
+
+
+# ---------------------------------------------------------------------------
+# Turnover: how fast a model's listings leave the feed
+# ---------------------------------------------------------------------------
+
+def _episode(ad, *, started, ended=None):
+    return ListingEpisode.objects.create(ad=ad, started_at=started, ended_at=ended)
+
+
+def _ad(model, code, *, brand):
+    return Ad.objects.create(
+        code=code, brand=brand, model=model, title=code,
+        year_jalali=1399, current_price=1_000_000_000,
+        publish_at=timezone.now(), last_seen_at=timezone.now(),
+    )
+
+
+@pytest.fixture
+def episode_model(cohorts, settings):
+    """A model plus a clean-start cut old enough not to be the thing under test.
+
+    `BAMA_EPISODE_CLEAN_START` is a real production date (episodes before it
+    measured the sweep schedule rather than the market). Left at its real value
+    these tests would pass or fail depending on how long ago that date was,
+    which is a calendar test, not a turnover one.
+    """
+    settings.BAMA_EPISODE_CLEAN_START = "2020-01-01"
+    return cohorts["model"], cohorts["brand"]
+
+
+@pytest.mark.django_db
+def test_turnover_only_counts_listings_that_had_the_full_window(episode_model):
+    """Unit: the rule that makes this number comparable at all.
+
+    Twenty listings started 60 days ago and half of them left inside 30 days, so
+    the rate is 50%. Twenty more started *yesterday* and none have left. Counting
+    those would halve the rate by adding cars that have not had a chance to go —
+    the same one-directional error a mean over finished listings makes, from the
+    other end.
+    """
+    model, brand = episode_model
+    now = timezone.now()
+    for i in range(20):
+        ad = _ad(model, f"old{i}", brand=brand)
+        _episode(ad, started=now - timedelta(days=60),
+                 ended=now - timedelta(days=40) if i < 10 else None)
+    for i in range(20):
+        _episode(_ad(model, f"new{i}", brand=brand), started=now - timedelta(days=1))
+
+    result = turnover(days=30)
+    assert result["available"] is True
+    row = result["fastest"][0]
+    assert row["n"] == 20, "the twenty listings started yesterday are not eligible yet"
+    assert row["left_within_window"] == 10
+    assert row["left_pct"] == pytest.approx(50.0)
+
+
+@pytest.mark.django_db
+def test_turnover_excludes_departures_after_the_window(episode_model):
+    """A listing that took 45 days to go did not leave within 30."""
+    model, brand = episode_model
+    now = timezone.now()
+    for i in range(20):
+        ad = _ad(model, f"slow{i}", brand=brand)
+        _episode(ad, started=now - timedelta(days=90), ended=now - timedelta(days=45))
+
+    assert turnover(days=30)["fastest"][0]["left_pct"] == pytest.approx(0.0)
+    # The same listings, measured over a window they do fit inside.
+    assert turnover(days=60)["fastest"][0]["left_pct"] == pytest.approx(100.0)
+
+
+@pytest.mark.django_db
+def test_turnover_is_unavailable_until_the_clean_window_is_long_enough(
+    cohorts, settings,
+):
+    """The window has to fit inside the trustworthy history, or there is nothing
+    to measure.
+
+    Removal dates before the clean-start cut record when the crawler managed a
+    full sweep, not when cars left, so they are excluded. Until that cut is more
+    than `days` old, no listing can have completed the window — and the honest
+    answer is "not yet", not a rate computed from whatever survived.
+    """
+    model, brand = cohorts["model"], cohorts["brand"]
+    now = timezone.now()
+    settings.BAMA_EPISODE_CLEAN_START = (now - timedelta(days=10)).date().isoformat()
+    for i in range(30):
+        _episode(_ad(model, f"recent{i}", brand=brand), started=now - timedelta(days=5))
+
+    result = turnover(days=30)
+    assert result["available"] is False
+    # Distinct from "too few listings": this one says the window is the problem,
+    # so the screen can suggest a shorter one instead of implying no data.
+    assert result["reason"] == "window_exceeds_clean_history"
+    assert result["clean_days"] == 10
+
+    # The same listings, over a window that does fit inside clean history.
+    assert turnover(days=3)["available"] is True
+
+
+@pytest.mark.django_db
+def test_turnover_refuses_a_model_with_too_few_episodes(episode_model):
+    model, brand = episode_model
+    now = timezone.now()
+    for i in range(TURNOVER_MIN_EPISODES - 1):
+        _episode(_ad(model, f"thin{i}", brand=brand), started=now - timedelta(days=60))
+
+    assert turnover(days=30)["available"] is False
+
+
+# ---------------------------------------------------------------------------
+# Price distribution
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_price_distribution_reports_percentiles_and_bounds_the_histogram(cohorts):
+    """Unit: percentiles and bucketing over rows written directly.
+
+    Twenty cars evenly spread, plus one typo listing at 5.8 trillion. The typo
+    must show up in `max` and be counted above the band — and must not be
+    allowed to define the histogram's range, or every real car lands in bucket
+    one and the chart says nothing.
+    """
+    model, brand = cohorts["model"], cohorts["brand"]
+    for i in range(20):
+        Ad.objects.create(
+            code=f"d{i}", brand=brand, model=model, title=f"d{i}",
+            year_jalali=1399, current_price=1_000_000_000 + i * 50_000_000,
+            publish_at=timezone.now(), last_seen_at=timezone.now(),
+        )
+    Ad.objects.create(
+        code="typo", brand=brand, model=model, title="typo", year_jalali=1399,
+        current_price=5_800_000_000_000,
+        publish_at=timezone.now(), last_seen_at=timezone.now(),
+    )
+
+    result = price_distribution(model_id=model.pk)
+    assert result["available"] is True
+    assert result["distribution"]["count"] == 21
+    assert result["distribution"]["max"] == 5_800_000_000_000
+    # p90 is a real car, not the typo.
+    assert result["distribution"]["p90"] < 2_000_000_000
+
+    histogram = result["histogram"]
+    assert histogram["to"] == result["distribution"]["p90"]
+    assert histogram["above"] >= 1, "the typo is counted outside the band, not hidden"
+    assert sum(b["n"] for b in histogram["buckets"]) + histogram["above"] \
+        + histogram["below"] == 21
+    # A real spread, not everything crushed into one bar.
+    assert sum(1 for b in histogram["buckets"] if b["n"]) > 1
+
+
+@pytest.mark.django_db
+def test_price_distribution_drops_installment_ads(cohorts):
+    """A down payment is not a car's price, and would fake a cheap cluster."""
+    model, brand = cohorts["model"], cohorts["brand"]
+    for i in range(20):
+        Ad.objects.create(
+            code=f"cash{i}", brand=brand, model=model, title=f"cash{i}",
+            year_jalali=1399, current_price=1_000_000_000 + i * 10_000_000,
+            publish_at=timezone.now(), last_seen_at=timezone.now(),
+        )
+    for i in range(10):
+        Ad.objects.create(
+            code=f"credit{i}", brand=brand, model=model, title=f"credit{i}",
+            year_jalali=1399, current_price=200_000_000,
+            price_type="installment",
+            publish_at=timezone.now(), last_seen_at=timezone.now(),
+        )
+
+    result = price_distribution(model_id=model.pk)
+    assert result["distribution"]["count"] == 20
+    assert result["distribution"]["min"] >= 1_000_000_000
+
+
+@pytest.mark.django_db
+def test_price_distribution_refuses_a_scope_that_is_too_thin(cohorts):
+    model, brand = cohorts["model"], cohorts["brand"]
+    for i in range(MIN_DISTRIBUTION_ADS - 1):
+        Ad.objects.create(
+            code=f"few{i}", brand=brand, model=model, title=f"few{i}",
+            year_jalali=1399, current_price=1_000_000_000,
+            publish_at=timezone.now(), last_seen_at=timezone.now(),
+        )
+
+    result = price_distribution(model_id=model.pk)
+    assert result["available"] is False
+    assert result["reason"] == "insufficient_listings"

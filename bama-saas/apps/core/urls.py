@@ -32,6 +32,15 @@ urlpatterns = [
     path("analytics/market-index/", views.market_index, name="market-index"),
     path("analytics/overview/", views.overview_view, name="market-overview-public"),
 
+    # The market pulse. All four are arithmetic over rows the warm tick already
+    # writes; none of them add crawl load.
+    path("analytics/movers/", views.movers_view, name="movers"),
+    path("analytics/turnover/", views.turnover_view, name="turnover"),
+    path("analytics/arrivals/", views.arrivals_view, name="arrivals"),
+    path("analytics/distribution/", views.distribution_view, name="distribution"),
+    # Finer than the three persisted index scopes, so computed per request.
+    path("analytics/movement/", views.movement_view, name="movement"),
+
     path("research/liquidity/<int:model_id>/", views.liquidity_view, name="liquidity"),
     path("research/depreciation/<int:model_id>/", views.depreciation_view, name="depreciation"),
     path("ads/<str:code>/fair-price/", views.fair_price_view, name="fair-price"),

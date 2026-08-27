@@ -123,7 +123,8 @@ Everything under `/api/`. Health: `/api/health/`, `/api/db/health/`.
 
 - **Auth** — `/api/auth/{me,register,login,logout}/`
 - **Catalog** — `/api/brands/`, `/api/brands/<slug>/models/`,
-  `/api/models/?q=&brand=` (searchable, with listing counts),
+  `/api/models/?q=&brand=` (searchable, with listing counts) or `?id=` (resolve
+  one model, so a shared link can name the car it is about),
   `/api/models/<pk>/variants/`, `/api/ads/`, `/api/ads/<code>/`
 - **Photos** — `/api/img/<code>/<n>/`, proxied and Redis-cached
 - **Market** — `/api/markets/`, `/api/ads/<code>/price-history/`,
@@ -132,7 +133,19 @@ Everything under `/api/`. Health: `/api/health/`, `/api/db/health/`.
   `/api/analytics/deal-scores/<code>/`,
   `/api/analytics/market-index/?scope=market|brand|model&id=&days=`,
   `/api/analytics/overview/`
-- **Research** — `/api/research/{liquidity,depreciation}/<model_id>/`
+- **Market pulse** — all arithmetic over rows the warm tick already writes, no
+  extra crawl load:
+  `/api/analytics/movers/?scope=brand|model&days=&limit=` (scopes ranked by
+  index change, each row carrying the cohort and ad counts behind it),
+  `/api/analytics/turnover/?days=` (share of a model's listings that left the
+  feed inside the window — departures, never "sold"),
+  `/api/analytics/arrivals/?days=` (new listings per model),
+  `/api/analytics/distribution/?brand=&model=&variant=&year=` (percentiles,
+  histogram, city and model-year facets for any scope),
+  `/api/analytics/movement/?model=&variant=&year=&days=` (an index below the
+  three persisted scopes, computed per request)
+- **Research** — `/api/research/{liquidity,depreciation}/<model_id>/`, both
+  accepting `?variant=` and (liquidity) `?year=`
 - **Saved cars** — `/api/favorites/`, session-scoped to the user
 - **Notifier** — `/api/notifier-settings/` (singleton, disabled by default)
 - **Operator** (staff only) — `POST /api/admin/jobs/{fetch,refresh-analytics,deal-scores,backfill-images}/`

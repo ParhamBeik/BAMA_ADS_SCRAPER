@@ -173,22 +173,34 @@ def model_search(request):
 
     Counted over the same population the Explorer lists, or the number beside a
     model would promise listings the next screen does not show.
+
+    ``?id=`` resolves one model by primary key, ignoring the search and brand
+    filters. A screen restored from a shared URL knows the id and nothing else,
+    and the ranked list only reaches 60 rows — so without this the picker on a
+    link to an unpopular model could not name the car the page was about.
     """
     params = request.query_params
     qs = Model.objects.select_related("brand")
-    if brand := params.get("brand"):
-        qs = qs.filter(brand__slug=brand)
-    if q := (params.get("q") or "").strip():
-        qs = qs.filter(Q(name_fa__icontains=q) | Q(brand__name_fa__icontains=q))
+    by_id = (params.get("id") or "").strip()
+    if by_id:
+        qs = qs.filter(pk=by_id) if by_id.isdigit() else qs.none()
+    else:
+        if brand := params.get("brand"):
+            qs = qs.filter(brand__slug=brand)
+        if q := (params.get("q") or "").strip():
+            qs = qs.filter(Q(name_fa__icontains=q) | Q(brand__name_fa__icontains=q))
 
     listable = without_high_outliers(
         verified(Ad.objects).filter(status=Ad.Status.ACTIVE, current_price__gt=0)
     )
-    rows = (
-        qs.annotate(ad_count=Count("ads", filter=Q(ads__in=listable), distinct=True))
-        .filter(ad_count__gt=0)
-        .order_by("-ad_count", "name_fa")[:MODEL_SEARCH_LIMIT]
-    )
+    rows = qs.annotate(ad_count=Count("ads", filter=Q(ads__in=listable), distinct=True))
+    if not by_id:
+        # A model nobody is currently selling is noise in a picker — but it is
+        # still the answer when the caller asked for that exact model by id, and
+        # a screen that cannot name the car it is about is worse than one
+        # reporting an empty count.
+        rows = rows.filter(ad_count__gt=0)
+    rows = rows.order_by("-ad_count", "name_fa")[:MODEL_SEARCH_LIMIT]
     return Response([
         {"id": m.id, "name_fa": m.name_fa, "brand_slug": m.brand_id,
          "brand_name": m.brand.name_fa, "ad_count": m.ad_count}
@@ -590,6 +602,141 @@ def market_index(request):
 # ---------------------------------------------------------------------------
 # Research
 # ---------------------------------------------------------------------------
+
+
+# The home page is the same answer for everyone and is rebuilt on the warm tick,
+# so it is cached for the same reason `markets` is: shorter than the worker's
+# cycle, so a cached summary is never more than one tick behind its data.
+PULSE_CACHE_SECONDS = 120
+
+
+def _window_days(params, default: int = 30) -> int:
+    """`?days=`, clamped. Two days is the shortest thing that can have a change."""
+    try:
+        return max(2, min(int(params.get("days", default)), 3650))
+    except (TypeError, ValueError):
+        return default
+
+
+@cache_page(PULSE_CACHE_SECONDS)
+@api_view(["GET"])
+def movers_view(request):
+    """Brands or models ranked by how far their price index moved.
+
+    Ranks the per-scope series the warm tick already writes (see
+    jobs.market_index) — the UI asked only ever for the market-wide one, so this
+    is reach, not new computation.
+    """
+    scope = request.query_params.get("scope", MarketIndex.Scope.MODEL)
+    if scope not in (MarketIndex.Scope.BRAND, MarketIndex.Scope.MODEL):
+        return Response({"detail": "scope must be brand or model"},
+                        status=status.HTTP_400_BAD_REQUEST)
+    limit = max(1, min(_opt(request.query_params, "limit", int) or 8, 50))
+    return envelope(research.movers(
+        scope, days=_window_days(request.query_params), limit=limit,
+    ))
+
+
+@cache_page(PULSE_CACHE_SECONDS)
+@api_view(["GET"])
+def turnover_view(request):
+    """Which models' listings leave the feed fastest, as a completed-window rate.
+
+    Never "sold": the feed carries no reason, so this counts departures.
+    """
+    limit = max(1, min(_opt(request.query_params, "limit", int) or 8, 50))
+    return envelope(research.turnover(
+        days=_window_days(request.query_params), limit=limit,
+    ))
+
+
+@cache_page(PULSE_CACHE_SECONDS)
+@api_view(["GET"])
+def arrivals_view(request):
+    """Which models are taking on the most new listings — the supply half."""
+    limit = max(1, min(_opt(request.query_params, "limit", int) or 8, 50))
+    return envelope(research.arrivals(
+        days=_window_days(request.query_params), limit=limit,
+    ))
+
+
+@cache_page(MARKETS_CACHE_SECONDS)
+@api_view(["GET"])
+def distribution_view(request):
+    """Asking-price shape for any scope, market-wide down to one model year.
+
+    Cached because the population filter includes the installment-ad regex,
+    which the query it lives on documents as an unindexed scan — fine once a
+    cycle, not fine once per keystroke in a scope picker.
+    """
+    params = request.query_params
+    try:
+        return envelope(research.price_distribution(
+            brand=params.get("brand") or None,
+            model_id=_opt(params, "model", int),
+            variant_id=_opt(params, "variant", int),
+            year_jalali=_opt(params, "year", int),
+        ))
+    except ValueError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["GET"])
+def movement_view(request):
+    """A price index for a scope finer than the three that get persisted.
+
+    `market-index` serves the market, a brand or a model from stored rows. A
+    trim or a single model year is computed here on demand from the same daily
+    snapshots, because persisting a series per trim would multiply the warm
+    tick's writes for a question most sessions never ask.
+    """
+    params = request.query_params
+    try:
+        model_id = _opt(params, "model", int)
+        variant_id = _opt(params, "variant", int)
+        year = _opt(params, "year", int)
+        days = _window_days(params, default=90)
+    except ValueError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    if not model_id:
+        return Response({"detail": "movement requires ?model="},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    series = research.compute_index(research.cohort_series(
+        MarketIndex.Scope.MODEL, str(model_id),
+        variant_id=variant_id, year_jalali=year,
+    ))[-days:]
+    latest = series[-1] if series else None
+    if not latest:
+        return envelope({"available": False, "reason": "insufficient_clean_history",
+                         "scope": {"model_id": model_id, "variant_id": variant_id,
+                                   "year_jalali": year}})
+    # Re-based on the first day still inside the window: the stored series is
+    # chained from its own first observation, and slicing it without re-basing
+    # would show a level that answers a question about a date off the chart.
+    base = series[0]["index_value"] or research.BASE_VALUE
+    rebased = [
+        {**point,
+         "date": point["date"].isoformat() if hasattr(point["date"], "isoformat")
+                 else point["date"],
+         "index_value": round(point["index_value"] / base * research.BASE_VALUE, 2)}
+        for point in series
+    ]
+    return envelope({
+        "available": True,
+        "scope": {"model_id": model_id, "variant_id": variant_id, "year_jalali": year},
+        "base_value": research.BASE_VALUE,
+        "latest_index": rebased[-1]["index_value"],
+        "change_pct": round((latest["index_value"] / base - 1) * 100, 2),
+        "window": {
+            "requested_days": days,
+            "days": len(rebased),
+            "clamped": len(rebased) < days,
+            "first_date": rebased[0]["date"],
+            "last_date": rebased[-1]["date"],
+        },
+        "series": rebased,
+    })
 
 
 @api_view(["GET"])

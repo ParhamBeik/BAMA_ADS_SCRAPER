@@ -73,6 +73,11 @@ export function Chart({
       },
       yAxis: {
         type: "value",
+        // Bars encode magnitude by length, so their baseline must be zero or the
+        // picture lies. Lines encode *change*, and forcing zero on an index
+        // based at 100 flattened every real move into a straight line across the
+        // top of the chart — a 3% shift and a 0.1% one drew identically.
+        scale: series.every((s) => (s.type ?? "line") === "line"),
         splitLine: { lineStyle: { color: border, type: "dashed" } },
         axisLabel: { color: muted, formatter: yFormatter },
       },

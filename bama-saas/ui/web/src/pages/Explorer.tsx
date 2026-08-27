@@ -25,7 +25,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, Wallet } from "lucide-react";
+import { AlertTriangle, ArrowUpDown, Wallet } from "lucide-react";
 import { api } from "../api";
 import type { Envelope, Paginated } from "../api";
 import { FilterPanel } from "../FilterPanel";
@@ -35,6 +35,20 @@ import {
   PriceBar, Provenance, Sheet, Table, Thumb, km, toman,
 } from "../ui";
 import type { Distribution } from "../ui";
+import { ViewToggle, useListView } from "../components/ViewToggle";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "../components/ui/select";
+
+/** Sort orders the API supports, in the order a buyer reaches for them. */
+const ORDERINGS = [
+  { value: "-publish_at", label: "تازه‌ترین" },
+  { value: "current_price", label: "ارزان‌ترین" },
+  { value: "-current_price", label: "گران‌ترین" },
+  { value: "mileage", label: "کمترین کارکرد" },
+  { value: "-mileage", label: "بیشترین کارکرد" },
+  { value: "-year_jalali", label: "جدیدترین سال ساخت" },
+];
 
 interface AdRow {
   code: string;
@@ -69,13 +83,50 @@ interface FairPrice extends Envelope {
   dispersion: number | null;
   confidence: string;
   distribution?: Distribution;
-  components: { name: string; amount: number; detail: string }[];
+  components: { name: string; amount: number; facts?: Record<string, unknown> }[];
 }
 
 const COMPONENT_LABEL: Record<string, string> = {
   cohort_median: "میانه قیمت آگهی‌های مشابه",
+  condition: "تعدیل بابت وضعیت بدنه",
   mileage: "تعدیل بابت کارکرد",
 };
+
+const CONDITION_BAND: Record<string, string> = {
+  clean: "بدون رنگ",
+  cosmetic: "لکه یا خط و خش",
+  painted: "رنگ‌شده",
+  structural: "تعویض یا تصادفی",
+};
+
+/**
+ * How each line of the fair-price breakdown was arrived at, in Persian.
+ *
+ * The backend sends the facts and this composes the sentence. It used to send
+ * the sentence, which put "median of 13 peers" and "catalogue-wide gap for clean
+ * bodywork" into a Persian table on the one panel that is meant to make the
+ * number checkable.
+ */
+function componentDetail(name: string, facts?: Record<string, unknown>): string {
+  if (!facts) return "";
+  const peers = Number(facts.peers ?? 0);
+  switch (name) {
+    case "cohort_median":
+      return `میانه ${peers} آگهی ${String(facts.model ?? "")} با همان تیپ و سال ساخت`;
+    case "condition":
+      return facts.basis === "peers"
+        ? `بر پایه ${peers} آگهی با وضعیت بدنه «${String(facts.body_status || "مشابه")}»`
+        : `اختلاف اندازه‌گیری‌شده در کل کاتالوگ برای بدنه ${
+            CONDITION_BAND[String(facts.band)] ?? String(facts.band ?? "")
+          } — آگهی‌های مشابه این خودرو برای سنجش جداگانه کم بودند`;
+    case "mileage":
+      return `بر پایه ${peers} آگهی در بازه کارکرد ${Number(
+        facts.bucket ?? 0,
+      ).toLocaleString("en-US")} کیلومتر به بالا`;
+    default:
+      return "";
+  }
+}
 
 /**
  * Every reason this row's price may not mean what it looks like.
@@ -118,7 +169,7 @@ export function Explorer() {
   const filters = useFilters();
   const page = filters.getInt("page") ?? 1;
   const [selected, setSelected] = useState<string | null>(null);
-  const view = filters.get("view") === "table" ? "table" : "cards";
+  const view = useListView();
   const ordering = filters.get("ordering") ?? "-publish_at";
 
   const adParams = {
@@ -153,32 +204,21 @@ export function Explorer() {
         title="آگهی‌ها"
         action={
           <div className="row">
-            <select
+            <Select
               value={ordering}
-              onChange={(e) => filters.set({ ordering: e.target.value, page: 1 })}
-              aria-label="ترتیب نمایش"
+              onValueChange={(next) => filters.set({ ordering: next, page: 1 })}
             >
-              <option value="-publish_at">تازه‌ترین</option>
-              <option value="current_price">ارزان‌ترین</option>
-              <option value="-current_price">گران‌ترین</option>
-              <option value="mileage">کمترین کارکرد</option>
-              <option value="-mileage">بیشترین کارکرد</option>
-              <option value="-year_jalali">جدیدترین سال ساخت</option>
-            </select>
-            <div className="segmented">
-              <button
-                className={view === "cards" ? "on" : ""}
-                onClick={() => filters.set({ view: null })}
-              >
-                کارتی
-              </button>
-              <button
-                className={view === "table" ? "on" : ""}
-                onClick={() => filters.set({ view: "table" })}
-              >
-                جدولی
-              </button>
-            </div>
+              <SelectTrigger className="w-44" aria-label="ترتیب نمایش">
+                <ArrowUpDown className="size-4 opacity-60" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {ORDERINGS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <ViewToggle />
           </div>
         }
       >
@@ -192,19 +232,20 @@ export function Explorer() {
               {view === "cards" ? (
                 <div className="card-grid">
                   {data.results.map((ad) => (
-                    // A div, not a Link: clicking a card prices it in the panel
-                    // beside it. It used to be a Link that *also* set the
-                    // selection, so the fair-price panel it populated was
-                    // unmounted by the navigation before anyone could read it.
+                    // Not a Link: clicking a card prices it in the panel beside
+                    // it. It used to be a Link that *also* set the selection, so
+                    // the fair-price panel it populated was unmounted by the
+                    // navigation before anyone could read it.
+                    //
+                    // The click target is a real <button> on the title whose
+                    // ::after covers the card, rather than role="button" on the
+                    // wrapper — that version nested two links inside a control,
+                    // which is invalid and left the card announcing itself as a
+                    // single button with no way to reach either link by keyboard.
                     <div
                       key={ad.code}
-                      className="listing-card"
-                      onClick={() => setSelected(ad.code)}
-                      onKeyDown={(e) => e.key === "Enter" && setSelected(ad.code)}
-                      role="button"
-                      tabIndex={0}
-                      aria-pressed={selected === ad.code}
-                      style={{ cursor: "pointer" }}
+                      className="listing-card stretch-host"
+                      aria-current={selected === ad.code ? "true" : undefined}
                     >
                       <Thumb src={ad.image_url}>
                         <span className="card-badges">
@@ -212,7 +253,15 @@ export function Explorer() {
                         </span>
                       </Thumb>
                       <div className="listing-meta">
-                        <strong><Fa>{ad.title}</Fa></strong>
+                        <strong>
+                          <button
+                            type="button"
+                            className="stretch-link linkish-title"
+                            onClick={() => setSelected(ad.code)}
+                          >
+                            <Fa>{ad.title}</Fa>
+                          </button>
+                        </strong>
                         <span className="deal-price">{toman(ad.current_price)}</span>
                         <div className="row">
                           <span>{km(ad.mileage)}</span>
@@ -223,14 +272,14 @@ export function Explorer() {
                           <Fa>{ad.city_name || "—"}</Fa>
                           <Link
                             to={`/listing/${ad.code}`}
+                            className="above-stretch"
                             style={{ marginInlineStart: "auto" }}
-                            onClick={(e) => e.stopPropagation()}
                           >
                             جزئیات
                           </Link>
                         </div>
                         <div className="row">
-                          <BamaLink href={ad.bama_url} className="ghost" />
+                          <BamaLink href={ad.bama_url} className="ghost above-stretch" />
                         </div>
                       </div>
                     </div>
@@ -327,7 +376,9 @@ function FairPriceSheet({ code, onClose }: { code: string; onClose: () => void }
                 <tr key={c.name}>
                   <td>
                     {COMPONENT_LABEL[c.name] ?? c.name.replace(/_/g, " ")}
-                    <div className="stat-sub"><Fa>{c.detail}</Fa></div>
+                    <div className="stat-sub">
+                      <Fa>{componentDetail(c.name, c.facts)}</Fa>
+                    </div>
                   </td>
                   <td className="num">
                     {c.amount > 0 && c.name !== "cohort_median" ? "+" : ""}

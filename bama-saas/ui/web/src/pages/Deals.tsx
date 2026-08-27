@@ -28,15 +28,24 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, LayoutGrid, List } from "lucide-react";
+import { AlertTriangle, Bell } from "lucide-react";
 import { api } from "../api";
 import type { Envelope } from "../api";
 import { FilterPanel } from "../FilterPanel";
 import { qs, useFilters } from "../filters";
 import {
   Async, BamaLink, Card, ConfidenceDots, Fa, ListingActions, Pager, Provenance,
-  Table, Thumb, km, pct, toman,
+  Table, pct, toman,
 } from "../ui";
+import { DealCard, type Deal } from "../components/DealCard";
+import { ViewToggle, useListView } from "../components/ViewToggle";
+import { Button } from "../components/ui/button";
+import { Label } from "../components/ui/label";
+import { Switch } from "../components/ui/switch";
+import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs";
+import {
+  Popover, PopoverContent, PopoverTrigger,
+} from "../components/ui/popover";
 
 const PAGE_SIZE = 24;
 
@@ -75,29 +84,6 @@ interface NotifierSettings {
   telegram_chat_id: string;
 }
 
-interface Deal {
-  code: string;
-  title: string;
-  discount_pct: number | null;
-  price: number | null;
-  peer_median: number | null;
-  peer_count: number | null;
-  confidence: string | null;
-  age_days: number | null;
-  days_listed: number | null;
-  /** Band index the API ordered by; see BAND_LABEL. */
-  freshness: number | null;
-  year: number | null;
-  mileage: number | null;
-  city_name: string;
-  district?: string;
-  body_status?: string;
-  condition_band?: string | null;
-  image_url: string;
-  bama_url: string;
-  condition_flagged: boolean;
-}
-
 interface DealWindow {
   window_days: number;
   min_discount_pct: number;
@@ -115,15 +101,42 @@ interface DealBoard extends Envelope {
   results: Deal[];
 }
 
+function NumberField({
+  label, value, min, max, hint, onChange,
+}: {
+  label: string;
+  value: number | string;
+  min?: number;
+  max?: number;
+  hint?: string;
+  onChange: (raw: string) => void;
+}) {
+  return (
+    <div className="grid gap-1.5">
+      <Label className="text-muted-foreground text-xs font-semibold">{label}</Label>
+      <input
+        type="number"
+        min={min}
+        max={max}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="border-border bg-panel w-full rounded-md border px-2.5 py-1.5 text-sm"
+      />
+      {hint && <span className="text-muted-foreground text-[11px]">{hint}</span>}
+    </div>
+  );
+}
+
 /**
  * The rules that decide what is worth a Telegram message.
  *
  * Deliberately on this page rather than in a settings screen: the thresholds
- * only mean anything next to the board they filter.
+ * only mean anything next to the board they filter. It is a popover on the
+ * board's own header rather than a card below it — the adjacency is the point,
+ * a permanent wall of number inputs under the results was not.
  */
 function NotifierPanel() {
   const client = useQueryClient();
-  const [open, setOpen] = useState(false);
   const [form, setForm] = useState<NotifierSettings | null>(null);
 
   const settings = useQuery({
@@ -149,149 +162,87 @@ function NotifierPanel() {
   const set = (patch: Partial<NotifierSettings>) => setForm({ ...form, ...patch });
 
   return (
-    <Card>
-      <div className="row between">
-        <strong>
-          اعلان تلگرام{" "}
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="outline" size="sm">
+          <Bell className="size-4" />
+          اعلان تلگرام
           <span className={`badge ${form.enabled ? "ok" : ""}`}>
             {form.enabled ? "روشن" : "خاموش"}
           </span>
-        </strong>
-        <button className="ghost" onClick={() => setOpen(!open)}>
-          {open ? "بستن" : "تنظیمات"}
-        </button>
-      </div>
-
-      {!open ? (
-        <p className="muted">
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-[min(22rem,92vw)] space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <Label htmlFor="notify-on" className="text-sm font-bold">ارسال اعلان</Label>
+          <Switch
+            id="notify-on"
+            checked={form.enabled}
+            onCheckedChange={(enabled) => set({ enabled })}
+          />
+        </div>
+        <p className="text-muted-foreground text-xs">
           آگهی‌هایی با دست‌کم {form.min_discount_pct}٪ تخفیف و {form.min_peers} آگهی
           مشابه — هر آگهی فقط یک بار.
         </p>
-      ) : (
-        <div className="stack">
-          <label className="row">
-            <input
-              type="checkbox"
-              checked={form.enabled}
-              onChange={(e) => set({ enabled: e.target.checked })}
-            />
-            <span>ارسال اعلان</span>
-          </label>
-          <div className="row wrap">
-            <label>
-              کمترین تخفیف (٪)
-              <input
-                type="number" min={1} max={99} value={form.min_discount_pct}
-                onChange={(e) => set({ min_discount_pct: Number(e.target.value) })}
-              />
-            </label>
-            <label>
-              کمترین تعداد آگهی مشابه
-              <input
-                type="number" min={8} value={form.min_peers}
-                onChange={(e) => set({ min_peers: Number(e.target.value) })}
-              />
-            </label>
-            <label>
-              کمترین قیمت
-              <input
-                type="number" value={form.price_min ?? ""}
-                onChange={(e) =>
-                  set({ price_min: e.target.value ? Number(e.target.value) : null })
-                }
-              />
-            </label>
-            <label>
-              بیشترین قیمت
-              <input
-                type="number" value={form.price_max ?? ""}
-                onChange={(e) =>
-                  set({ price_max: e.target.value ? Number(e.target.value) : null })
-                }
-              />
-            </label>
-            <label>
-              شناسه گفت‌وگوی تلگرام
-              <input
-                value={form.telegram_chat_id}
-                onChange={(e) => set({ telegram_chat_id: e.target.value })}
-              />
-            </label>
-          </div>
-          <div className="row">
-            <button onClick={() => save.mutate(form)} disabled={save.isPending}>
-              {save.isPending ? "در حال ذخیره…" : "ذخیره"}
-            </button>
-            {save.isSuccess && !save.isPending && (
-              <span className="badge ok">ذخیره شد</span>
-            )}
-            {save.isError && (
-              <span className="badge warn">
-                {(save.error as Error)?.message ?? "ذخیره نشد"}
-              </span>
-            )}
-          </div>
-          <p className="muted">
-            تعداد آگهی مشابه کمتر از ۸ پذیرفته نمی‌شود — میانه‌ای که از آگهی‌های
-            کمتر ساخته شود، مبنای قابل اتکایی برای اعلان نیست.
-          </p>
+
+        <div className="grid grid-cols-2 gap-3">
+          <NumberField
+            label="کمترین تخفیف (٪)" min={1} max={99}
+            value={form.min_discount_pct}
+            onChange={(raw) => set({ min_discount_pct: Number(raw) })}
+          />
+          <NumberField
+            label="کمترین آگهی مشابه" min={8}
+            value={form.min_peers}
+            hint="کمتر از ۸ پذیرفته نمی‌شود"
+            onChange={(raw) => set({ min_peers: Number(raw) })}
+          />
+          <NumberField
+            label="کمترین قیمت"
+            value={form.price_min ?? ""}
+            onChange={(raw) => set({ price_min: raw ? Number(raw) : null })}
+          />
+          <NumberField
+            label="بیشترین قیمت"
+            value={form.price_max ?? ""}
+            onChange={(raw) => set({ price_max: raw ? Number(raw) : null })}
+          />
         </div>
-      )}
-    </Card>
-  );
-}
 
-/** "۰ روز در بازار" is technically right and reads like a bug. */
-function ageLabel(days: number | null): string {
-  if (days == null) return "—";
-  if (days <= 0) return "امروز ثبت شده";
-  return `${days} روز در بازار`;
-}
+        <div className="grid gap-1.5">
+          <Label className="text-muted-foreground text-xs font-semibold">
+            شناسه گفت‌وگوی تلگرام
+          </Label>
+          <input
+            dir="ltr"
+            value={form.telegram_chat_id}
+            onChange={(e) => set({ telegram_chat_id: e.target.value })}
+            className="border-border bg-panel w-full rounded-md border px-2.5 py-1.5 font-mono text-sm"
+          />
+        </div>
 
-function DealCard({ deal, suspect }: { deal: Deal; suspect: boolean }) {
-  return (
-    <Link to={`/listing/${deal.code}`} className="listing-card">
-      <Thumb src={deal.image_url}>
-        <span className={`ribbon${suspect ? " suspect" : ""}`}>
-          {pct(deal.discount_pct, 0)}
-        </span>
-        {deal.condition_flagged && (
-          <span className="card-badges">
-            <span
-              className="badge warn"
-              title={deal.body_status || "توضیحات آگهی به تصادف، پلاک منطقه آزاد یا وضعیت بدنه اشاره کرده است"}
-            >
-              <AlertTriangle size={11} /> {deal.body_status || "وضعیت بدنه"}
+        <div className="flex items-center gap-2">
+          <Button size="sm" onClick={() => save.mutate(form)} disabled={save.isPending}>
+            {save.isPending ? "در حال ذخیره…" : "ذخیره"}
+          </Button>
+          {save.isSuccess && !save.isPending && (
+            <span className="badge ok">ذخیره شد</span>
+          )}
+          {save.isError && (
+            <span className="badge warn">
+              {(save.error as Error)?.message ?? "ذخیره نشد"}
             </span>
-          </span>
-        )}
-      </Thumb>
-      <div className="listing-meta">
-        <strong>
-          <Fa>{deal.title || deal.code}</Fa>
-        </strong>
-        <div className="row">
-          <span className="deal-price">{toman(deal.price)}</span>
-          <span>{km(deal.mileage)}</span>
-          <span className="deal-median">{toman(deal.peer_median)}</span>
+          )}
         </div>
-        <div className="row">
-          <ConfidenceDots tier={deal.confidence} />
-          <span>{deal.peer_count ?? "—"} آگهی مشابه</span>
-          <span>·</span>
-          <span>{deal.year ?? "—"}</span>
-        </div>
-        <div className="row">
-          <Fa>{deal.city_name || "—"}</Fa>
-          {deal.district ? <><span>·</span><Fa>{deal.district}</Fa></> : null}
-          <span>·</span>
-          <span>{ageLabel(deal.days_listed)}</span>
-        </div>
-        <div className="row">
-          <BamaLink href={deal.bama_url} className="ghost" />
-        </div>
-      </div>
-    </Link>
+        {/* Not a validation nicety: a median built from fewer peers is not a
+            reliable basis for interrupting someone. */}
+        <p className="text-muted-foreground text-[11px]">
+          تعداد آگهی مشابه کمتر از ۸ پذیرفته نمی‌شود — میانه‌ای که از آگهی‌های کمتر
+          ساخته شود، مبنای قابل اتکایی برای اعلان نیست.
+        </p>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -342,7 +293,7 @@ export function Deals() {
   const page = filters.getInt("page") ?? 1;
   const raw = filters.get("band");
   const band = TABS.some((t) => t.id === raw) ? raw! : "top";
-  const view = filters.get("view") === "table" ? "table" : "cards";
+  const view = useListView();
 
   const params = {
     band,
@@ -369,17 +320,20 @@ export function Deals() {
 
   return (
     <div className="stack">
-      <div className="segmented" role="group" aria-label="دسته‌بندی آگهی‌ها">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            className={band === t.id ? "on" : ""}
-            aria-pressed={band === t.id}
-            onClick={() => filters.set({ band: t.id === "top" ? null : t.id, page: null })}
-          >
-            {t.label}
-          </button>
-        ))}
+      <div className="row between">
+        <Tabs
+          value={band}
+          onValueChange={(next) =>
+            filters.set({ band: next === "top" ? null : next, page: null })
+          }
+        >
+          <TabsList aria-label="دسته‌بندی آگهی‌ها">
+            {TABS.map((t) => (
+              <TabsTrigger key={t.id} value={t.id}>{t.label}</TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+        <NotifierPanel />
       </div>
 
       {/* The thresholds are computed, so the page quotes them rather than
@@ -414,26 +368,7 @@ export function Deals() {
 
       <FilterPanel showSpecs={false} showConfidence showSearch={false} />
 
-      <Card
-        action={
-          <div className="segmented">
-            <button
-              className={view === "cards" ? "on" : ""}
-              onClick={() => filters.set({ view: null })}
-              aria-label="نمایش کارتی"
-            >
-              <LayoutGrid size={14} />
-            </button>
-            <button
-              className={view === "table" ? "on" : ""}
-              onClick={() => filters.set({ view: "table" })}
-              aria-label="نمایش جدولی"
-            >
-              <List size={14} />
-            </button>
-          </div>
-        }
-      >
+      <Card action={<ViewToggle />}>
         <Async query={deals} empty="هنوز امتیازی محاسبه نشده است." shape="cards">
           {(board) => {
             const rows = board.results ?? [];
@@ -528,7 +463,6 @@ export function Deals() {
         </Async>
       </Card>
 
-      <NotifierPanel />
     </div>
   );
 }

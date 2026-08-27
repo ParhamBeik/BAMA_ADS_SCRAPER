@@ -298,6 +298,15 @@ function humanReason(reason?: string): string {
       return "سال‌های ساخت دارای داده، برای رسم نمودار افت قیمت کافی نیست.";
     case "insufficient_listings":
       return "تعداد آگهی‌های این دسته کم است.";
+    case "window_exceeds_clean_history":
+      // The crawler's removal detection only became trustworthy on a known
+      // date; a window reaching back past it would measure the sweep schedule
+      // rather than the market.
+      return "بازه انتخاب‌شده از سابقه قابل اتکای ما بلندتر است — بازه کوتاه‌تری را انتخاب کنید.";
+    case "insufficient_index_history":
+      // Not "no data": the series exists, it is just younger than the window
+      // being asked about, and it fills in on its own each day.
+      return "سابقه شاخص هنوز به اندازه بازه انتخاب‌شده نیست — بازه کوتاه‌تری را امتحان کنید.";
     case "unknown_or_unverified_ad":
       return "این آگهی ناشناخته است یا از بررسی صحت داده عبور نکرده است.";
     case "no_price_baseline":

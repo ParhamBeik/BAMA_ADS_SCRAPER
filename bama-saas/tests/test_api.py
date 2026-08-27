@@ -1125,3 +1125,36 @@ def test_out_of_range_and_non_cdn_urls_resolve_to_nothing():
     assert images.source_url(ad, 0) == ""
     assert images.source_url(ad, 99) == ""
     assert images.source_url(ad, -1) == ""
+
+
+@pytest.mark.django_db
+def test_model_search_resolves_one_model_by_id(api_client, catalog):
+    """Integration: the lookup a shared analysis link depends on.
+
+    The ranked list stops at 60 rows and is ordered by listing count, so a link
+    to an unpopular model would open a picker that could not name the car the
+    page is about. `?id=` answers for exactly that model, ignoring the search
+    and brand filters — and still answers when nobody is currently selling one,
+    because a screen with no name on it is worse than one showing a zero.
+    """
+    model = catalog["model"]
+    url = "/api/models/"
+
+    rows = api_client.get(url, {"id": model.pk}).json()
+    assert [r["id"] for r in rows] == [model.pk]
+    assert rows[0]["name_fa"] == model.name_fa
+    assert rows[0]["ad_count"] == 8
+
+    # The brand filter must not be able to hide a model asked for by id.
+    assert api_client.get(url, {"id": model.pk, "brand": "someone-else"}).json()[0]["id"] \
+        == model.pk
+
+    empty = Model.objects.create(brand=catalog["brand"], name_fa="مدل بی‌آگهی")
+    by_id = api_client.get(url, {"id": empty.pk}).json()
+    assert [r["id"] for r in by_id] == [empty.pk]
+    assert by_id[0]["ad_count"] == 0
+    # ...but it stays out of the ranked list, where it would be noise.
+    assert empty.pk not in [r["id"] for r in api_client.get(url).json()]
+
+    # A non-numeric id is an empty answer, not a 500 from the database.
+    assert api_client.get(url, {"id": "../etc"}).json() == []

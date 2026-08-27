@@ -19,6 +19,36 @@ One module per concern, no `services/` packages, no per-command modules:
   `management/commands/bama.py` (the only command).
 - `config/settings.py` — one file. `DJANGO_DEBUG=1` selects the local profile;
   the default is hardened, so a missing env var cannot fail open.
+- `ui/web/` — Tailwind v4 + shadcn/ui. Five destinations behind one floating
+  header (`components/AppHeader`), no sidebar. `Home` is the market pulse,
+  `Analyse` is one page whose scope runs market → brand → model → trim → model
+  year in the URL, `Deals`, `Explorer`, `Saved`, plus staff-only `Control` in
+  the account menu.
+
+## The stylesheet
+
+`src/styles.css` is the whole colour contract and it is layered deliberately:
+
+- The two `:root` blocks are the only place a colour is chosen. `@theme inline`
+  republishes them as utilities under both our names (`bg-panel`, `text-up`) and
+  the ones shadcn's generated components reach for (`bg-card`,
+  `text-muted-foreground`). `inline` is load-bearing — without it a utility
+  freezes whichever theme was active at build time instead of re-resolving.
+- Note shadcn's `accent` is a *hover surface*; our brand colour is its `primary`.
+- Dark mode is `data-theme` on `<html>`, not a class, taught to Tailwind via
+  `@custom-variant`. `theme.tsx` writes that attribute **synchronously in the
+  setter**, not only in an effect: the charts read their palette out of CSS
+  variables during render, so an effect alone left the first frame after a
+  switch drawing the outgoing theme's colours.
+- `--up`/`--down` mean direction and `--warn` means a confidence or staleness
+  warning; none may be used decoratively. The accent must stay ≥30° of hue from
+  all three — a constraint contrast ratio cannot see, since two colours of equal
+  lightness always score ~1.0 against each other. `npm run check:contrast`
+  parses the tokens out of the stylesheet and fails on a broken ratio or hue
+  gap; it is the palette's test, so run it after touching a token.
+- Tailwind's reset zeroes every margin and padding, including on elements some
+  screens still render bare. The `@layer base` block restores those browser
+  defaults; delete it only once no screen depends on them.
 
 `db_table` is pinned on every model (`catalog_*`, `history_*`, `market_*`,
 `analytics_*`). Moving a model between files is therefore free — the physical
@@ -94,6 +124,35 @@ schema is independent of the Python layout. Do not remove those pins.
   own origin. `parsing.absolute_ad_url` is the only place that fixes it — the
   notifier used to carry a private copy, which is why the Telegram alerts worked
   and the website never did.
+- **Turnover is a completed-window rate, not a mean time-to-sell.**
+  `research.turnover` counts what share of a model's listings left the feed
+  within N days, over episodes that *started* at least N days ago — so every
+  listing in the denominator had the full window in which to go, and there is
+  nothing to censor. A mean over finished listings is the biased number
+  `survival` deliberately keeps as `naive_mean_days_finished_only` to show how
+  wrong it is; do not rank models by it. The window must also fit inside
+  `BAMA_EPISODE_CLEAN_START`, or the answer is `window_exceeds_clean_history` —
+  a distinct reason from "too few listings", because that one fixes itself as
+  history accrues and a shorter window works today.
+- **Per-brand and per-model index series already exist.** `jobs.market_index`
+  has written them every warm tick for every scope with at least
+  `MIN_SCOPE_COHORTS` live cohorts since the index shipped; for a long time
+  nothing read anything but `scope=market`. Ranking them (`research.movers`) is
+  a query, not a computation — do not add a pipeline step for it. Anything
+  *finer* than model (a trim, one model year) is computed per request from the
+  same snapshots via `cohort_series(..., variant_id=, year_jalali=)`, because
+  persisting a series per trim would multiply the warm tick's writes for a
+  question most sessions never ask.
+- **Every leaderboard row carries its sample.** `movers` and `turnover` both
+  return the cohort/ad/episode counts behind each figure and the UI prints them.
+  A 4% move off three cohorts and one off forty are not the same claim, and a
+  board that shows only the percentage is one the thinnest scope wins.
+- **User-facing prose is composed in the UI, not the API.** Serializers return
+  machine keys and facts (`reason`, `cohort_flags`, a component's `facts` dict);
+  `ui.tsx:humanReason`, `FLAG_LABEL` and `Explorer.componentDetail` turn them
+  into Persian. `fair_price` used to build its component `detail` as an English
+  sentence, which shipped "median of 13 peers" into a Persian table on the one
+  panel whose job is to make the number checkable.
 - **Append-only provenance.** `AdVersion` dedups on the *semantic* hash
   (volatile payload paths excluded), `AdObservation` is one row per run per ad,
   `PriceObservation` is one row per actual price change, not per sighting.

@@ -397,26 +397,30 @@ def fair_price(code: str) -> dict:
     components = [{
         "name": "cohort_median",
         "amount": int(baseline.base),
-        "detail": (
-            f"median of {baseline.peer_count} "
-            f"{ad.model.name_fa if ad.model else ''} peers"
-        ),
+        # Facts, not a sentence. The UI is Persian and phrases these itself, the
+        # same way it does with `reason` codes and cohort flags — a prose string
+        # built here arrived on screen as English inside a Persian table.
+        "facts": {
+            "peers": baseline.peer_count,
+            "model": ad.model.name_fa if ad.model else "",
+        },
     }]
     if adjusted.band_adjustment is not None:
         components.append({
             "name": "condition",
             "amount": adjusted.band_adjustment,
-            "detail": (
-                f"{adjusted.band_peers} peers with {ad.body_status}"
-                if adjusted.band_basis == "peers"
-                else f"catalogue-wide gap for {adjusted.band} bodywork"
-            ),
+            "facts": {
+                "basis": adjusted.band_basis,
+                "peers": adjusted.band_peers,
+                "band": adjusted.band,
+                "body_status": ad.body_status or "",
+            },
         })
     if adjusted.adjustment is not None:
         components.append({
             "name": "mileage",
             "amount": adjusted.adjustment,
-            "detail": f"{adjusted.bucket_peers} peers in the {adjusted.bucket:,}km+ band",
+            "facts": {"peers": adjusted.bucket_peers, "bucket": adjusted.bucket},
         })
 
     return {
