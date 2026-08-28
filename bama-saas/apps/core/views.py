@@ -618,6 +618,19 @@ def _window_days(params, default: int = 30) -> int:
         return default
 
 
+def _leaderboard_limit(params, default: int = 8) -> int:
+    """`?limit=`, clamped, never raising.
+
+    These are read-only leaderboards with no meaningful failure mode for a
+    junk limit, and `_opt` raises — which turned `?limit=abc` into a 500 rather
+    than a board with the default number of rows on it.
+    """
+    try:
+        return max(1, min(int(params.get("limit", default)), 50))
+    except (TypeError, ValueError):
+        return default
+
+
 @cache_page(PULSE_CACHE_SECONDS)
 @api_view(["GET"])
 def movers_view(request):
@@ -631,7 +644,7 @@ def movers_view(request):
     if scope not in (MarketIndex.Scope.BRAND, MarketIndex.Scope.MODEL):
         return Response({"detail": "scope must be brand or model"},
                         status=status.HTTP_400_BAD_REQUEST)
-    limit = max(1, min(_opt(request.query_params, "limit", int) or 8, 50))
+    limit = _leaderboard_limit(request.query_params)
     return envelope(research.movers(
         scope, days=_window_days(request.query_params), limit=limit,
     ))
@@ -644,7 +657,7 @@ def turnover_view(request):
 
     Never "sold": the feed carries no reason, so this counts departures.
     """
-    limit = max(1, min(_opt(request.query_params, "limit", int) or 8, 50))
+    limit = _leaderboard_limit(request.query_params)
     return envelope(research.turnover(
         days=_window_days(request.query_params), limit=limit,
     ))
@@ -654,7 +667,7 @@ def turnover_view(request):
 @api_view(["GET"])
 def arrivals_view(request):
     """Which models are taking on the most new listings — the supply half."""
-    limit = max(1, min(_opt(request.query_params, "limit", int) or 8, 50))
+    limit = _leaderboard_limit(request.query_params)
     return envelope(research.arrivals(
         days=_window_days(request.query_params), limit=limit,
     ))

@@ -19,7 +19,7 @@ import { api } from "@/api";
 import type { Paginated } from "@/api";
 import { useFilters } from "@/filters";
 import { Fa } from "@/ui";
-import { ModelCombobox } from "@/components/ModelCombobox";
+import { ModelCombobox, useModelLabel } from "@/components/ModelCombobox";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -60,11 +60,18 @@ export function ScopePicker({ years }: { years?: { year_jalali: number; n: numbe
     queryFn: ({ signal }) => api.get<Variant[]>(`/api/models/${model}/variants/`, signal),
   });
 
+  // A link from elsewhere in the app carries only `?model=`, so the brand select
+  // would read "همه برندها" beside one named model. Show the model's own brand
+  // instead of writing it into the URL: the scope is unchanged either way, and
+  // two URLs meaning the same analysis is worse than one.
+  const modelLabel = useModelLabel(model ?? undefined);
+  const shownBrand = brand ?? modelLabel?.brand_slug ?? ANY;
+
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <Field label="برند">
         <Select
-          value={brand ?? ANY}
+          value={shownBrand}
           onValueChange={(next) =>
             filters.set({
               brand: next === ANY ? null : next,

@@ -544,3 +544,78 @@ def test_price_distribution_refuses_a_scope_that_is_too_thin(cohorts):
     result = price_distribution(model_id=model.pk)
     assert result["available"] is False
     assert result["reason"] == "insufficient_listings"
+
+
+@pytest.mark.django_db
+def test_year_options_ignore_the_selected_year(cohorts):
+    """Unit: the year facet describes the scope, not the year already chosen.
+
+    It is also the option list the picker renders. Computed after the year
+    filter, a scope narrowed to 1399 offers 1399 as its only choice — you could
+    pick a model year but never switch to a different one without clearing back
+    to "all years" first.
+    """
+    model, brand = cohorts["model"], cohorts["brand"]
+    for year in (1399, 1400, 1401):
+        for i in range(MIN_DISTRIBUTION_ADS):
+            Ad.objects.create(
+                code=f"y{year}n{i}", brand=brand, model=model, title=f"y{year}",
+                year_jalali=year, current_price=1_000_000_000 + year * 1_000,
+                publish_at=timezone.now(), last_seen_at=timezone.now(),
+            )
+
+    everything = price_distribution(model_id=model.pk)
+    assert [y["year_jalali"] for y in everything["years"]] == [1399, 1400, 1401]
+
+    one_year = price_distribution(model_id=model.pk, year_jalali=1400)
+    # The prices narrow to the chosen year...
+    assert one_year["distribution"]["count"] == MIN_DISTRIBUTION_ADS
+    # ...but every year stays reachable in one click.
+    assert [y["year_jalali"] for y in one_year["years"]] == [1399, 1400, 1401]
+
+
+@pytest.mark.django_db
+def test_histogram_last_bucket_covers_the_top_of_the_band(cohorts):
+    """The clamp folds the remainder of an integer-divided range into the last
+    bucket, so that bucket has to say it reaches the top of the band."""
+    model, brand = cohorts["model"], cohorts["brand"]
+    for i in range(40):
+        Ad.objects.create(
+            code=f"h{i}", brand=brand, model=model, title=f"h{i}",
+            year_jalali=1399, current_price=1_000_000_000 + i * 7_777_777,
+            publish_at=timezone.now(), last_seen_at=timezone.now(),
+        )
+
+    result = price_distribution(model_id=model.pk)
+    histogram, p90 = result["histogram"], result["distribution"]["p90"]
+    assert histogram["buckets"][-1]["to"] == p90
+    # Nothing inside the band goes uncounted.
+    inside = result["distribution"]["count"] - histogram["below"] - histogram["above"]
+    assert sum(b["n"] for b in histogram["buckets"]) == inside
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("n_ads,expected", [(16, 6), (100, 10), (900, 24)])
+def test_histogram_bars_follow_the_sample_size(cohorts, n_ads, expected):
+    """Bar count scales with sqrt(n), floored at 6 and capped at 24.
+
+    Twenty-four fixed bars over a 25-ad model year draws mostly bars of height
+    one, which a reader interprets as structure when it is the sample's noise.
+    """
+    model, brand = cohorts["model"], cohorts["brand"]
+    Ad.objects.bulk_create([
+        Ad(
+            code=f"n{i}", brand=brand, model=model, title=f"n{i}",
+            year_jalali=1399, current_price=1_000_000_000 + i * 5_000_000,
+            publish_at=timezone.now(), last_seen_at=timezone.now(),
+        )
+        for i in range(n_ads)
+    ])
+    result = price_distribution(model_id=model.pk)
+    histogram = result["histogram"]
+    assert len(histogram["buckets"]) == expected
+    # Whatever the count, the band is fully covered and fully accounted for.
+    assert histogram["buckets"][0]["from"] == histogram["from"]
+    assert histogram["buckets"][-1]["to"] == histogram["to"]
+    inside = result["distribution"]["count"] - histogram["below"] - histogram["above"]
+    assert sum(b["n"] for b in histogram["buckets"]) == inside

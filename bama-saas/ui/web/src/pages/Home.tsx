@@ -96,7 +96,6 @@ interface TurnoverRow {
 interface Turnover extends Partial<Envelope> {
   window_days: number;
   fastest: TurnoverRow[];
-  slowest: TurnoverRow[];
 }
 
 interface ArrivalRow {
@@ -129,7 +128,16 @@ function toneOf(change: number | null | undefined) {
  * different off three cohorts than off forty, and a leaderboard that prints only
  * the percentage is one where the thinnest scope wins.
  */
-function MoversTable({ rows, direction }: { rows: Mover[]; direction: "up" | "down" }) {
+function MoversTable({
+  rows, direction, scope,
+}: {
+  rows: Mover[];
+  direction: "up" | "down";
+  /** Which kind of thing these ids are. Passed, not inferred from whether the
+   *  row happens to carry a brand name — a brand with no name recorded would
+   *  otherwise be linked to as if its id were a model's. */
+  scope: "model" | "brand";
+}) {
   const navigate = useNavigate();
   if (!rows.length) {
     return (
@@ -146,13 +154,7 @@ function MoversTable({ rows, direction }: { rows: Mover[]; direction: "up" | "do
         <tr
           key={row.scope_id}
           style={{ cursor: "pointer" }}
-          onClick={() =>
-            navigate(
-              row.brand_name
-                ? `/analyse?model=${row.scope_id}`
-                : `/analyse?brand=${row.scope_id}`,
-            )
-          }
+          onClick={() => navigate(`/analyse?${scope}=${row.scope_id}`)}
         >
           <td>
             <Fa>{row.name}</Fa>
@@ -201,13 +203,13 @@ function MoversPanel({ days }: { days: number }) {
                     <div className="card-title">
                       <TrendingUp size={12} /> بیشترین افزایش
                     </div>
-                    <MoversTable rows={data.risers} direction="up" />
+                    <MoversTable rows={data.risers} direction="up" scope={scope} />
                   </div>
                   <div>
                     <div className="card-title">
                       <TrendingDown size={12} /> بیشترین کاهش
                     </div>
-                    <MoversTable rows={data.fallers} direction="down" />
+                    <MoversTable rows={data.fallers} direction="down" scope={scope} />
                   </div>
                 </div>
                 <p className="empty-hint">

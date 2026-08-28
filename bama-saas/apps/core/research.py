@@ -16,6 +16,7 @@ withdrawal. Everything here is about *delisting*, the only event observed.
 
 from __future__ import annotations
 
+import math
 import statistics
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -557,7 +558,6 @@ def turnover(*, days: int = 30, limit: int = 10) -> dict:
         "models_ranked": len(ranked),
         "clean_start": clean_start().date().isoformat(),
         "fastest": ranked[:limit],
-        "slowest": list(reversed(ranked[-limit:])),
     }
 
 
@@ -624,9 +624,13 @@ def arrivals(*, days: int = 30, limit: int = 10) -> dict:
 # are three numbers wearing a statistic's clothes.
 MIN_DISTRIBUTION_ADS = 12
 
-# Bars across the p10-p90 band. Enough to show a second peak (two trims priced
-# apart inside one model is common) without drawing a comb.
+# Upper bound on bars across the p10-p90 band. Enough to show a second peak (two
+# trims priced apart inside one model is common) without drawing a comb. The
+# actual count follows the sample: 24 fixed bars over a 25-ad model year draws
+# mostly bars of height one, which reads as structure a reader will interpret and
+# is only the sample's own noise.
 HISTOGRAM_BUCKETS = 24
+MIN_HISTOGRAM_BUCKETS = 6
 
 
 def price_distribution(
@@ -659,6 +663,15 @@ def price_distribution(
         qs = qs.filter(model_id=model_id)
     if variant_id:
         qs = qs.filter(variant_id=variant_id)
+
+    # Held before the year filter goes on, because this doubles as the option
+    # list for the year picker. Computed after it, a scope narrowed to 1400
+    # offers 1400 as the only choice — you could pick a year but never change to
+    # a different one without clearing back to "all years" first.
+    year_options = list(
+        qs.exclude(year_jalali__isnull=True)
+        .values("year_jalali").annotate(n=Count("code")).order_by("year_jalali")
+    )
     if year_jalali:
         qs = qs.filter(year_jalali=year_jalali)
 
@@ -671,11 +684,19 @@ def price_distribution(
 
     distribution = pricing.peer_distribution(prices)
     low, high = distribution["p10"], distribution["p90"]
-    width = max(1, (high - low) // HISTOGRAM_BUCKETS)
+    # Square-root rule: bars grow with the sample instead of slicing a thin scope
+    # into two dozen near-empty ones.
+    n_buckets = max(MIN_HISTOGRAM_BUCKETS,
+                    min(HISTOGRAM_BUCKETS, int(math.sqrt(len(prices)))))
+    width = max(1, (high - low) // n_buckets)
     buckets = [
         {"from": low + i * width, "to": low + (i + 1) * width, "n": 0}
-        for i in range(HISTOGRAM_BUCKETS)
+        for i in range(n_buckets)
     ]
+    # Integer division leaves a remainder above the last bucket's computed edge,
+    # and the clamp below folds those rows into it. Say
+    # so on the bucket, or its stated range excludes listings it is counting.
+    buckets[-1]["to"] = high
     below = above = 0
     for price in prices:
         if price < low:
@@ -684,8 +705,8 @@ def price_distribution(
             above += 1
         else:
             # The top edge belongs to the last bucket rather than to a
-            # non-existent bucket 24.
-            buckets[min(HISTOGRAM_BUCKETS - 1, (price - low) // width)]["n"] += 1
+            # non-existent bucket past the end.
+            buckets[min(n_buckets - 1, (price - low) // width)]["n"] += 1
 
     return {
         "available": True,
@@ -698,12 +719,11 @@ def price_distribution(
             for row in qs.exclude(city__isnull=True)
             .values("city__name_fa").annotate(n=Count("code")).order_by("-n")[:12]
         ],
-        # Doubles as the option list for a model-year picker: exactly the years
-        # this scope has data for, so choosing one cannot land on an empty page.
+        # Every year this scope has data for — see year_options above for why it
+        # deliberately ignores the selected year. Choosing one cannot land on an
+        # empty page, and switching between them stays one click.
         "years": [
-            {"year_jalali": row["year_jalali"], "n": row["n"]}
-            for row in qs.exclude(year_jalali__isnull=True)
-            .values("year_jalali").annotate(n=Count("code")).order_by("year_jalali")
+            {"year_jalali": row["year_jalali"], "n": row["n"]} for row in year_options
         ],
     }
 
