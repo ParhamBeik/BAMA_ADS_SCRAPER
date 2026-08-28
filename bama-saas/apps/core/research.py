@@ -679,8 +679,14 @@ def price_distribution(
              "variant_id": variant_id, "year_jalali": year_jalali}
     prices = list(qs.values_list("current_price", flat=True))
     if len(prices) < MIN_DISTRIBUTION_ADS:
+        # `years` rides along on the refusal too. The picker's options come from
+        # this response, and a year thin enough to refuse is one a reader can
+        # pick — answer without it and the control that got them there empties
+        # and disables, stranding them on a year with nothing to show and no way
+        # back except discarding the model as well.
         return {"available": False, "reason": "insufficient_listings",
-                "scope": scope, "n": len(prices), "required": MIN_DISTRIBUTION_ADS}
+                "scope": scope, "n": len(prices), "required": MIN_DISTRIBUTION_ADS,
+                "years": year_options}
 
     distribution = pricing.peer_distribution(prices)
     low, high = distribution["p10"], distribution["p90"]
@@ -688,6 +694,11 @@ def price_distribution(
     # into two dozen near-empty ones.
     n_buckets = max(MIN_HISTOGRAM_BUCKETS,
                     min(HISTOGRAM_BUCKETS, int(math.sqrt(len(prices)))))
+    # A band can be narrower than the bar count — a factory-priced trim where
+    # every listing asks the same number collapses it to zero. Without this the
+    # width floors to 1, the bars run off the top of the band, and the last one
+    # gets its top edge pulled back below its own start.
+    n_buckets = max(1, min(n_buckets, high - low))
     width = max(1, (high - low) // n_buckets)
     buckets = [
         {"from": low + i * width, "to": low + (i + 1) * width, "n": 0}
@@ -712,7 +723,9 @@ def price_distribution(
         "available": True,
         "scope": scope,
         "distribution": distribution,
-        "histogram": {"from": low, "to": high, "bucket_size": width,
+        # No `bucket_size`: every bar states its own from/to, and the last one is
+        # wider than the rest wherever the band does not divide evenly.
+        "histogram": {"from": low, "to": high,
                       "buckets": buckets, "below": below, "above": above},
         "cities": [
             {"name": row["city__name_fa"], "n": row["n"]}

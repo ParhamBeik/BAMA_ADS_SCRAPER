@@ -32,6 +32,7 @@ from apps.core.research import (
     MIN_DISTRIBUTION_ADS,
     MOVER_MIN_DAYS,
     TURNOVER_MIN_EPISODES,
+    arrivals,
     build_index,
     cohort_series,
     compute_index,
@@ -619,3 +620,106 @@ def test_histogram_bars_follow_the_sample_size(cohorts, n_ads, expected):
     assert histogram["buckets"][-1]["to"] == histogram["to"]
     inside = result["distribution"]["count"] - histogram["below"] - histogram["above"]
     assert sum(b["n"] for b in histogram["buckets"]) == inside
+
+
+# ---------------------------------------------------------------------------
+# Arrivals — the supply half of the home page
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_arrivals_sums_new_but_never_sums_inventory(cohorts):
+    """Unit: new listings accumulate over the window; standing stock does not.
+
+    ``new_count`` is an event — cars first seen that day — so it adds up. But
+    ``ad_count`` is a level, and summing it over the window would count the same
+    unsold car once per day it sat there, reporting a model with 20 stale
+    listings as though 600 cars had passed through it.
+    """
+    model, cheap = cohorts["model"], cohorts["cheap"]
+    today = timezone.now().date()
+    for offset in range(5):
+        DailyInventorySnapshot.objects.create(
+            model=model, variant=cheap, year_jalali=1399,
+            date=today - timedelta(days=offset),
+            ad_count=20, new_count=3, median_price=500_000_000,
+            mean_price=500_000_000, min_price=500_000_000, max_price=500_000_000,
+        )
+
+    result = arrivals(days=30)
+    assert result["available"] is True
+    row = result["models"][0]
+    assert row["new_listings"] == 15          # 3 a day for five days
+    assert row["listed_now"] == 20            # the latest level, not 100
+
+
+@pytest.mark.django_db
+def test_arrivals_refuses_a_window_where_nothing_arrived(cohorts):
+    """Snapshots exist but no car is new: a board of zeroes is not a board."""
+    model, cheap = cohorts["model"], cohorts["cheap"]
+    DailyInventorySnapshot.objects.create(
+        model=model, variant=cheap, year_jalali=1399, date=timezone.now().date(),
+        ad_count=20, new_count=0, median_price=500_000_000,
+        mean_price=500_000_000, min_price=500_000_000, max_price=500_000_000,
+    )
+    assert arrivals(days=30)["available"] is False
+
+
+@pytest.mark.django_db
+def test_arrivals_is_empty_before_any_snapshot_exists():
+    assert arrivals(days=30)["available"] is False
+
+
+# ---------------------------------------------------------------------------
+# Histogram edges
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_histogram_survives_a_band_of_zero_width(cohorts):
+    """Every listing asking the same price is routine for a factory-priced trim.
+
+    p10 and p90 then coincide, and bars laid out at a floored width of 1 would
+    run off the top of a band with no width at all — the last of them getting
+    its top edge pulled back below its own start, a bar that reads backwards.
+    """
+    model, brand = cohorts["model"], cohorts["brand"]
+    Ad.objects.bulk_create([
+        Ad(
+            code=f"flat{i}", brand=brand, model=model, title=f"flat{i}",
+            year_jalali=1399, current_price=1_000_000_000,
+            publish_at=timezone.now(), last_seen_at=timezone.now(),
+        )
+        for i in range(MIN_DISTRIBUTION_ADS)
+    ])
+
+    histogram = price_distribution(model_id=model.pk)["histogram"]
+    assert all(b["to"] >= b["from"] for b in histogram["buckets"])
+    assert all(histogram["from"] <= b["from"] <= histogram["to"] for b in histogram["buckets"])
+    # Every car is inside the band and counted, however few bars that takes.
+    assert sum(b["n"] for b in histogram["buckets"]) == MIN_DISTRIBUTION_ADS
+    assert histogram["below"] == histogram["above"] == 0
+
+
+@pytest.mark.django_db
+def test_year_options_survive_a_year_too_thin_to_draw(cohorts):
+    """Refusing to draw a distribution must not disable the year picker.
+
+    The picker's options come from this response. Answer a thin year without
+    them and the control that got the reader there empties and switches off,
+    stranding them with no way back except discarding the model too.
+    """
+    model, brand = cohorts["model"], cohorts["brand"]
+    for year, n in ((1399, MIN_DISTRIBUTION_ADS * 3), (1401, 2)):
+        Ad.objects.bulk_create([
+            Ad(
+                code=f"t{year}n{i}", brand=brand, model=model, title=f"t{year}",
+                year_jalali=year, current_price=1_000_000_000 + i * 1_000_000,
+                publish_at=timezone.now(), last_seen_at=timezone.now(),
+            )
+            for i in range(n)
+        ])
+
+    thin = price_distribution(model_id=model.pk, year_jalali=1401)
+    assert thin["available"] is False
+    assert thin["reason"] == "insufficient_listings"
+    # Both years still on offer, so 1399 is one click away.
+    assert [y["year_jalali"] for y in thin["years"]] == [1399, 1401]

@@ -51,7 +51,7 @@ interface Distribution extends Partial<Envelope> {
     min: number; p10: number; p25: number; median: number;
     p75: number; p90: number; max: number; count: number;
   };
-  histogram: { from: number; to: number; bucket_size: number;
+  histogram: { from: number; to: number;
                buckets: Bucket[]; below: number; above: number };
   cities: { name: string; n: number }[];
   years: { year_jalali: number; n: number }[];
@@ -387,6 +387,8 @@ export function Analyse() {
 
   // One request feeds both the distribution panel and the model-year options in
   // the scope picker, so the year list can only ever offer years that have data.
+  // It carries the year list even when it refuses to draw a distribution, or
+  // picking a thin year would disable the control that got you there.
   const distribution = useQuery<Distribution>({
     queryKey: ["distribution", brand, model, variant, year],
     queryFn: ({ signal }) =>

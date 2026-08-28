@@ -22,6 +22,7 @@ from apps.core.models import (
     Dealer,
     DealScoreCache,
     FetchRun,
+    MarketIndex,
     Model,
     PriceObservation,
     Variant,
@@ -1158,3 +1159,98 @@ def test_model_search_resolves_one_model_by_id(api_client, catalog):
 
     # A non-numeric id is an empty answer, not a 500 from the database.
     assert api_client.get(url, {"id": "../etc"}).json() == []
+
+
+# ---------------------------------------------------------------------------
+# The pulse endpoints: parameter handling at the HTTP boundary
+#
+# The pure functions behind these are unit-tested in test_research.py. What only
+# shows up here is what the URL does to them — and a leaderboard asked for
+# `?limit=abc` used to answer 500, because the int parser it shared with the
+# strict endpoints raised rather than falling back.
+# ---------------------------------------------------------------------------
+
+PULSE_BOARDS = (
+    "/api/analytics/movers/",
+    "/api/analytics/turnover/",
+    "/api/analytics/arrivals/",
+)
+
+
+@pytest.fixture
+def ranked_models(db):
+    """Twelve models with a rising index — more than any default board shows."""
+    today = datetime.now(UTC).date()
+    for scope_id in range(12):
+        for offset in range(5):
+            MarketIndex.objects.create(
+                scope="model", scope_id=str(scope_id),
+                date=today - timedelta(days=4 - offset),
+                index_value=100.0 + offset * (scope_id + 1),
+                return_pct=None, cohort_count=8, ad_count=40,
+            )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("url", PULSE_BOARDS)
+@pytest.mark.parametrize("query", ["?limit=abc", "?limit=", "?limit=-4", "?days=abc", "?days="])
+def test_leaderboards_shrug_off_a_junk_window_or_limit(api_client, url, query):
+    """A read-only board has no failure mode worth a 500 for a bad number."""
+    assert api_client.get(url + query).status_code == 200
+
+
+@pytest.mark.django_db
+def test_junk_limit_falls_back_to_the_default_board(api_client, ranked_models):
+    """Not merely 'not a 500' — the reader gets the board they would have got."""
+    default = api_client.get("/api/analytics/movers/").json()
+    junk = api_client.get("/api/analytics/movers/?limit=abc").json()
+    assert junk["available"] is True
+    assert len(junk["risers"]) == len(default["risers"]) == 8
+
+    assert len(api_client.get("/api/analytics/movers/?limit=3").json()["risers"]) == 3
+    # Clamped, so one request cannot ask for the whole catalogue.
+    assert len(api_client.get("/api/analytics/movers/?limit=9999").json()["risers"]) <= 50
+
+
+@pytest.mark.django_db
+def test_movers_rejects_a_scope_it_does_not_rank(api_client):
+    """Brand and model are the two persisted scopes; anything else is a typo."""
+    assert api_client.get("/api/analytics/movers/?scope=variant").status_code == 400
+    assert api_client.get("/api/analytics/movers/?scope=brand").status_code == 200
+
+
+@pytest.mark.django_db
+def test_movement_requires_a_model_and_says_so(api_client):
+    """This endpoint exists for scopes finer than a model, so a model is the
+    floor — without one it would silently answer a different question."""
+    assert api_client.get("/api/analytics/movement/").status_code == 400
+    # A model id that is not a number is a broken link, not a market with no data.
+    assert api_client.get("/api/analytics/movement/?model=abc").status_code == 400
+
+
+@pytest.mark.django_db
+def test_distribution_rejects_an_unparseable_scope(api_client):
+    """Unlike the leaderboards, a scope that cannot be parsed is answered with a
+    400: silently widening to the whole market would put a market-wide median in
+    front of someone who asked about one car."""
+    assert api_client.get("/api/analytics/distribution/?model=abc").status_code == 400
+    assert api_client.get("/api/analytics/distribution/?year=abc").status_code == 400
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("url", [*PULSE_BOARDS, "/api/analytics/distribution/"])
+def test_pulse_endpoints_carry_the_judging_envelope(api_client, url):
+    """Every answer states when it was computed and by which method, so a number
+    screenshotted today can be placed later."""
+    body = api_client.get(url).json()
+    assert "as_of" in body and "methodology_version" in body and "coverage" in body
+
+
+@pytest.mark.django_db
+def test_thin_data_is_a_refusal_not_an_error(api_client):
+    """With an empty database every board must answer 200 and say why it is
+    empty, because the UI branches on `available`, not on a status code."""
+    for url in PULSE_BOARDS:
+        body = api_client.get(url).json()
+        assert body["available"] is False
+        assert body["reason"]

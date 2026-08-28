@@ -14,6 +14,7 @@
  * Years are Jalali throughout, like every year in this app — `Ad.year` mixes
  * 1399 and 2025 in one column and is provenance, never a key.
  */
+import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api";
 import type { Paginated } from "@/api";
@@ -60,18 +61,25 @@ export function ScopePicker({ years }: { years?: { year_jalali: number; n: numbe
     queryFn: ({ signal }) => api.get<Variant[]>(`/api/models/${model}/variants/`, signal),
   });
 
-  // A link from elsewhere in the app carries only `?model=`, so the brand select
-  // would read "همه برندها" beside one named model. Show the model's own brand
-  // instead of writing it into the URL: the scope is unchanged either way, and
-  // two URLs meaning the same analysis is worse than one.
+  // A link from elsewhere in the app carries only `?model=`, which leaves the
+  // brand select reading "همه برندها" beside one named model. Fill the brand in
+  // rather than merely displaying it: a select whose shown value is not its
+  // state is a select that ignores a click on that value, and the model list
+  // reads `brand` too, so displaying alone would also leave it unnarrowed.
+  // `filters.set` replaces rather than pushes, so this does not cost a history
+  // entry: it is the same scope written properly, not a step back.
   const modelLabel = useModelLabel(model ?? undefined);
-  const shownBrand = brand ?? modelLabel?.brand_slug ?? ANY;
+  const impliedBrand = modelLabel?.brand_slug;
+  const setFilters = filters.set;
+  useEffect(() => {
+    if (model && !brand && impliedBrand) setFilters({ brand: impliedBrand });
+  }, [model, brand, impliedBrand, setFilters]);
 
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <Field label="برند">
         <Select
-          value={shownBrand}
+          value={brand ?? ANY}
           onValueChange={(next) =>
             filters.set({
               brand: next === ANY ? null : next,

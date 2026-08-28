@@ -694,6 +694,7 @@ def distribution_view(request):
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
 
+@cache_page(MARKETS_CACHE_SECONDS)
 @api_view(["GET"])
 def movement_view(request):
     """A price index for a scope finer than the three that get persisted.
@@ -702,6 +703,10 @@ def movement_view(request):
     trim or a single model year is computed here on demand from the same daily
     snapshots, because persisting a series per trim would multiply the warm
     tick's writes for a question most sessions never ask.
+
+    Cached for the same reason its siblings are: this is the one endpoint on the
+    analysis page that aggregates at request time rather than reading a stored
+    series, and the scope picker fires it on every trim and model-year change.
     """
     params = request.query_params
     try:
