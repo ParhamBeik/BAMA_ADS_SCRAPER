@@ -25,8 +25,9 @@ from django.http import HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status, viewsets
-from rest_framework.decorators import api_view, throttle_classes
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.generics import ListAPIView
+from rest_framework.permissions import IsAdminUser
 from rest_framework.response import Response
 
 from apps.core import images, pricing, research
@@ -701,6 +702,27 @@ def arrivals_view(request):
     ))
 
 
+def _scope_is_real(scope: dict) -> bool:
+    """Does this scope name anything that exists?
+
+    Guards the cache, not the answer. The distribution query is the unindexed
+    scan its docstring warns about, and it is affordable only because repeats
+    are served from the cache — but the cache is keyed by the scope, so a caller
+    varying the scope every time never hits it and re-runs the scan at will.
+    Made-up brands and ids are the cheap way to do that, and three indexed
+    existence checks cost far less than the scan they refuse.
+    """
+    if scope["brand"] and not Brand.objects.filter(pk=scope["brand"]).exists():
+        return False
+    if scope["model_id"] and not Model.objects.filter(pk=scope["model_id"]).exists():
+        return False
+    if scope["variant_id"] and not Variant.objects.filter(pk=scope["variant_id"]).exists():
+        return False
+    # Jalali model years the catalogue could plausibly carry — bounds the key
+    # space without a query, since a year is not a row to look up.
+    return not scope["year_jalali"] or 1300 <= scope["year_jalali"] <= 1500
+
+
 @api_view(["GET"])
 def distribution_view(request):
     """Asking-price shape for any scope, market-wide down to one model year.
@@ -719,6 +741,10 @@ def distribution_view(request):
         }
     except ValueError as exc:
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    if not _scope_is_real(scope):
+        # Answered, not cached: a scope naming nothing has no distribution to
+        # remember, and remembering it is exactly what the check is avoiding.
+        return envelope({"available": False, "reason": "unknown_scope", "scope": scope})
     key = "distribution:{brand}:{model_id}:{variant_id}:{year_jalali}".format(**scope)
     return envelope(cached(
         key, MARKETS_CACHE_SECONDS, lambda: research.price_distribution(**scope),
@@ -851,7 +877,15 @@ def overview_view(request):
 
 
 @api_view(["GET", "PATCH"])
+@permission_classes([IsAdminUser])
 def notifier_settings(request):
+    """Staff only, because there is exactly one of these.
+
+    `NotifierSettings` is a singleton by design — a single-operator tool, not a
+    per-user rule table. Left on the default `IsAuthenticated` it let any
+    account that had signed up rewrite the operator's alerting for everyone, or
+    simply switch it off, from a panel the deal board showed to all of them.
+    """
     cfg = NotifierSettings.load()
     if request.method == "GET":
         return Response(NotifierSettingsSerializer(cfg).data)

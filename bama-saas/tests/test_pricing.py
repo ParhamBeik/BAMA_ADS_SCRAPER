@@ -757,8 +757,10 @@ def test_message_names_the_evidence(notifier_catalog, cfg, _no_real_telegram):
 
 
 @pytest.mark.django_db
-def test_settings_endpoint_round_trips(client, db):
-    resp = client.patch(
+def test_settings_endpoint_round_trips(staff_client, db):
+    # Staff: the notifier is a site-wide singleton, so the endpoint is
+    # operator-only. See test_api.test_only_staff_may_touch_the_notifier.
+    resp = staff_client.patch(
         "/api/notifier-settings/",
         data={"enabled": True, "min_discount_pct": 25, "min_peers": 12},
         content_type="application/json",
@@ -770,8 +772,8 @@ def test_settings_endpoint_round_trips(client, db):
 
 
 @pytest.mark.django_db
-def test_settings_endpoint_rejects_a_peer_floor_below_the_engines(client, db):
-    resp = client.patch(
+def test_settings_endpoint_rejects_a_peer_floor_below_the_engines(staff_client, db):
+    resp = staff_client.patch(
         "/api/notifier-settings/",
         data={"min_peers": 3},
         content_type="application/json",

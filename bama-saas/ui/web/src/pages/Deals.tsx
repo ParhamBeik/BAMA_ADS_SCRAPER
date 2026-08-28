@@ -31,6 +31,7 @@ import { Link } from "react-router-dom";
 import { AlertTriangle, Bell } from "lucide-react";
 import { api } from "../api";
 import type { Envelope } from "../api";
+import { useAuth } from "../auth";
 import { FilterPanel } from "../FilterPanel";
 import { qs, useFilters } from "../filters";
 import {
@@ -134,13 +135,20 @@ function NumberField({
  * only mean anything next to the board they filter. It is a popover on the
  * board's own header rather than a card below it — the adjacency is the point,
  * a permanent wall of number inputs under the results was not.
+ *
+ * Staff only. There is one notifier for the whole site, not one per reader, so
+ * showing these controls to everyone offered every account a switch that turned
+ * off the operator's alerts. The endpoint enforces this; the check here only
+ * keeps the button from appearing and 403ing.
  */
 function NotifierPanel() {
   const client = useQueryClient();
+  const { user } = useAuth();
   const [form, setForm] = useState<NotifierSettings | null>(null);
 
   const settings = useQuery({
     queryKey: ["notifier-settings"],
+    enabled: Boolean(user?.is_staff),
     queryFn: ({ signal }) =>
       api.get<NotifierSettings>("/api/notifier-settings/", signal),
   });
