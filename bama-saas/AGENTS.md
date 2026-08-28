@@ -69,13 +69,16 @@ schema is independent of the Python layout. Do not remove those pins.
 - **Cache keys are hashed, never composed.** `views.cache_key(prefix, parts)`.
   Brand slugs are user-facing text and `ingest` can mint one containing spaces,
   which Django's Redis backend warns about on every get and memcached rejects.
-- **Read endpoints are unthrottled.** `DEFAULT_THROTTLE_RATES` covers `login`
-  and `register` only; there is no `DEFAULT_THROTTLE_CLASSES`. The comment above
-  it describes read throttling as done — it is not. So the payload cache is the
-  only thing standing between a scripted caller and repeated full scans, and a
-  caller varying the scope defeats it. Validating scope ids does not fix this
-  (the real catalogue is already far larger than the cache); a scoped throttle
-  on `distribution` and `movement` would.
+- **The read throttle is flat, not scoped.** Production (`if not DEBUG` in
+  `config/settings.py`) applies `AnonRateThrottle`/`UserRateThrottle` globally at
+  60/min anon and 600/min user — do not "add throttling", it is already there,
+  and `listing_image` opts out with `@throttle_classes([])` because one scroll
+  outruns the shared rate. What it is not is *scoped*: one rate covers a catalog
+  lookup and the `distribution`/`movement` scans alike, so a caller varying the
+  scope never reuses a cached answer and can re-run the expensive query 600 times
+  a minute while staying inside the limit. Validating scope ids does not help
+  (the real catalogue already dwarfs the cache); a scoped rate on those two
+  endpoints would. Weigh it against the SPA, which fires them per keystroke.
 - **`Ad.year` is provenance, never a key.** Bama publishes model years in both
   calendars, so raw `year` mixes 1399 and 2025 in one column. Cohorts and
   `?year=` use `year_jalali` (index `ad_market_jy_idx`). The `+621` offset in
