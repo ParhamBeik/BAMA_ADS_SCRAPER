@@ -56,6 +56,13 @@ schema is independent of the Python layout. Do not remove those pins.
 
 ## Domain invariants
 
+- **Cache the answer, never the response.** No gated endpoint may wear
+  `@cache_page`. It wraps the view from outside, so a cache hit returns the
+  stored response before DRF runs at all — permission check included, which
+  makes one signed-in reader's request a key anybody can reuse until it expires.
+  Use `views.cached(key, seconds, produce)`, which holds the payload behind the
+  gate. `tests/test_api.py::test_a_warm_cache_is_not_a_way_past_the_gate` fails
+  the moment any of the six analytics endpoints goes back to a response cache.
 - **`Ad.year` is provenance, never a key.** Bama publishes model years in both
   calendars, so raw `year` mixes 1399 and 2025 in one column. Cohorts and
   `?year=` use `year_jalali` (index `ad_market_jy_idx`). The `+621` offset in

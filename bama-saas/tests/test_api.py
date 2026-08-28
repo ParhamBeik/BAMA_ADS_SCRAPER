@@ -11,6 +11,8 @@ from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import pytest
+from django.urls import resolve
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.test import APIClient
 
 from apps.accounts.models import User
@@ -1254,3 +1256,60 @@ def test_thin_data_is_a_refusal_not_an_error(api_client):
         body = api_client.get(url).json()
         assert body["available"] is False
         assert body["reason"]
+
+
+# ---------------------------------------------------------------------------
+# The cache must never be a way past the gate
+# ---------------------------------------------------------------------------
+
+CACHED_ENDPOINTS = (
+    "/api/markets/",
+    "/api/analytics/movers/?scope=model&days=30",
+    "/api/analytics/turnover/?days=30",
+    "/api/analytics/arrivals/?days=30",
+    "/api/analytics/distribution/",
+    "/api/analytics/movement/?model=1",
+)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("url", CACHED_ENDPOINTS)
+def test_a_warm_cache_is_not_a_way_past_the_gate(api_client, url):
+    """Caching the response instead of the answer opens the whole endpoint.
+
+    `cache_page` wraps a view from outside, so a hit returns the stored response
+    before DRF runs — permission check included. One signed-in reader warming
+    the cache would leave the URL readable by anyone at all until it expired.
+    Caching the payload behind the view keeps the gate on every request.
+
+    The gate is pinned on the view rather than through `override_settings`:
+    DRF binds `permission_classes` when the view class is built at import, so a
+    settings override either arrives too late or sticks for the rest of the
+    session, depending on which test happened to import the module first.
+    """
+    view = resolve(url.split("?")[0]).func
+    with patch.object(view.cls, "permission_classes", [IsAuthenticated]):
+        assert api_client.get(url).status_code in (401, 403), "cold: gate holds"
+
+        member = APIClient()
+        member.force_authenticate(User.objects.create_user(
+            email="member@example.com", password="StrongPass1!"))
+        assert member.get(url).status_code == 200, "a member can read it"
+
+        # Same URL, no credentials, cache now warm.
+        assert api_client.get(url).status_code in (401, 403), "warm: gate still holds"
+
+
+@pytest.mark.django_db
+def test_the_cache_actually_caches(api_client):
+    """The gate fix is worthless if it quietly stopped the caching too."""
+    thin = {"available": False, "reason": "x"}
+    with patch("apps.core.research.movers", return_value=thin) as spy:
+        api_client.get("/api/analytics/movers/?scope=model&days=30")
+        api_client.get("/api/analytics/movers/?scope=model&days=30")
+    assert spy.call_count == 1
+
+    # A different window is a different question, so it is computed again.
+    with patch("apps.core.research.movers", return_value=thin) as spy:
+        api_client.get("/api/analytics/movers/?scope=model&days=7")
+    assert spy.call_count == 1

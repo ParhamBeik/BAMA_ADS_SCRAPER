@@ -780,8 +780,11 @@ def depreciation_curve(model_id: int, *, variant_id=None) -> dict:
     ]
     if len(points) < MIN_YEARS:
         return {
+            # `year_count`, not `years`: price_distribution's refusal carries a
+            # `years` list, and one key meaning a list in one refusal and a
+            # tally in another is a trap for whoever types the two together.
             "available": False, "reason": "insufficient_years",
-            "model_id": model_id, "years": len(points), "required": MIN_YEARS,
+            "model_id": model_id, "year_count": len(points), "required": MIN_YEARS,
         }
 
     newest = points[-1]

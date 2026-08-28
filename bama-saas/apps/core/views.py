@@ -19,11 +19,11 @@ from collections import defaultdict
 from datetime import timedelta
 
 from django.conf import settings
+from django.core.cache import cache
 from django.db.models import Case, Count, F, IntegerField, Q, Value, When
 from django.http import HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from django.views.decorators.cache import cache_page
 from rest_framework import status, viewsets
 from rest_framework.decorators import api_view, throttle_classes
 from rest_framework.generics import ListAPIView
@@ -126,6 +126,25 @@ def envelope(payload: dict, **extra) -> Response:
         "methodology_version": METHODOLOGY_VERSION,
         **extra,
     })
+
+
+def cached(key: str, seconds: int, produce):
+    """Cache the answer, never the response.
+
+    These aggregations are shared — every reader gets the same market — so they
+    are worth caching. But `cache_page` wraps a view from the outside, and a hit
+    returns the stored response before DRF runs at all, permission check
+    included: one signed-in reader warmed the cache and, for the rest of that
+    window, anyone at all could fetch the same URL and be served the answer.
+    Holding the payload instead keeps the gate in front of every single request
+    and still pays for the query once. See tests/test_api.py for the case that
+    fails the moment this goes back to a response-level cache.
+    """
+    hit = cache.get(key)
+    if hit is None:
+        hit = produce()
+        cache.set(key, hit, seconds)
+    return hit
 
 
 # ---------------------------------------------------------------------------
@@ -291,15 +310,8 @@ def listing_image(request, code: str, index: int | None = None):
 # ---------------------------------------------------------------------------
 
 
-@cache_page(MARKETS_CACHE_SECONDS)
-@api_view(["GET"])
-def markets(request):
-    """Per-model market summary (publish-complete, priced), top-N by ad count."""
-    try:
-        limit = max(1, min(int(request.query_params.get("limit", 100)), 500))
-    except ValueError:
-        limit = 100
-
+def _market_summary() -> list[dict]:
+    """Every model's price summary, ranked by how many cars are listed."""
     rows = (
         verified(Ad.objects)
         .filter(current_price__gt=0, publish_at__isnull=False)
@@ -327,7 +339,20 @@ def markets(request):
             "median_price": int(statistics.median(values)),
         })
     out.sort(key=lambda r: r["ad_count"], reverse=True)
-    return Response(out[:limit])
+    return out
+
+
+@api_view(["GET"])
+def markets(request):
+    """Per-model market summary (publish-complete, priced), top-N by ad count."""
+    try:
+        limit = max(1, min(int(request.query_params.get("limit", 100)), 500))
+    except ValueError:
+        limit = 100
+
+    # Cached whole and sliced per request, so readers asking for different
+    # depths of the same board share one scan rather than one each.
+    return Response(cached("markets:summary", MARKETS_CACHE_SECONDS, _market_summary)[:limit])
 
 
 @api_view(["GET"])
@@ -631,7 +656,6 @@ def _leaderboard_limit(params, default: int = 8) -> int:
         return default
 
 
-@cache_page(PULSE_CACHE_SECONDS)
 @api_view(["GET"])
 def movers_view(request):
     """Brands or models ranked by how far their price index moved.
@@ -645,12 +669,13 @@ def movers_view(request):
         return Response({"detail": "scope must be brand or model"},
                         status=status.HTTP_400_BAD_REQUEST)
     limit = _leaderboard_limit(request.query_params)
-    return envelope(research.movers(
-        scope, days=_window_days(request.query_params), limit=limit,
+    days = _window_days(request.query_params)
+    return envelope(cached(
+        f"pulse:movers:{scope}:{days}:{limit}", PULSE_CACHE_SECONDS,
+        lambda: research.movers(scope, days=days, limit=limit),
     ))
 
 
-@cache_page(PULSE_CACHE_SECONDS)
 @api_view(["GET"])
 def turnover_view(request):
     """Which models' listings leave the feed fastest, as a completed-window rate.
@@ -658,22 +683,24 @@ def turnover_view(request):
     Never "sold": the feed carries no reason, so this counts departures.
     """
     limit = _leaderboard_limit(request.query_params)
-    return envelope(research.turnover(
-        days=_window_days(request.query_params), limit=limit,
+    days = _window_days(request.query_params)
+    return envelope(cached(
+        f"pulse:turnover:{days}:{limit}", PULSE_CACHE_SECONDS,
+        lambda: research.turnover(days=days, limit=limit),
     ))
 
 
-@cache_page(PULSE_CACHE_SECONDS)
 @api_view(["GET"])
 def arrivals_view(request):
     """Which models are taking on the most new listings — the supply half."""
     limit = _leaderboard_limit(request.query_params)
-    return envelope(research.arrivals(
-        days=_window_days(request.query_params), limit=limit,
+    days = _window_days(request.query_params)
+    return envelope(cached(
+        f"pulse:arrivals:{days}:{limit}", PULSE_CACHE_SECONDS,
+        lambda: research.arrivals(days=days, limit=limit),
     ))
 
 
-@cache_page(MARKETS_CACHE_SECONDS)
 @api_view(["GET"])
 def distribution_view(request):
     """Asking-price shape for any scope, market-wide down to one model year.
@@ -684,17 +711,59 @@ def distribution_view(request):
     """
     params = request.query_params
     try:
-        return envelope(research.price_distribution(
-            brand=params.get("brand") or None,
-            model_id=_opt(params, "model", int),
-            variant_id=_opt(params, "variant", int),
-            year_jalali=_opt(params, "year", int),
-        ))
+        scope = {
+            "brand": params.get("brand") or None,
+            "model_id": _opt(params, "model", int),
+            "variant_id": _opt(params, "variant", int),
+            "year_jalali": _opt(params, "year", int),
+        }
     except ValueError as exc:
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    key = "distribution:{brand}:{model_id}:{variant_id}:{year_jalali}".format(**scope)
+    return envelope(cached(
+        key, MARKETS_CACHE_SECONDS, lambda: research.price_distribution(**scope),
+    ))
 
 
-@cache_page(MARKETS_CACHE_SECONDS)
+def _movement(model_id: int, variant_id: int | None, year: int | None, days: int) -> dict:
+    """The rebased index series for one scope. Pure arithmetic over snapshots."""
+    series = research.compute_index(research.cohort_series(
+        MarketIndex.Scope.MODEL, str(model_id),
+        variant_id=variant_id, year_jalali=year,
+    ))[-days:]
+    latest = series[-1] if series else None
+    if not latest:
+        return {"available": False, "reason": "insufficient_clean_history",
+                "scope": {"model_id": model_id, "variant_id": variant_id,
+                          "year_jalali": year}}
+    # Re-based on the first day still inside the window: the stored series is
+    # chained from its own first observation, and slicing it without re-basing
+    # would show a level that answers a question about a date off the chart.
+    base = series[0]["index_value"] or research.BASE_VALUE
+    rebased = [
+        {**point,
+         "date": point["date"].isoformat() if hasattr(point["date"], "isoformat")
+                 else point["date"],
+         "index_value": round(point["index_value"] / base * research.BASE_VALUE, 2)}
+        for point in series
+    ]
+    return {
+        "available": True,
+        "scope": {"model_id": model_id, "variant_id": variant_id, "year_jalali": year},
+        "base_value": research.BASE_VALUE,
+        "latest_index": rebased[-1]["index_value"],
+        "change_pct": round((latest["index_value"] / base - 1) * 100, 2),
+        "window": {
+            "requested_days": days,
+            "days": len(rebased),
+            "clamped": len(rebased) < days,
+            "first_date": rebased[0]["date"],
+            "last_date": rebased[-1]["date"],
+        },
+        "series": rebased,
+    }
+
+
 @api_view(["GET"])
 def movement_view(request):
     """A price index for a scope finer than the three that get persisted.
@@ -720,41 +789,10 @@ def movement_view(request):
         return Response({"detail": "movement requires ?model="},
                         status=status.HTTP_400_BAD_REQUEST)
 
-    series = research.compute_index(research.cohort_series(
-        MarketIndex.Scope.MODEL, str(model_id),
-        variant_id=variant_id, year_jalali=year,
-    ))[-days:]
-    latest = series[-1] if series else None
-    if not latest:
-        return envelope({"available": False, "reason": "insufficient_clean_history",
-                         "scope": {"model_id": model_id, "variant_id": variant_id,
-                                   "year_jalali": year}})
-    # Re-based on the first day still inside the window: the stored series is
-    # chained from its own first observation, and slicing it without re-basing
-    # would show a level that answers a question about a date off the chart.
-    base = series[0]["index_value"] or research.BASE_VALUE
-    rebased = [
-        {**point,
-         "date": point["date"].isoformat() if hasattr(point["date"], "isoformat")
-                 else point["date"],
-         "index_value": round(point["index_value"] / base * research.BASE_VALUE, 2)}
-        for point in series
-    ]
-    return envelope({
-        "available": True,
-        "scope": {"model_id": model_id, "variant_id": variant_id, "year_jalali": year},
-        "base_value": research.BASE_VALUE,
-        "latest_index": rebased[-1]["index_value"],
-        "change_pct": round((latest["index_value"] / base - 1) * 100, 2),
-        "window": {
-            "requested_days": days,
-            "days": len(rebased),
-            "clamped": len(rebased) < days,
-            "first_date": rebased[0]["date"],
-            "last_date": rebased[-1]["date"],
-        },
-        "series": rebased,
-    })
+    return envelope(cached(
+        f"movement:{model_id}:{variant_id}:{year}:{days}", MARKETS_CACHE_SECONDS,
+        lambda: _movement(model_id, variant_id, year, days),
+    ))
 
 
 @api_view(["GET"])
