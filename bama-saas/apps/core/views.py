@@ -59,6 +59,7 @@ from apps.core.serializers import (
 )
 from apps.jobs.fetcher import COVERAGE_WINDOW_HOURS, consecutive_blocks, find_gaps, known_feed_depth
 from apps.jobs.parsing import absolute_ad_url
+from apps.jobs.verify import MAX_JALALI_YEAR, MIN_JALALI_YEAR
 
 # Bumped whenever a formula changes, so a screenshotted answer can be traced to
 # the logic that produced it.
@@ -118,20 +119,17 @@ def _coverage() -> dict:
     }
 
 
-# How long a coverage reading stays good for. It describes the crawl, not the
-# answer, and the crawl moves on its own slow tick — but `find_gaps` pulls every
-# PageCoverage row in a 13-hour window into Python, so recomputing it per request
-# put the heaviest query in the envelope on the lightest endpoints. It used to
-# ride along inside a cached response; caching it directly restores that.
-COVERAGE_CACHE_SECONDS = 60
+def envelope(payload: dict, *, coverage: dict | None = None, **extra) -> Response:
+    """Wrap an answer with everything needed to judge it.
 
-
-def envelope(payload: dict, **extra) -> Response:
-    """Wrap an answer with everything needed to judge it."""
+    `coverage` is passed in by the cached endpoints so it keeps the vintage of
+    the answer it qualifies — see `cached_answer`. Uncached endpoints read it
+    fresh, which for them is the same thing.
+    """
     return Response({
         **payload,
         "as_of": timezone.now(),
-        "coverage": cached("coverage", COVERAGE_CACHE_SECONDS, _coverage),
+        "coverage": coverage if coverage is not None else _coverage(),
         "methodology_version": METHODOLOGY_VERSION,
         **extra,
     })
@@ -166,6 +164,28 @@ def cached(key: str, seconds: int, produce):
         hit = produce()
         cache.set(key, hit, seconds)
     return hit
+
+
+def cached_answer(key: str, seconds: int, produce) -> tuple[dict, dict]:
+    """An answer and the coverage that qualifies it, kept as one vintage.
+
+    Coverage is what tells a reader whether to trust the number printed beside
+    it, so the two have to age together. Held on separate clocks they drift: a
+    coverage reading taken after the crawl closed a gap ends up badging a figure
+    that was computed while the gap was open, which reads as "complete sweep" on
+    a number the hole is precisely the reason to doubt. The response cache this
+    replaced got that right for free by storing both under one key; storing them
+    as one entry is how to keep it.
+
+    It also keeps `_coverage` off the per-request path for these endpoints —
+    `find_gaps` pulls a 13-hour window of rows into Python, which is the
+    heaviest query in the envelope.
+    """
+    hit = cache.get(key)
+    if hit is None:
+        hit = {"payload": produce(), "coverage": _coverage()}
+        cache.set(key, hit, seconds)
+    return hit["payload"], hit["coverage"]
 
 
 # ---------------------------------------------------------------------------
@@ -417,6 +437,23 @@ def _opt(params, key, cast):
         raise ValueError(
             f"{key} must be {'an integer' if cast is int else 'a number'}"
         ) from exc
+
+
+def _model_year(params):
+    """`?year=`, refused outside the range the catalogue can hold.
+
+    Every other part of a scope names a row, so the catalogue's own size bounds
+    how many distinct scopes exist and therefore how many cache entries. A year
+    names nothing, so without this it is any integer at all — and each one is a
+    fresh key that misses the cache and re-runs the scan behind it. `verify`
+    already refuses to store a year outside these bounds, so nothing in range is
+    excluded and this needs no query to decide.
+    """
+    year = _opt(params, "year", int)
+    if year is not None and not (MIN_JALALI_YEAR <= year <= MAX_JALALI_YEAR):
+        raise ValueError(f"year must be a Jalali year between "
+                         f"{MIN_JALALI_YEAR} and {MAX_JALALI_YEAR}")
+    return year
 
 
 def _deal_score_row(obj, *, now=None):
@@ -696,11 +733,12 @@ def movers_view(request):
                         status=status.HTTP_400_BAD_REQUEST)
     limit = _leaderboard_limit(request.query_params)
     days = _window_days(request.query_params)
-    return envelope(cached(
+    payload, coverage = cached_answer(
         cache_key("pulse:movers", {"scope": scope, "days": days, "limit": limit}),
         PULSE_CACHE_SECONDS,
         lambda: research.movers(scope, days=days, limit=limit),
-    ))
+    )
+    return envelope(payload, coverage=coverage)
 
 
 @api_view(["GET"])
@@ -711,10 +749,11 @@ def turnover_view(request):
     """
     limit = _leaderboard_limit(request.query_params)
     days = _window_days(request.query_params)
-    return envelope(cached(
+    payload, coverage = cached_answer(
         cache_key("pulse:turnover", {"days": days, "limit": limit}), PULSE_CACHE_SECONDS,
         lambda: research.turnover(days=days, limit=limit),
-    ))
+    )
+    return envelope(payload, coverage=coverage)
 
 
 @api_view(["GET"])
@@ -722,10 +761,11 @@ def arrivals_view(request):
     """Which models are taking on the most new listings — the supply half."""
     limit = _leaderboard_limit(request.query_params)
     days = _window_days(request.query_params)
-    return envelope(cached(
+    payload, coverage = cached_answer(
         cache_key("pulse:arrivals", {"days": days, "limit": limit}), PULSE_CACHE_SECONDS,
         lambda: research.arrivals(days=days, limit=limit),
-    ))
+    )
+    return envelope(payload, coverage=coverage)
 
 
 @api_view(["GET"])
@@ -742,14 +782,15 @@ def distribution_view(request):
             "brand": params.get("brand") or None,
             "model_id": _opt(params, "model", int),
             "variant_id": _opt(params, "variant", int),
-            "year_jalali": _opt(params, "year", int),
+            "year_jalali": _model_year(params),
         }
     except ValueError as exc:
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-    return envelope(cached(
+    payload, coverage = cached_answer(
         cache_key("distribution", scope), MARKETS_CACHE_SECONDS,
         lambda: research.price_distribution(**scope),
-    ))
+    )
+    return envelope(payload, coverage=coverage)
 
 
 def _movement(model_id: int, variant_id: int | None, year: int | None, days: int) -> dict:
@@ -808,7 +849,7 @@ def movement_view(request):
     try:
         model_id = _opt(params, "model", int)
         variant_id = _opt(params, "variant", int)
-        year = _opt(params, "year", int)
+        year = _model_year(params)
         days = _window_days(params, default=90)
     except ValueError as exc:
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -816,11 +857,12 @@ def movement_view(request):
         return Response({"detail": "movement requires ?model="},
                         status=status.HTTP_400_BAD_REQUEST)
 
-    return envelope(cached(
+    payload, coverage = cached_answer(
         cache_key("movement", {"model": model_id, "variant": variant_id,
                                "year": year, "days": days}), MARKETS_CACHE_SECONDS,
         lambda: _movement(model_id, variant_id, year, days),
-    ))
+    )
+    return envelope(payload, coverage=coverage)
 
 
 @api_view(["GET"])

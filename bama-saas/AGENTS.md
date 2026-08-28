@@ -62,23 +62,40 @@ schema is independent of the Python layout. Do not remove those pins.
   this, both of which have bitten: `@cache_page`, which wraps the view from
   outside so a hit returns before DRF runs its permission check at all; and
   `Cache-Control: public`, which invites any proxy or CDN in front to keep its
-  own copy. Cache the *answer* instead — `views.cached(key, seconds, produce)`
-  holds the payload behind the gate — and say `private` on gated responses.
-  `tests/test_api.py::test_a_warm_cache_is_not_a_way_past_the_gate` fails the
-  moment any of the six analytics endpoints goes back to a response cache.
-- **Cache keys are hashed, never composed.** `views.cache_key(prefix, parts)`.
+  own copy. Cache the *answer* instead — `views.cached` / `views.cached_answer`
+  hold the payload behind the gate. `listing_image` is the only endpoint that
+  sets `Cache-Control` at all, and it says `private`; if you ever add the header
+  elsewhere, say `private` there too. `test_a_warm_cache_is_not_a_way_past_the_gate`
+  covers the response-cache half on all six cached endpoints — the header half is
+  a rule, not a test.
+- **Coverage ages with the answer it qualifies.** Both come out of
+  `views.cached_answer` as one entry. Cached apart they drift, and a coverage
+  reading taken after the crawl closed a gap ends up badging a figure computed
+  while it was open — "complete sweep" printed on the one number the hole is the
+  reason to doubt.
+- **Cache keys embedding user text are hashed.** `views.cache_key(prefix, parts)`.
   Brand slugs are user-facing text and `ingest` can mint one containing spaces,
   which Django's Redis backend warns about on every get and memcached rejects.
+  Fixed literals (`"markets:summary"`) and alphanumeric ad codes are fine as-is.
+- **Bound every scope axis that is not a row.** Brand, model and variant name
+  rows, so the catalogue's size bounds how many distinct cache entries exist. A
+  year does not — unbounded it is any integer, and each one is a fresh key that
+  misses the cache and re-runs the scan behind it. `views._model_year` refuses
+  anything outside `verify`'s `MIN_JALALI_YEAR`/`MAX_JALALI_YEAR`. Do not extend
+  this to existence checks on the row-backed axes: that costs a query per request
+  and buys nothing, since the real catalogue already dwarfs the cache.
 - **The read throttle is flat, not scoped.** Production (`if not DEBUG` in
-  `config/settings.py`) applies `AnonRateThrottle`/`UserRateThrottle` globally at
-  60/min anon and 600/min user — do not "add throttling", it is already there,
-  and `listing_image` opts out with `@throttle_classes([])` because one scroll
-  outruns the shared rate. What it is not is *scoped*: one rate covers a catalog
-  lookup and the `distribution`/`movement` scans alike, so a caller varying the
-  scope never reuses a cached answer and can re-run the expensive query 600 times
-  a minute while staying inside the limit. Validating scope ids does not help
-  (the real catalogue already dwarfs the cache); a scoped rate on those two
-  endpoints would. Weigh it against the SPA, which fires them per keystroke.
+  `config/settings.py`) applies `AnonRateThrottle`/`UserRateThrottle` globally,
+  defaulting to 60/min anon and 600/min user via `THROTTLE_ANON`/`THROTTLE_USER`
+  — do not "add throttling", it is already there, and `listing_image` opts out
+  with `@throttle_classes([])` because one scroll of photos outruns the shared
+  rate. What it is not is *scoped*: one rate covers a catalog lookup and the
+  `distribution`/`movement` scans alike, so a signed-in caller varying the scope
+  never reuses a cached answer and can re-run the expensive query 600 times a
+  minute while staying inside the limit. (The anon rate does not enter into it —
+  permissions are checked before throttles, so an anonymous caller is refused
+  first.) A scoped rate on those two endpoints would close it; weigh it against
+  the SPA, which fires them per keystroke.
 - **`Ad.year` is provenance, never a key.** Bama publishes model years in both
   calendars, so raw `year` mixes 1399 and 2025 in one column. Cohorts and
   `?year=` use `year_jalali` (index `ad_market_jy_idx`). The `+621` offset in

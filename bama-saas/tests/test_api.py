@@ -34,6 +34,7 @@ from apps.core.models import (
 )
 from apps.core.pricing import compute_deal_scores
 from apps.core.views import cache_key
+from apps.jobs.verify import MAX_JALALI_YEAR, MIN_JALALI_YEAR
 from tests.conftest import CDN, NOW, UTC
 
 # A fixed "now" so publish_at / observed_at derived from it are deterministic.
@@ -1370,16 +1371,72 @@ def test_a_brand_slug_with_a_space_still_makes_a_usable_cache_key(api_client):
 
 
 @pytest.mark.django_db
-def test_coverage_is_computed_once_not_once_per_panel(api_client):
-    """Coverage rides in every envelope, and the home page draws several panels.
+def test_coverage_is_computed_once_per_answer_not_once_per_request(api_client):
+    """Coverage rides in every envelope, and `find_gaps` pulls a 13-hour window
+    of rows into Python — the heaviest query in the envelope, landing on the
+    endpoints that fire on every dropdown change.
 
-    It used to be carried along inside a cached response. Once the cache moved
-    behind the view it started being recomputed per request — and `find_gaps`
-    pulls a 13-hour window of coverage rows into Python, which is the heaviest
-    query in the envelope landing on the lightest endpoints.
+    Once per cached answer, not once globally: it is stored with the answer it
+    qualifies so the two age together, which is what the response cache this
+    replaced did. Two endpoints therefore hold two readings, and that is the
+    price of neither of them wearing the other's provenance.
     """
     with patch("apps.core.views._coverage", return_value={"complete_sweep": True}) as spy:
-        api_client.get("/api/analytics/movers/?days=30")
-        api_client.get("/api/analytics/turnover/?days=30")
         api_client.get("/api/analytics/arrivals/?days=30")
-    assert spy.call_count == 1
+        api_client.get("/api/analytics/arrivals/?days=30")
+        api_client.get("/api/analytics/arrivals/?days=30")
+        assert spy.call_count == 1, "recomputed per request"
+
+        api_client.get("/api/analytics/turnover/?days=30")
+        assert spy.call_count == 2, "a second answer carries its own reading"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("url", [
+    "/api/analytics/distribution/?year=1",
+    "/api/analytics/distribution/?year=99999999999999999999",
+    "/api/analytics/movement/?model=1&year=2020",
+])
+def test_a_year_outside_the_calendar_is_refused_before_the_scan(api_client, url):
+    """Every other part of a scope names a row, so the catalogue bounds how many
+    scopes exist and therefore how many cache entries. A year names nothing, so
+    unbounded it is any integer at all — each one a fresh key that misses the
+    cache and re-runs the scan behind it. `verify` will not store a year outside
+    these bounds, so refusing them excludes no real data."""
+    with patch("apps.core.research.price_distribution") as spy:
+        assert api_client.get(url).status_code == 400
+        assert spy.call_count == 0
+
+
+@pytest.mark.django_db
+def test_the_scopes_the_app_actually_sends_still_answer(api_client):
+    """The bound must not refuse what the scope picker produces."""
+    brand = Brand.objects.create(slug="peugeot", name_fa="پژو")
+    model = Model.objects.create(brand=brand, name_fa="۲۰۶")
+    variant = Variant.objects.create(model=model, name_fa="تیپ ۲")
+    for url in ("", f"?brand={brand.slug}", f"?model={model.pk}",
+                f"?model={model.pk}&variant={variant.pk}",
+                f"?brand={brand.slug}&model={model.pk}&year=1399",
+                f"?model={model.pk}&year={MIN_JALALI_YEAR}",
+                f"?model={model.pk}&year={MAX_JALALI_YEAR}"):
+        assert api_client.get(
+            f"/api/analytics/distribution/{url}").status_code == 200, url
+
+
+@pytest.mark.django_db
+def test_coverage_shares_the_vintage_of_the_answer_it_qualifies(api_client):
+    """Coverage tells a reader whether to trust the number beside it, so the two
+    have to age together. On separate clocks a coverage reading taken after the
+    crawl closed a gap ends up badging a figure computed while it was open."""
+    holed = {"complete_sweep": False, "uncovered_ranks": 400}
+    swept = {"complete_sweep": True, "uncovered_ranks": 0}
+
+    with patch("apps.core.views._coverage", return_value=holed):
+        first = api_client.get("/api/analytics/arrivals/?days=30").json()
+    assert first["coverage"] == holed
+
+    # The crawl fills the hole, but the answer on offer is still the one computed
+    # across it — so it must keep carrying the coverage it was computed under.
+    with patch("apps.core.views._coverage", return_value=swept):
+        second = api_client.get("/api/analytics/arrivals/?days=30").json()
+    assert second["coverage"] == holed, "a stale answer wore fresh provenance"
