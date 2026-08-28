@@ -7,10 +7,12 @@ nothing depends on the seeded 50k-row dev database.
 
 from __future__ import annotations
 
+import warnings
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import pytest
+from django.core.cache import CacheKeyWarning
 from django.urls import resolve
 from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.test import APIClient
@@ -31,6 +33,7 @@ from apps.core.models import (
     Variant,
 )
 from apps.core.pricing import compute_deal_scores
+from apps.core.views import cache_key
 from tests.conftest import CDN, NOW, UTC
 
 # A fixed "now" so publish_at / observed_at derived from it are deterministic.
@@ -1341,31 +1344,42 @@ def test_only_staff_may_touch_the_notifier(api_client):
     assert IsAdminUser in view.cls.permission_classes
 
 
-@pytest.mark.django_db
-def test_a_made_up_scope_is_answered_but_never_cached(api_client):
-    """The distribution query is the expensive one, and it is affordable only
-    because repeats come from the cache. The cache is keyed by scope, so a
-    caller inventing a new scope every time never hits it and re-runs the scan
-    at will. Invented scopes are refused before the scan, and left unremembered
-    so they cannot fill the cache either."""
-    with patch("apps.core.research.price_distribution") as spy:
-        for brand in ("no-such-brand", "another-fake", "third"):
-            body = api_client.get(f"/api/analytics/distribution/?brand={brand}").json()
-            assert body["available"] is False
-            assert body["reason"] == "unknown_scope"
-        assert api_client.get("/api/analytics/distribution/?model=999999").json()[
-            "reason"] == "unknown_scope"
-        assert api_client.get("/api/analytics/distribution/?year=9999").json()[
-            "reason"] == "unknown_scope"
-    assert spy.call_count == 0, "the expensive scan never ran"
 
 
 @pytest.mark.django_db
-def test_a_real_scope_still_gets_its_distribution(api_client):
-    """The guard must not refuse the scopes the app actually asks for."""
-    brand = Brand.objects.create(slug="peugeot", name_fa="پژو")
-    model = Model.objects.create(brand=brand, name_fa="۲۰۶")
-    for url in ("", f"?brand={brand.slug}", f"?model={model.pk}",
-                f"?brand={brand.slug}&model={model.pk}&year=1399"):
-        body = api_client.get(f"/api/analytics/distribution/{url}").json()
-        assert body.get("reason") != "unknown_scope", url
+def test_a_brand_slug_with_a_space_still_makes_a_usable_cache_key(api_client):
+    """Slugs reach the cache key as text, and ingest can mint one with spaces.
+
+    `apps.jobs.ingest` resolves a slug collision by appending the raw Persian
+    name, so a real brand can carry spaces. Interpolated into a key that reaches
+    Redis it warns on every request, and memcached refuses it outright — so the
+    key is hashed rather than composed.
+    """
+    brand = Brand.objects.create(slug="kia موتور جدید", name_fa="کیا")
+    Model.objects.create(brand=brand, name_fa="سراتو")
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", CacheKeyWarning)
+        assert api_client.get(
+            f"/api/analytics/distribution/?brand={brand.slug}").status_code == 200
+
+    key = cache_key("distribution", {"brand": brand.slug})
+    assert " " not in key and len(key) < 250
+    # Distinct scopes stay distinct once hashed.
+    assert key != cache_key("distribution", {"brand": "kia"})
+
+
+@pytest.mark.django_db
+def test_coverage_is_computed_once_not_once_per_panel(api_client):
+    """Coverage rides in every envelope, and the home page draws several panels.
+
+    It used to be carried along inside a cached response. Once the cache moved
+    behind the view it started being recomputed per request — and `find_gaps`
+    pulls a 13-hour window of coverage rows into Python, which is the heaviest
+    query in the envelope landing on the lightest endpoints.
+    """
+    with patch("apps.core.views._coverage", return_value={"complete_sweep": True}) as spy:
+        api_client.get("/api/analytics/movers/?days=30")
+        api_client.get("/api/analytics/turnover/?days=30")
+        api_client.get("/api/analytics/arrivals/?days=30")
+    assert spy.call_count == 1

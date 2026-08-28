@@ -118,15 +118,35 @@ def _coverage() -> dict:
     }
 
 
+# How long a coverage reading stays good for. It describes the crawl, not the
+# answer, and the crawl moves on its own slow tick — but `find_gaps` pulls every
+# PageCoverage row in a 13-hour window into Python, so recomputing it per request
+# put the heaviest query in the envelope on the lightest endpoints. It used to
+# ride along inside a cached response; caching it directly restores that.
+COVERAGE_CACHE_SECONDS = 60
+
+
 def envelope(payload: dict, **extra) -> Response:
     """Wrap an answer with everything needed to judge it."""
     return Response({
         **payload,
         "as_of": timezone.now(),
-        "coverage": _coverage(),
+        "coverage": cached("coverage", COVERAGE_CACHE_SECONDS, _coverage),
         "methodology_version": METHODOLOGY_VERSION,
         **extra,
     })
+
+
+def cache_key(prefix: str, parts: dict) -> str:
+    """A cache key that cannot be shaped by what the caller typed.
+
+    Brand slugs reach us as text, and `ingest` mints collision-path slugs that
+    embed the raw Persian name, spaces and all — which Django's Redis backend
+    warns about on every get and memcached rejects outright. Hashing the scope
+    keeps the key opaque and fixed-width; the prefix keeps it greppable.
+    """
+    scope = "|".join(f"{k}={parts[k]!r}" for k in sorted(parts))
+    return f"{prefix}:{hashlib.sha256(scope.encode()).hexdigest()[:32]}"
 
 
 def cached(key: str, seconds: int, produce):
@@ -300,7 +320,12 @@ def listing_image(request, code: str, index: int | None = None):
     # Bama's image URLs are content-addressed, so the bytes behind one of our
     # paths cannot change without the ad's stored URL changing too — which makes
     # this genuinely immutable rather than optimistically so.
-    response["Cache-Control"] = f"public, max-age={settings.IMAGE_CACHE_SECONDS}, immutable"
+    #
+    # `private`, not `public`: this endpoint requires a login, and `public`
+    # invites any proxy or CDN placed in front of it to keep a copy and hand
+    # that copy to whoever asks — the same shape as the response cache that made
+    # the analytics readable without an account. Browsers still cache it.
+    response["Cache-Control"] = f"private, max-age={settings.IMAGE_CACHE_SECONDS}, immutable"
     response["ETag"] = f'"{hashlib.sha256(body).hexdigest()[:32]}"'
     response["Content-Length"] = str(len(body))
     return response
@@ -672,7 +697,8 @@ def movers_view(request):
     limit = _leaderboard_limit(request.query_params)
     days = _window_days(request.query_params)
     return envelope(cached(
-        f"pulse:movers:{scope}:{days}:{limit}", PULSE_CACHE_SECONDS,
+        cache_key("pulse:movers", {"scope": scope, "days": days, "limit": limit}),
+        PULSE_CACHE_SECONDS,
         lambda: research.movers(scope, days=days, limit=limit),
     ))
 
@@ -686,7 +712,7 @@ def turnover_view(request):
     limit = _leaderboard_limit(request.query_params)
     days = _window_days(request.query_params)
     return envelope(cached(
-        f"pulse:turnover:{days}:{limit}", PULSE_CACHE_SECONDS,
+        cache_key("pulse:turnover", {"days": days, "limit": limit}), PULSE_CACHE_SECONDS,
         lambda: research.turnover(days=days, limit=limit),
     ))
 
@@ -697,30 +723,9 @@ def arrivals_view(request):
     limit = _leaderboard_limit(request.query_params)
     days = _window_days(request.query_params)
     return envelope(cached(
-        f"pulse:arrivals:{days}:{limit}", PULSE_CACHE_SECONDS,
+        cache_key("pulse:arrivals", {"days": days, "limit": limit}), PULSE_CACHE_SECONDS,
         lambda: research.arrivals(days=days, limit=limit),
     ))
-
-
-def _scope_is_real(scope: dict) -> bool:
-    """Does this scope name anything that exists?
-
-    Guards the cache, not the answer. The distribution query is the unindexed
-    scan its docstring warns about, and it is affordable only because repeats
-    are served from the cache — but the cache is keyed by the scope, so a caller
-    varying the scope every time never hits it and re-runs the scan at will.
-    Made-up brands and ids are the cheap way to do that, and three indexed
-    existence checks cost far less than the scan they refuse.
-    """
-    if scope["brand"] and not Brand.objects.filter(pk=scope["brand"]).exists():
-        return False
-    if scope["model_id"] and not Model.objects.filter(pk=scope["model_id"]).exists():
-        return False
-    if scope["variant_id"] and not Variant.objects.filter(pk=scope["variant_id"]).exists():
-        return False
-    # Jalali model years the catalogue could plausibly carry — bounds the key
-    # space without a query, since a year is not a row to look up.
-    return not scope["year_jalali"] or 1300 <= scope["year_jalali"] <= 1500
 
 
 @api_view(["GET"])
@@ -741,13 +746,9 @@ def distribution_view(request):
         }
     except ValueError as exc:
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-    if not _scope_is_real(scope):
-        # Answered, not cached: a scope naming nothing has no distribution to
-        # remember, and remembering it is exactly what the check is avoiding.
-        return envelope({"available": False, "reason": "unknown_scope", "scope": scope})
-    key = "distribution:{brand}:{model_id}:{variant_id}:{year_jalali}".format(**scope)
     return envelope(cached(
-        key, MARKETS_CACHE_SECONDS, lambda: research.price_distribution(**scope),
+        cache_key("distribution", scope), MARKETS_CACHE_SECONDS,
+        lambda: research.price_distribution(**scope),
     ))
 
 
@@ -816,7 +817,8 @@ def movement_view(request):
                         status=status.HTTP_400_BAD_REQUEST)
 
     return envelope(cached(
-        f"movement:{model_id}:{variant_id}:{year}:{days}", MARKETS_CACHE_SECONDS,
+        cache_key("movement", {"model": model_id, "variant": variant_id,
+                               "year": year, "days": days}), MARKETS_CACHE_SECONDS,
         lambda: _movement(model_id, variant_id, year, days),
     ))
 

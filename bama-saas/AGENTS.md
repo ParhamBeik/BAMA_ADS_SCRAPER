@@ -56,13 +56,26 @@ schema is independent of the Python layout. Do not remove those pins.
 
 ## Domain invariants
 
-- **Cache the answer, never the response.** No gated endpoint may wear
-  `@cache_page`. It wraps the view from outside, so a cache hit returns the
-  stored response before DRF runs at all — permission check included, which
-  makes one signed-in reader's request a key anybody can reuse until it expires.
-  Use `views.cached(key, seconds, produce)`, which holds the payload behind the
-  gate. `tests/test_api.py::test_a_warm_cache_is_not_a_way_past_the_gate` fails
-  the moment any of the six analytics endpoints goes back to a response cache.
+- **Nothing shared may hold a gated response.** A gated endpoint's *reply* must
+  never be stored anywhere a second reader could be handed it — that turns one
+  signed-in request into a key anybody can reuse until it expires. Two shapes of
+  this, both of which have bitten: `@cache_page`, which wraps the view from
+  outside so a hit returns before DRF runs its permission check at all; and
+  `Cache-Control: public`, which invites any proxy or CDN in front to keep its
+  own copy. Cache the *answer* instead — `views.cached(key, seconds, produce)`
+  holds the payload behind the gate — and say `private` on gated responses.
+  `tests/test_api.py::test_a_warm_cache_is_not_a_way_past_the_gate` fails the
+  moment any of the six analytics endpoints goes back to a response cache.
+- **Cache keys are hashed, never composed.** `views.cache_key(prefix, parts)`.
+  Brand slugs are user-facing text and `ingest` can mint one containing spaces,
+  which Django's Redis backend warns about on every get and memcached rejects.
+- **Read endpoints are unthrottled.** `DEFAULT_THROTTLE_RATES` covers `login`
+  and `register` only; there is no `DEFAULT_THROTTLE_CLASSES`. The comment above
+  it describes read throttling as done — it is not. So the payload cache is the
+  only thing standing between a scripted caller and repeated full scans, and a
+  caller varying the scope defeats it. Validating scope ids does not fix this
+  (the real catalogue is already far larger than the cache); a scoped throttle
+  on `distribution` and `movement` would.
 - **`Ad.year` is provenance, never a key.** Bama publishes model years in both
   calendars, so raw `year` mixes 1399 and 2025 in one column. Cohorts and
   `?year=` use `year_jalali` (index `ad_market_jy_idx`). The `+621` offset in
