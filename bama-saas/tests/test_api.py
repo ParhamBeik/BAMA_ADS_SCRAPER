@@ -1391,21 +1391,33 @@ def test_coverage_is_computed_once_per_answer_not_once_per_request(api_client):
         assert spy.call_count == 2, "a second answer carries its own reading"
 
 
+# Each endpoint reaches a different expensive call, so "the scan never ran" has
+# to be spied on the one that endpoint actually makes — patching the other
+# proves nothing and would pass with the guard deleted.
+YEAR_GUARDED = (
+    ("/api/analytics/distribution/?year=1", "apps.core.research.price_distribution"),
+    ("/api/analytics/distribution/?year=99999999999999999999",
+     "apps.core.research.price_distribution"),
+    ("/api/analytics/movement/?model=1&year=2020", "apps.core.research.cohort_series"),
+    ("/api/analytics/movement/?model=1&year=1299", "apps.core.research.cohort_series"),
+)
+
+
 @pytest.mark.django_db
-@pytest.mark.parametrize("url", [
-    "/api/analytics/distribution/?year=1",
-    "/api/analytics/distribution/?year=99999999999999999999",
-    "/api/analytics/movement/?model=1&year=2020",
-])
-def test_a_year_outside_the_calendar_is_refused_before_the_scan(api_client, url):
+@pytest.mark.parametrize("url,expensive", YEAR_GUARDED)
+def test_a_year_outside_the_calendar_is_refused_before_the_scan(api_client, url, expensive):
     """Every other part of a scope names a row, so the catalogue bounds how many
     scopes exist and therefore how many cache entries. A year names nothing, so
     unbounded it is any integer at all — each one a fresh key that misses the
     cache and re-runs the scan behind it. `verify` will not store a year outside
-    these bounds, so refusing them excludes no real data."""
-    with patch("apps.core.research.price_distribution") as spy:
+    these bounds, so refusing them excludes no real data.
+
+    1299 and 2020 both matter: one is just off the end of the range, the other is
+    a Gregorian year, which is the plausible mistake a hand-written call makes.
+    """
+    with patch(expensive) as spy:
         assert api_client.get(url).status_code == 400
-        assert spy.call_count == 0
+        assert spy.call_count == 0, "the expensive call ran anyway"
 
 
 @pytest.mark.django_db
