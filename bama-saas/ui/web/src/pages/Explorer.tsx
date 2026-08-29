@@ -25,7 +25,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, ArrowUpDown, Wallet } from "lucide-react";
+import { AlertTriangle, ArrowUpDown, Gauge, Wallet } from "lucide-react";
 import { api } from "../api";
 import type { Envelope, Paginated } from "../api";
 import { FilterPanel } from "../FilterPanel";
@@ -36,6 +36,7 @@ import {
 } from "../ui";
 import type { Distribution } from "../ui";
 import { ViewToggle, useListView } from "../components/ViewToggle";
+import { conditionNote } from "../components/DealCard";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "../components/ui/select";
@@ -67,6 +68,8 @@ interface AdRow {
   bama_url?: string;
   price_basis_unclear?: boolean;
   condition_flagged?: boolean;
+  condition_band?: string | null;
+  mileage_implausible?: boolean;
 }
 
 // Must match REST_FRAMEWORK.PAGE_SIZE in config/settings.py — the API gives
@@ -114,11 +117,13 @@ function componentDetail(name: string, facts?: Record<string, unknown>): string 
     case "cohort_median":
       return `میانه ${peers} آگهی ${String(facts.model ?? "")} با همان تیپ و سال ساخت`;
     case "condition":
-      return facts.basis === "peers"
-        ? `بر پایه ${peers} آگهی با وضعیت بدنه «${String(facts.body_status || "مشابه")}»`
-        : `اختلاف اندازه‌گیری‌شده در کل کاتالوگ برای بدنه ${
-            CONDITION_BAND[String(facts.band)] ?? String(facts.band ?? "")
-          } — آگهی‌های مشابه این خودرو برای سنجش جداگانه کم بودند`;
+      // Always the catalogue-wide figure now. The per-cohort branch this used
+      // to describe was removed: `median(band) - median(cohort)` came out
+      // positive whenever a cohort's damaged cars were its newer ones, so paint
+      // damage raised a car's value. The pooled haircut cannot change sign.
+      return `اختلاف اندازه‌گیری‌شده در کل کاتالوگ برای بدنه ${
+        CONDITION_BAND[String(facts.band)] ?? String(facts.band ?? "")
+      }${peers ? `، ${peers} آگهی مشابه هم همین وضعیت را دارند` : ""}`;
     case "mileage":
       return `بر پایه ${peers} آگهی در بازه کارکرد ${Number(
         facts.bucket ?? 0,
@@ -148,11 +153,20 @@ function AdWarnings({ ad }: { ad: AdRow }) {
         </span>
       )}
       {ad.condition_flagged && (
+        <span className="badge warn" title={conditionNote(ad)}>
+          <AlertTriangle size={11} /> {ad.body_status || "وضعیت بدنه"}
+        </span>
+      )}
+      {/* An odometer nobody can believe. `verify` flags these and `pricing`
+          declines to adjust on them, but every screen still printed the number
+          as a fact — a 1404 Koleos at 9,000,000 km — and "most mileage first"
+          ranked the typos to the top of the list. */}
+      {ad.mileage_implausible && (
         <span
           className="badge warn"
-          title={ad.body_status || "توضیحات آگهی به تصادف، پلاک منطقه آزاد یا وضعیت بدنه اشاره کرده است"}
+          title="کارکرد ثبت‌شده باورپذیر نیست — احتمالاً اشتباه تایپی فروشنده است و در محاسبه قیمت نادیده گرفته شده"
         >
-          <AlertTriangle size={11} /> {ad.body_status || "وضعیت بدنه"}
+          <Gauge size={11} /> کارکرد مشکوک
         </span>
       )}
       {flag && (
@@ -301,9 +315,12 @@ export function Explorer() {
                       </td>
                       <td className="num">{ad.year_jalali ?? ad.year ?? "—"}</td>
                       <td className="num">
-                        {ad.mileage != null
-                          ? `${ad.mileage.toLocaleString("en-US")} km`
-                          : "—"}
+                        {ad.mileage == null ? "—" : (
+                          <span className={ad.mileage_implausible ? "warn" : undefined}>
+                            {ad.mileage.toLocaleString("en-US")} km
+                            {ad.mileage_implausible && "؟"}
+                          </span>
+                        )}
                       </td>
                       <td className="num">{toman(ad.current_price)}</td>
                       <td className="num">

@@ -100,6 +100,13 @@ schema is independent of the Python layout. Do not remove those pins.
   calendars, so raw `year` mixes 1399 and 2025 in one column. Cohorts and
   `?year=` use `year_jalali` (index `ad_market_jy_idx`). The `+621` offset in
   `parsing.py` applies to *model years* only, never to a timestamp.
+- **A make is a make; a model is not.** Bama files سمند, پراید, دنا and their
+  siblings as top-level brands, which split one manufacturer's catalogue into a
+  dozen one-model "brands" and made the brand filter useless for the two makes
+  that dominate the market. `ingest.BRAND_PARENT` remaps them to ایران خودرو
+  and سایپا on the way in; migration `0025` merged the rows that already
+  existed. The model names carry the identity that is lost («دنا پلاس», «پراید
+  ۱۳۱»), so nothing became ambiguous. فونیکس is deliberately left alone.
 - **Zero is a value.** `detail.mileage` is `"صفر کیلومتر"` for ~33% of ads.
   Use `parse_mileage` (returns `0`), never a positive-only parser.
 - **Verify, then quarantine.** Every ingest runs the rules in `verify.py`. Soft
@@ -130,6 +137,32 @@ schema is independent of the Python layout. Do not remove those pins.
   is a systematic signal, not a tail — see the open question in the README.
   The constant lives in `pricing.py` because the API filters on it and the UI
   narrates it; it used to live only in `Deals.tsx`.
+- **The discount the reader sees is measured against the peer median.** The
+  badge used to be computed from `fair_value` while the card printed
+  `peer_median` beside it, so the arithmetic on screen never reconciled — the
+  one panel whose job is to be checkable was the one that could not be checked.
+  The condition and mileage adjustments are still computed and still shown, but
+  as *context* for a gap, not as the gap itself. This re-ranks the board.
+- **Condition never raises a car's value.** The measured-haircut ladder is
+  ordered (`CONDITION_BANDS`: clean → cosmetic → painted → structural), and a
+  thin band
+  used to be filled from same-band peers, which let a repainted car out-price a
+  clean one whenever its own peer group happened to be dearer. There is now one
+  pooled path, and `pricing._monotone` forces the measured ladder to be
+  non-decreasing before it is applied — a sampling accident cannot invert it.
+- **A damaged car is reviewed, not recommended.** Scoring on the peer median
+  reopened the old failure where the board filled with paint and structural
+  repair, so `pricing.REVIEW_CONDITION_BANDS` routes those two bands to
+  `band=review` through the real column `DealScoreCache.needs_review`. It is a
+  column and not a key inside `components` on purpose: `exclude()` on a JSON
+  path also drops every row where the key is absent, because SQL `NOT NULL` is
+  not TRUE.
+- **Every screen counts the same population.** `pricing.scorable_rows()` is it —
+  verified, non-outlier, clear-basis ads. The browse endpoints each used to
+  assemble their own queryset and skipped `exclude_unclear_price`, so the
+  Explorer, the front-page tile, the market summary and the model search
+  reported four different totals for one catalogue. `Ad.price_basis_unclear` is
+  a derived, indexed column written in `Ad.save`; no caller sets it.
 - **Installment ads are not cheap cars.** Their lump-sum price field holds a
   down payment. Anything ranked by price gap must exclude them
   (`quality.price_basis_unclear`) or the top of the board is entirely artifact —
@@ -183,6 +216,15 @@ schema is independent of the Python layout. Do not remove those pins.
   same snapshots via `cohort_series(..., variant_id=, year_jalali=)`, because
   persisting a series per trim would multiply the warm tick's writes for a
   question most sessions never ask.
+- **A thinly-crawled day is bridged, not chained through.** A day whose ad count
+  falls under `research.MIN_DAY_COVERAGE_RATIO` of its trailing seven-day median
+  is a crawl outage, and chaining a return across it reported our own downtime
+  as a market move. Such a day publishes `return_pct: null` and `low_coverage`,
+  and — this is the load-bearing half — does *not* become the previous point, so
+  the next well-covered day links back to the last well-covered one and the
+  chain stays continuous. `gap_days` says how far it reached back. `movers`
+  samples the last non-thin point, so one thin day at the end cannot erase a
+  scope from the board.
 - **Every leaderboard row carries its sample.** `movers` and `turnover` both
   return the cohort/ad/episode counts behind each figure and the UI prints them.
   A 4% move off three cohorts and one off forty are not the same claim, and a
@@ -212,6 +254,17 @@ schema is independent of the Python layout. Do not remove those pins.
 - **Removal is proven, not guessed.** An ad goes `REMOVED` only after two
   complete coverage windows without it (`COVERAGE_WINDOW_HOURS = 24`). Elapsed
   wall-clock time is not evidence.
+- **Complete means one page's worth of slack, not zero.** `coverage_is_complete`
+  allows up to `COVERAGE_GAP_TOLERANCE_RANKS` (= one `PAGE_SIZE`) uncovered
+  ranks across all gaps. Demanding a literal zero meant a single 403 mid-sweep
+  suspended removal detection for the whole day, and the feed shifts by more
+  than one page between reads anyway, so the strict reading was never achievable
+  on a live feed. `uncovered_ranks(gaps)` is the arithmetic; the UI reports the
+  measured number rather than a boolean, so the slack is visible.
+- **A failed probe must not move the ratchet.** `_fetch_live(..., probe=True)`
+  records a non-WAF failure as `SUCCEEDED` with `END_UNCONFIRMED` and no
+  `feed_end_rank`, so a dead detail page cannot be mistaken for the end of the
+  feed. A 403 still opens the cooldown breaker — that one is a block.
 - **Three states, because there are three facts.** `ACTIVE` (seen), `REMOVED`
   (provably absent), `UNVERIFIED` (absent, but coverage could not be proven).
   The third exists because leaving unprovable ads `ACTIVE` had the app

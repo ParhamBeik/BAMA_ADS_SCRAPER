@@ -75,6 +75,34 @@ MAX_COHORT_RETURN = 0.5
 
 BASE_VALUE = 100.0
 
+# A day the crawler barely covered still produces cohort medians, and they are
+# medians of whichever slice it happened to reach. Chaining through one reports
+# the outage as a price move.
+#
+# Measured on production 2026-08-28: 2026-07-16, -17 and -18 were each built
+# from ~1,950 ads against 21,733 on a normal day — 9% coverage — and were
+# published at full confidence. The market series' single largest step
+# (+1.52% on 07-26) sits on the far side of a four-day hole and is most of the
+# front page's headline "+1.8%"; the Tondar 90 series drops 4.15% on the day
+# its sample goes 69 -> 278, on a panel captioned "listings coming and going
+# cannot move this index".
+#
+# A day below this share of the recent norm therefore contributes no return at
+# all: the level is carried forward and the next well-covered day chains against
+# the last well-covered one, exactly as a missing day already did. Half is
+# deliberately loose — this is meant to catch an outage, not to police a quiet
+# Friday, and real day-over-day feed drift is under 1%.
+MIN_DAY_COVERAGE_RATIO = 0.5
+
+# What "the recent norm" is measured over. Trailing rather than whole-series:
+# the feed grew from ~6k to ~21k ads over August, so a series-wide median would
+# call every early day an outage and every late one fine.
+COVERAGE_REFERENCE_DAYS = 7
+
+# Below this many accepted days there is nothing to compare against, so no day
+# can be judged thin. Two points make a median that any third value beats.
+MIN_COVERAGE_REFERENCE_DAYS = 3
+
 
 def cohort_series(
     scope: str,
@@ -115,8 +143,15 @@ def cohort_series(
 def compute_index(by_date: dict) -> list[dict]:
     """Chain per-date cohort medians into a series, oldest first.
 
-    Gaps are bridged: consecutive *available* dates are chained, so a day the
-    worker did not run costs resolution, never a break in the series.
+    Gaps are bridged: consecutive *well-covered* dates are chained, so a day the
+    worker did not run — or only half ran — costs resolution, never a break in
+    the series.
+
+    Each point carries the two facts a reader needs to know whether to believe
+    its move: ``gap_days`` is how many calendar days it is chained across (1 on
+    a normal day), and ``low_coverage`` marks a day the crawler under-covered,
+    whose return is withheld rather than published. See
+    ``MIN_DAY_COVERAGE_RATIO``.
     """
     dates = sorted(by_date)
     if not dates:
@@ -125,18 +160,47 @@ def compute_index(by_date: dict) -> list[dict]:
     series: list[dict] = []
     index_value = BASE_VALUE
     previous: dict | None = None
+    previous_date = None
+    # Totals of the days actually chained, newest last. The yardstick a day's
+    # own coverage is judged against.
+    reference: list[int] = []
 
     for d in dates:
         current = by_date[d]
+        day_ads = sum(n for _, n in current.values())
+        gap_days = (d - previous_date).days if previous_date else None
+
+        # Judged before this day joins the reference, or an outage would move
+        # the very norm that is supposed to catch it.
+        thin = (
+            len(reference) >= MIN_COVERAGE_REFERENCE_DAYS
+            and day_ads < MIN_DAY_COVERAGE_RATIO * statistics.median(reference)
+        )
+
         if previous is None:
             # The base date: an index needs somewhere to start, and the first
             # observation cannot have a return by definition.
             series.append({
                 "date": d, "index_value": index_value, "return_pct": None,
-                "cohort_count": len(current),
-                "ad_count": sum(n for _, n in current.values()),
+                "cohort_count": len(current), "ad_count": day_ads,
+                "gap_days": None, "low_coverage": False,
             })
-            previous = current
+            previous, previous_date = current, d
+            reference.append(day_ads)
+            continue
+
+        if thin:
+            # Carry the level and, crucially, do NOT advance `previous`: the
+            # next well-covered day then chains against the last well-covered
+            # one instead of against a slice of the market.
+            # ad_count/cohort_count mean "what stood behind this day's return",
+            # and a withheld return has nothing behind it. The day's raw sample
+            # is not lost — it is the reason `low_coverage` is set.
+            series.append({
+                "date": d, "index_value": round(index_value, 4), "return_pct": None,
+                "cohort_count": 0, "ad_count": 0,
+                "gap_days": gap_days, "low_coverage": True,
+            })
             continue
 
         weighted_sum = 0.0
@@ -171,8 +235,12 @@ def compute_index(by_date: dict) -> list[dict]:
             "return_pct": round(day_return * 100, 4) if day_return is not None else None,
             "cohort_count": matched,
             "ad_count": weight_total,
+            "gap_days": gap_days,
+            "low_coverage": False,
         })
-        previous = current
+        previous, previous_date = current, d
+        reference.append(day_ads)
+        del reference[:-COVERAGE_REFERENCE_DAYS]
 
     return series
 
@@ -206,6 +274,11 @@ def read_index(scope: str, scope_id: str | None = None, days: int | None = None)
             "return_pct": r.return_pct,
             "cohort_count": r.cohort_count,
             "ad_count": r.ad_count,
+            # Both are needed to read a point honestly: how many calendar days
+            # this step spans, and whether the day under it was covered enough
+            # to have an opinion at all.
+            "gap_days": r.gap_days,
+            "low_coverage": r.low_coverage,
         }
         for r in reversed(list(qs))
     ]
@@ -256,12 +329,13 @@ def movers(scope: str, *, days: int = 30, limit: int = 10) -> dict:
     rows = (
         MarketIndex.objects.filter(scope=scope, date__gte=cutoff)
         .order_by("scope_id", "date")
-        .values_list("scope_id", "date", "index_value", "ad_count", "cohort_count")
+        .values_list("scope_id", "date", "index_value", "ad_count", "cohort_count",
+                     "low_coverage")
     )
 
     by_scope: dict[str, list] = defaultdict(list)
-    for scope_id, day, value, ads, cohorts in rows:
-        by_scope[str(scope_id)].append((day, value, ads, cohorts))
+    for scope_id, day, value, ads, cohorts, low in rows:
+        by_scope[str(scope_id)].append((day, value, ads, cohorts, low))
 
     ranked = []
     for scope_id, points in by_scope.items():
@@ -270,7 +344,12 @@ def movers(scope: str, *, days: int = 30, limit: int = 10) -> dict:
         first, last = points[0], points[-1]
         if not first[1]:
             continue
-        if last[3] < MOVER_MIN_COHORTS:
+        # The sample test asks the last day that actually contributed one. An
+        # under-covered day carries the level forward with nothing behind it, so
+        # judging the scope on its counts would drop every scope whose most
+        # recent day happened to land in a crawler outage.
+        sampled = next((p for p in reversed(points) if not p[4]), last)
+        if sampled[3] < MOVER_MIN_COHORTS:
             continue
         ranked.append({
             "scope_id": scope_id,
@@ -279,11 +358,11 @@ def movers(scope: str, *, days: int = 30, limit: int = 10) -> dict:
             "days": len(points),
             "first_date": first[0].isoformat(),
             "last_date": last[0].isoformat(),
-            "ad_count": last[2],
-            "cohort_count": last[3],
+            "ad_count": sampled[2],
+            "cohort_count": sampled[3],
             # Enough to draw a sparkline beside the row, without a second call
             # per row. Rounded here so the payload is not full of float noise.
-            "series": [round(v, 2) for _, v, _, _ in points],
+            "series": [round(v, 2) for _, v, _, _, _ in points],
         })
 
     names = _scope_names(scope, [r["scope_id"] for r in ranked])
@@ -355,6 +434,9 @@ class SurvivalCurve:
     n: int = 0
     delisted: int = 0
     censored: int = 0
+    # The longest any listing in this sample has been watched. It bounds what
+    # the curve can say: past it there is no evidence either way.
+    max_followup: float = 0.0
 
     def probability_still_listed(self, day: float) -> float:
         current = 1.0
@@ -376,11 +458,20 @@ class SurvivalCurve:
         return None
 
     def as_dict(self) -> dict:
+        median = self.median_days()
         return {
             "n": self.n,
             "delisted": self.delisted,
             "censored": self.censored,
-            "median_days": self.median_days(),
+            "median_days": median,
+            # When the curve never falls to 0.5 the median is not missing, it is
+            # censored: more than half of these listings are still up, so the
+            # honest answer is "longer than we have watched" and this is that
+            # bound. Rendering the median as an em dash beside a large "simple
+            # average, misleading" figure left the wrong number as the only one
+            # on the panel with a value.
+            "median_days_at_least": None if median is not None else round(self.max_followup, 1),
+            "observed_days": round(self.max_followup, 1),
             "curve": [
                 {"day": t, "still_listed": round(s, 4), "at_risk": r}
                 for t, s, r in zip(self.times, self.survival, self.at_risk, strict=True)
@@ -402,6 +493,7 @@ def kaplan_meier(observations: list[Observation]) -> SurvivalCurve:
 
     curve.delisted = sum(1 for o in observations if o.delisted)
     curve.censored = curve.n - curve.delisted
+    curve.max_followup = max(o.days for o in observations)
 
     survival = 1.0
     for day in sorted({o.days for o in observations if o.delisted}):
@@ -464,6 +556,11 @@ def survival(*, model_id=None, variant_id=None, year_jalali=None) -> dict:
     curve = kaplan_meier(observations)
     result = curve.as_dict()
     result["available"] = True
+    # The span this was computed over, stated the way the index states its own.
+    # Every figure below is bounded by it, and a "4 days" with nothing saying it
+    # came from a fortnight of history reads as a property of the market.
+    result["clean_start"] = clean_start().date().isoformat()
+    result["clean_days"] = max(0, (now - clean_start()).days)
     # Fixed horizons as well as the median. The median is one order statistic
     # and goes degenerate when removal dates cluster — which they do in
     # backfilled history — and "odds it is still here in a month" is usually the
@@ -489,6 +586,12 @@ def survival(*, model_id=None, variant_id=None, year_jalali=None) -> dict:
 # a whole curve, but still high enough that one lucky week cannot top the board.
 TURNOVER_MIN_EPISODES = 15
 
+# The shortest window worth *clamping down to*. Below a week, "share that left
+# within N days" is a statement about one weekend, and silently answering that
+# when a month was asked for would be worse than saying there is no history yet.
+# It does not bound what a caller may ask for explicitly.
+MIN_TURNOVER_WINDOW_DAYS = 7
+
 
 def turnover(*, days: int = 30, limit: int = 10) -> dict:
     """Share of each model's listings that left the feed within ``days``.
@@ -508,16 +611,32 @@ def turnover(*, days: int = 30, limit: int = 10) -> dict:
     a sale, an expiry or a withdrawal with no way to tell which.
     """
     now = timezone.now()
-    cutoff = now - timedelta(days=days)
-    # A listing cannot have completed a window that started before the earliest
-    # date whose endings we trust. Said plainly rather than reported as "too few
-    # listings", because the two have different answers: this one fixes itself
-    # as clean history accrues, and a shorter window works today.
-    clean_days = (now - clean_start()).days
-    if clean_days < days:
+    # The window is *clamped* to the trustworthy history rather than refused,
+    # the same way the price index clamps a 90-day request to the 44 days it
+    # has. It used to refuse outright, and the home page asks for 30 days by
+    # default against 14 days of clean history — so the turnover panel was empty
+    # on the front page for every reader, every time, and only the 7-day chip
+    # could produce anything. An empty panel taught nobody that a shorter window
+    # worked.
+    #
+    # Half the clean history, not all of it. The denominator is episodes that
+    # *started* at least `days` ago and after the clean cut, so its width is
+    # exactly `clean_days - days`: clamping to the full clean history would
+    # leave a zero-width pool and answer "no listings" for a different reason.
+    # Splitting it evenly gives the window as much room to close as there are
+    # listings to watch close in it.
+    clean_days = max(0, (now - clean_start()).days)
+    requested_days = days
+    days = min(days, clean_days // 2)
+    # The floor applies only to a window we shortened. A caller asking for three
+    # days is asking a narrow question and is entitled to the narrow answer;
+    # what must not happen is *silently* answering a three-day question when
+    # thirty days were requested.
+    if days < requested_days and days < MIN_TURNOVER_WINDOW_DAYS:
         return {"available": False, "reason": "window_exceeds_clean_history",
-                "window_days": days, "clean_days": max(0, clean_days),
+                "window_days": requested_days, "clean_days": clean_days,
                 "clean_start": clean_start().date().isoformat()}
+    cutoff = now - timedelta(days=days)
 
     rows = _episode_qs().filter(started_at__lte=cutoff).values_list(
         "ad__model_id", "ad__model__name_fa", "ad__model__brand__name_fa",
@@ -555,6 +674,9 @@ def turnover(*, days: int = 30, limit: int = 10) -> dict:
     return {
         "available": True,
         "window_days": days,
+        "requested_days": requested_days,
+        "clamped": days < requested_days,
+        "clean_days": clean_days,
         "models_ranked": len(ranked),
         "clean_start": clean_start().date().isoformat(),
         "fastest": ranked[:limit],

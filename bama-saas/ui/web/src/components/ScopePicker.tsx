@@ -146,10 +146,18 @@ export function ScopePicker({ years }: { years?: { year_jalali: number; n: numbe
           <SelectContent>
             <SelectItem value={ANY}>همه سال‌ها</SelectItem>
             {years?.map((y) => (
-              <SelectItem key={y.year_jalali} value={String(y.year_jalali)}>
+              // The count needs its own label or the accessible name is the two
+              // numbers run together — "1390" beside "62" was announced as
+              // "139062", a year that does not exist.
+              <SelectItem
+                key={y.year_jalali}
+                value={String(y.year_jalali)}
+                textValue={String(y.year_jalali)}
+                aria-label={`سال ${y.year_jalali} — ${y.n} آگهی`}
+              >
                 {y.year_jalali}
                 <span className="text-muted-foreground ms-2 font-mono text-[11px]">
-                  {y.n.toLocaleString("en-US")}
+                  {y.n.toLocaleString("en-US")} آگهی
                 </span>
               </SelectItem>
             ))}

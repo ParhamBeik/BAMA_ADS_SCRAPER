@@ -829,6 +829,38 @@ def test_leading_hole_when_page_zero_was_skipped():
 
 
 @pytest.mark.django_db
+def test_a_sliver_of_a_gap_does_not_switch_removal_detection_off():
+    """Zero uncovered ranks was a bar the live feed can never hold.
+
+    The feed is strictly recency-ordered and shifts continuously, so two pages
+    read seconds apart can leave a handful of ranks neither one claimed. One
+    such hole — six ranks against a ~28,700-rank feed — switched removal
+    detection off entirely, and production flip-flopped between "986 ads marked
+    REMOVED" and "cannot prove an ad is gone" inside sixteen minutes.
+
+    The gap is still *reported*, so the coverage job still closes it; what
+    changed is only whether it invalidates the window.
+    """
+    from apps.jobs.fetcher import COVERAGE_GAP_TOLERANCE_RANKS, coverage_is_complete
+
+    window = djtz.now() - timedelta(hours=24)
+    run = _run()
+    _cover(run, [0, 1, 2, 3])
+    # Six ranks in the middle that no page claimed.
+    PageCoverage.objects.filter(fetch_run=run, page_index=1).update(rank_lo=37)
+
+    gaps = find_gaps()
+    assert gaps == [(31, 36)]                     # still visible to gap repair
+    assert sum(hi - lo + 1 for lo, hi in gaps) <= COVERAGE_GAP_TOLERANCE_RANKS
+    assert coverage_is_complete(since=window) is True
+
+    # A real multi-page hole is still exactly what the check exists to catch.
+    PageCoverage.objects.filter(fetch_run=run, page_index__in=[1, 2]).delete()
+    assert sum(hi - lo + 1 for lo, hi in find_gaps()) > COVERAGE_GAP_TOLERANCE_RANKS
+    assert coverage_is_complete(since=window) is False
+
+
+@pytest.mark.django_db
 def test_two_holes_stay_separate():
     _cover(_run(), [0, 2, 4])
     assert find_gaps() == [(31, 60), (91, 120)]

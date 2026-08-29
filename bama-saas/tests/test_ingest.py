@@ -256,6 +256,39 @@ def test_presentation_fields_are_promoted_from_the_payload(known_catalog, make_p
     assert ad.source_modified_at is not None
 
 
+# --- derived flag on the UPDATE path -----------------------------------------
+
+@pytest.mark.django_db
+def test_reingest_sets_price_basis_unclear_through_update(known_catalog, make_payload):
+    """queryset.update() never calls Ad.save, so the derived flag used to stick.
+
+    An ad first seen as cash that later becomes an instalment listing must flip
+    on the next crawl. Leaving the old False is the exact staleness this column
+    exists to end — and is what the UPDATE path in ingest used to do.
+    """
+    observed = datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc)
+    run1 = FetchRun.objects.create(source=FetchRun.Source.LIVE_FETCH)
+    payload = make_payload("instal01", 15_000_000_000)
+    ad = _ing(extract_ad(payload, observed), run=run1,
+              observed_at=observed, publish_at=observed)
+    ad.refresh_from_db()
+    assert ad.price_basis_unclear is False
+
+    run2 = FetchRun.objects.create(source=FetchRun.Source.LIVE_FETCH)
+    reset_price_cache()
+    later = datetime(2026, 8, 9, 12, 0, tzinfo=timezone.utc)
+    # Title stays the original "پژو، 405" so extract_ad still resolves the
+    # known model. The finance vocabulary lives in the description — that is
+    # where Bama actually puts instalment terms on lumpsum ads, and it is
+    # enough for quality.price_basis_unclear.
+    payload["detail"]["description"] = "فروش خودرو به صورت نقد و اقساط"
+    _ing(extract_ad(payload, later), run=run2, observed_at=later, publish_at=later)
+
+    stored = Ad.objects.get(code="instal01")
+    assert stored.price_basis_unclear is True
+    assert stored.description.startswith("فروش خودرو به صورت نقد و اقساط")
+
+
 # --- photos ------------------------------------------------------------------
 #
 # Unit level for the extractor (a pure dict -> tuple function), integration for
@@ -434,6 +467,43 @@ def test_source_timestamps_are_read_as_tehran_local():
 
     assert parsed.tzinfo is not None
     assert parsed.hour != 12, "a bare local time must not be taken for UTC"
+
+
+# ---------------------------------------------------------------------------
+# A make is a make; a model filed as one is not
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_a_model_bama_files_as_a_brand_lands_under_its_real_make(make_payload):
+    """سمند and پراید arrive as top-level brands and must not stay that way.
+
+    Bama's feed has no manufacturer field, so every IKCO and SAIPA model is its
+    own one-model "brand". That splits the two makes covering most of the market
+    into a dozen fragments each and leaves the brand filter unable to answer
+    "show me Iran Khodro". ``BRAND_PARENT`` remaps them on the way in; the model
+    name is what carries the identity, so nothing is lost by the merge.
+    """
+    reset_cache()  # the dimension cache outlives a test database
+    run = FetchRun.objects.create(source=FetchRun.Source.LIVE_FETCH)
+    for code, brand, model in [
+        ("ikco001", "سمند", "سمند LX"),
+        ("saipa01", "پراید", "پراید ۱۳۱"),
+        ("chery01", "چری", "آریزو ۵"),
+    ]:
+        payload = make_payload(code, 3_000_000_000, brand=brand, model=model)
+        extracted = extract_ad(payload, NOW)
+        _ing(extracted, run=run, observed_at=NOW, publish_at=NOW)
+
+    def brand_of(code):
+        return Ad.objects.get(code=code).brand.name_fa
+
+    assert brand_of("ikco001") == "ایران خودرو"
+    assert brand_of("saipa01") == "سایپا"
+    assert brand_of("chery01") == "چری", "a real make must pass through untouched"
+    assert Ad.objects.get(code="ikco001").model.name_fa == "سمند LX", (
+        "the model keeps the identity the brand column gave up"
+    )
+    assert not Brand.objects.filter(name_fa__in=["سمند", "پراید"]).exists()
 
 
 # ---------------------------------------------------------------------------

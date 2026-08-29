@@ -304,8 +304,14 @@ def test_ads_list_hides_overpriced_outliers_by_default(api_client, catalog):
 
 
 @pytest.mark.django_db
-def test_overview_priced_count_matches_the_explorer_population(api_client, catalog):
-    """Both screens must exclude the same absurd high-price rows."""
+def test_overview_count_matches_the_explorer_population(api_client, catalog):
+    """One market, one number.
+
+    The front page, the Explorer footer and the deal board footer each used to
+    count a population of their own — 23,028 / 22,997 / 22,170 for the same
+    market on the same afternoon. They now read the same queryset, so this is
+    an equality and not an approximation.
+    """
     outlier = catalog["ads"][0]
     outlier.cohort_flags = ["price_outlier_high"]
     outlier.save(update_fields=["cohort_flags"])
@@ -313,7 +319,61 @@ def test_overview_priced_count_matches_the_explorer_population(api_client, catal
     explorer = api_client.get("/api/ads/").json()
     overview = api_client.get("/api/analytics/overview/").json()
 
-    assert overview["priced_listings"] == explorer["count"] == 7
+    assert overview["active_listings"] == explorer["count"] == 7
+    # The tile this replaced was `active.filter(price > 0)` over a population
+    # that was already priced, so it could only ever restate the number above it.
+    assert "priced_listings" not in overview
+
+
+@pytest.mark.django_db
+def test_a_filter_the_api_does_not_have_is_refused(api_client, catalog):
+    """A parameter that does nothing must not look like one that matched.
+
+    `?search=` was ignored in silence, so it returned all 22,997 listings with a
+    200 — indistinguishable from a search that matched the whole catalogue. The
+    filterset's own names still work; only names nothing reads are refused.
+    """
+    refused = api_client.get("/api/ads/?search=پژو")
+    assert refused.status_code == 400
+    assert "search" in refused.json()["detail"]
+
+    assert api_client.get("/api/ads/?q=تست").status_code == 200
+    assert api_client.get("/api/ads/?ordering=current_price&page=1").status_code == 200
+
+
+@pytest.mark.django_db
+def test_a_price_that_is_a_deposit_is_not_in_the_browse_population(api_client, catalog):
+    """One population, so 'cheapest first' returns cars and not allocations.
+
+    Sorting the Explorer by price put eight حواله rows at the top, priced at
+    their deposit, because the browse endpoints never applied the instalment
+    filter the analytics did — which is also why four screens printed four
+    different totals for one market.
+    """
+    voucher = catalog["ads"][0]
+    voucher.title = "حواله پژو 207"
+    voucher.current_price = 11_000_000
+    voucher.save()
+
+    assert voucher.price_basis_unclear is True  # derived on save, not by hand
+    listed = api_client.get("/api/ads/?ordering=current_price").json()
+    assert voucher.code not in {r["code"] for r in listed["results"]}
+    assert listed["count"] == api_client.get(
+        "/api/analytics/overview/").json()["active_listings"]
+
+
+@pytest.mark.django_db
+def test_fair_price_404s_on_a_code_that_does_not_exist(api_client, catalog):
+    """Siblings must agree about whether an ad exists.
+
+    `/api/ads/ZZZZNOPE/` answered 404 while its `fair-price/` answered 200 with
+    `available: false`, so the screen rendered "not enough data for this car"
+    for a car that was never there.
+    """
+    assert api_client.get("/api/ads/ZZZZNOPE/").status_code == 404
+    assert api_client.get("/api/ads/ZZZZNOPE/fair-price/").status_code == 404
+    # A real ad with too few peers is still a 200: that one is an answer.
+    assert api_client.get(f"/api/ads/{catalog['ads'][0].code}/fair-price/").status_code == 200
 
 
 @pytest.mark.django_db
@@ -598,6 +658,55 @@ def test_trusted_bands_never_show_a_listing_above_the_ceiling(api_client, dated_
 
 
 @pytest.mark.django_db
+def test_a_declared_repaint_is_reviewed_not_recommended(api_client, dated_deals):
+    """The board stopped being a list of damaged cars.
+
+    Integration rather than unit: the defect was never in one function — the
+    score, the band routing and the window floor each had to agree, and the
+    served board is the only place that shows whether they do. Measured on
+    production, 23 of the 24 cards on page one carried a paint or accident flag.
+
+    A modest, fresh discount on a repainted car: nothing about the number is
+    suspicious, so only the declared condition can move it.
+    """
+    painted = dated_deals["ad0"]          # 8% off, published today
+    painted.needs_review = True
+    painted.components = {**painted.components, "condition_band": "painted"}
+    painted.save(update_fields=["needs_review", "components"])
+
+    def codes(band):
+        return {r["code"] for r in
+                api_client.get(f"/api/analytics/deal-scores/?band={band}").json()["results"]}
+
+    assert "ad0" not in codes("top")
+    assert "ad0" in codes("review")
+    # The three bands stay disjoint: a row the listing itself explains is not
+    # "everything under the ceiling" either.
+    assert "ad0" not in codes("all")
+    assert not codes("review") & codes("all")
+
+
+@pytest.mark.django_db
+def test_the_window_floor_ignores_the_rows_it_cannot_offer(api_client, dated_deals):
+    """The top band's discount floor is measured over the top band's population.
+
+    Repainted cars sit well below their cohorts, so leaving them in would pull
+    the floor up using exactly the listings the floor is meant to be
+    independent of — and quietly shorten the board for everyone else.
+    """
+    deep = dated_deals["ad4"]             # the 20%, five days old
+    with_it = api_client.get("/api/analytics/deal-scores/?band=top").json()
+    deep.needs_review = True
+    deep.save(update_fields=["needs_review"])
+    from django.core.cache import cache
+    cache.delete(pricing._WINDOW_CACHE_KEY)
+    without_it = api_client.get("/api/analytics/deal-scores/?band=top").json()
+
+    assert without_it["window"]["min_discount_pct"] <= with_it["window"]["min_discount_pct"]
+    assert without_it["window"]["scored"] < with_it["window"]["scored"]
+
+
+@pytest.mark.django_db
 def test_board_ranks_freshness_before_discount(api_client, dated_deals):
     """A fresh 8% outranks a five-day-old 20%. That is the whole point."""
     rows = api_client.get("/api/analytics/deal-scores/?band=all").json()["results"]
@@ -777,6 +886,39 @@ def test_admin_fetch_concurrency_guard_is_409(api_client):
         assert "detail" in resp.json()
     finally:
         running.delete()
+
+
+@pytest.mark.django_db
+def test_a_rebuild_already_running_refuses_a_second_one(api_client):
+    """`fetch` was the only trigger with a guard; the other three had none.
+
+    Three clicks a second apart gave three 202s and three threads rebuilding the
+    same tables. A full rebuild DELETEs every row on the board before writing,
+    so two overlapping runs can leave it empty for as long as the slower one
+    takes. The 409 matches the shape `fetch` has always returned.
+    """
+    from apps.core.models import JobRun
+
+    user = User.objects.create_superuser(email="admin@example.com", password="StrongPass1!")
+    api_client.force_authenticate(user=user)
+    JobRun.objects.create(name="deal_scores", status=JobRun.Status.RUNNING)
+
+    with patch("apps.jobs.views._spawn") as mock_spawn:
+        again = api_client.post("/api/admin/jobs/deal-scores/", {}, format="json")
+        # The pipeline button runs `deal_scores` as one of its steps, so it has
+        # to see the same conflict rather than racing the run already going.
+        pipeline = api_client.post("/api/admin/jobs/refresh-analytics/", {}, format="json")
+        # ...while an unrelated job is still free to start.
+        unrelated = api_client.post("/api/admin/jobs/backfill-images/", {}, format="json")
+
+    assert again.status_code == 409, again.content
+    assert pipeline.status_code == 409, pipeline.content
+    assert unrelated.status_code == 202, unrelated.content
+    mock_spawn.assert_called_once()
+
+    # And the panel can see what is in flight, so its buttons can say so.
+    overview = api_client.get("/api/admin/jobs/overview/").json()
+    assert "deal_scores" in overview["running"]
 
 
 @pytest.mark.django_db

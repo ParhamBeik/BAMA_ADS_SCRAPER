@@ -36,9 +36,9 @@ import { FilterPanel } from "../FilterPanel";
 import { qs, useFilters } from "../filters";
 import {
   Async, BamaLink, Card, ConfidenceDots, Fa, ListingActions, Pager, Provenance,
-  Table, pct, toman,
+  Table, fa, pct, toman,
 } from "../ui";
-import { DealCard, type Deal } from "../components/DealCard";
+import { DealCard, conditionNote, type Deal } from "../components/DealCard";
 import { ViewToggle, useListView } from "../components/ViewToggle";
 import { Button } from "../components/ui/button";
 import { Label } from "../components/ui/label";
@@ -290,9 +290,14 @@ function BandedGrid({ rows, ceiling }: { rows: Deal[]; ceiling: number }) {
   return <>{out}</>;
 }
 
+// `all` is not "all ads": the API returns everything at or below the trusted
+// ceiling whose discount the listing does not already explain, so the rows in
+// `review` are excluded from it by design. The label used to say «همه آگهی‌ها»,
+// which promised a superset the tab never returned — 26 listings were missing
+// from it with nothing on screen to account for them.
 const TABS: { id: string; label: string }[] = [
   { id: "top", label: "پیشنهادهای برتر" },
-  { id: "all", label: "همه آگهی‌ها" },
+  { id: "all", label: "بقیه معامله‌ها" },
   { id: "review", label: "نیازمند بررسی" },
 ];
 
@@ -349,27 +354,36 @@ export function Deals() {
       <p className="muted">
         {band === "top" && (
           <>
-            آگهی‌هایی که در <b>{w?.window_days ?? "—"} روز گذشته</b> ثبت یا
-            به‌روزرسانی شده‌اند و دست‌کم <b>{w?.min_discount_pct ?? "—"}٪</b> زیر
-            میانه قیمت آگهی‌های مشابه خود هستند. هر دو حد از همین آگهی‌های امروز
-            محاسبه می‌شوند، نه از عددی ثابت. تازه‌ترین آگهی‌ها اول می‌آیند، چون
-            قیمتشان به بازار امروز نزدیک‌تر است.
+            آگهی‌هایی که در <b>{fa(w?.window_days)} روز گذشته</b> ثبت یا
+            به‌روزرسانی شده‌اند و دست‌کم{" "}
+            {/* One decimal. The floor is a percentile of today's board, and
+                printing it as "7.15%" offered the reader a precision that is
+                an artefact of which listings happen to be live this hour. */}
+            <b>{w ? pct(w.min_discount_pct, 1) : "—"}</b> زیر میانه قیمت
+            آگهی‌های مشابه خود هستند. هر دو حد از همین آگهی‌های امروز محاسبه
+            می‌شوند، نه از عددی ثابت. تازه‌ترین آگهی‌ها اول می‌آیند، چون قیمتشان
+            به بازار امروز نزدیک‌تر است. خودروهایی که خودِ آگهی ارزانی‌شان را
+            توضیح می‌دهد — رنگ‌شدگی یا تعویض قطعه — در زبانه «نیازمند بررسی»‌اند.
           </>
         )}
         {band === "all" && (
           <>
-            همه آگهی‌های زیر میانه قیمت آگهی‌های مشابه، تا سقف{" "}
-            <b>{w?.ceiling_pct ?? "—"}٪</b>، در همان بازه{" "}
-            <b>{w?.window_days ?? "—"} روزه</b>. گروه‌بندی بر پایه تازگی آگهی
-            است و میزان تخفیف تنها ترتیب درون هر گروه را تعیین می‌کند.
+            بقیه آگهی‌های زیر میانه قیمت آگهی‌های مشابه، تا سقف{" "}
+            <b>{w ? pct(w.ceiling_pct, 0) : "—"}</b>، در همان بازه{" "}
+            <b>{fa(w?.window_days)} روزه</b> — یعنی همان‌هایی که به حد
+            «پیشنهادهای برتر» نرسیده‌اند. گروه‌بندی بر پایه تازگی آگهی است و
+            میزان تخفیف تنها ترتیب درون هر گروه را تعیین می‌کند.
           </>
         )}
         {band === "review" && (
           <>
-            تخفیف بیش از <b>{w?.ceiling_pct ?? "—"}٪</b> تقریباً همیشه دلیلی دارد
-            که این محاسبه نمی‌بیند: آگهی‌های مشابه فقط بر پایه «مدل، تیپ و سال»
-            انتخاب می‌شوند و چیزی درباره تصادف، پلاک منطقه آزاد یا پیش‌فروش
-            نمی‌دانند. چیزی پنهان نشده، اما پیش از تماس خودتان بررسی کنید.
+            دو دسته آگهی که ارزانی‌شان دلیلی دارد بیرون از این محاسبه. نخست
+            تخفیف بیش از <b>{w ? pct(w.ceiling_pct, 0) : "—"}</b>: آگهی‌های
+            مشابه فقط بر پایه «مدل، تیپ و سال» انتخاب می‌شوند و چیزی درباره
+            تصادف، پلاک منطقه آزاد یا پیش‌فروش نمی‌دانند. دوم خودروهایی که
+            فروشنده خودش وضعیت بدنه‌شان را رنگ‌شده یا تعویض‌شده اعلام کرده —
+            آن اختلاف قیمت، بهای همان رنگ است نه یک فرصت. چیزی پنهان نشده،
+            اما پیش از تماس خودتان بررسی کنید.
           </>
         )}
       </p>
@@ -432,7 +446,8 @@ export function Deals() {
                             <Fa>{d.title || d.code}</Fa>
                           </Link>
                           {d.condition_flagged && (
-                            <div className="badge warn" style={{ marginTop: 4 }}>
+                            <div className="badge warn" style={{ marginTop: 4 }}
+                                 title={conditionNote(d)}>
                               <AlertTriangle size={11} /> {d.body_status || "توضیحات وضعیت را بخوانید"}
                             </div>
                           )}

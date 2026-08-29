@@ -54,7 +54,10 @@ export function Saved() {
         <Async query={saved} empty="هنوز چیزی ذخیره نشده است." shape="table">
           {(data) =>
             data.results.length ? (
-              <Table head={["آگهی", "قیمت", ""]}>
+              // The last column holds one icon button per row. An empty header
+              // left it unnamed, so a screen reader moving across a row
+              // announced the button with no column to attach it to.
+              <Table head={["آگهی", "قیمت", <span key="rm" className="sr-only">حذف</span>]}>
                 {data.results.map((row) => (
                   <tr key={row.code}>
                     <td>

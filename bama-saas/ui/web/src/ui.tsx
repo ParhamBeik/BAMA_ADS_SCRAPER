@@ -14,7 +14,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Database, ExternalLink, Heart, X } from "lucide-react";
-import { api, type Envelope, type Paginated } from "./api";
+import { ApiError, api, type Envelope, type Paginated } from "./api";
 
 /**
  * What a cohort flag means, in the language the rest of the page is in.
@@ -103,6 +103,34 @@ export function pct(value: number | null | undefined, digits = 1): string {
 }
 
 /**
+ * A number set in Persian digits, for prose.
+ *
+ * `toman`, `pct` and `km` stay Latin on purpose — they sit in `tabular-nums`
+ * columns beside Latin magnitude suffixes ("3.90B"). Sentences are the other
+ * case, and mixing the two inside one card is what put «۷ روز» on a chip and
+ * "30 روز" in the label directly beneath it.
+ */
+export function fa(value: number | null | undefined): string {
+  return value == null ? "—" : value.toLocaleString("fa-IR", { useGrouping: true });
+}
+
+/**
+ * "0.1 ساعت پیش" is not how anyone says four minutes.
+ *
+ * Hours below one are read in minutes and anything under a minute is "just
+ * now"; the API reports a decimal hour count because that is the natural unit
+ * for staleness, not for prose.
+ */
+export function since(hours: number | null | undefined): string {
+  if (hours == null) return "—";
+  const minutes = Math.round(hours * 60);
+  if (minutes < 1) return "همین الان";
+  if (minutes < 60) return `${fa(minutes)} دقیقه پیش`;
+  if (hours < 24) return `${fa(Math.round(hours))} ساعت پیش`;
+  return `${fa(Math.round(hours / 24))} روز پیش`;
+}
+
+/**
  * Odometer, at card density.
  *
  * Rounding to thousands rendered every new car as "0k km", which read as
@@ -161,9 +189,28 @@ export function Stat({
   );
 }
 
-export function Provenance({ envelope }: { envelope?: Partial<Envelope> }) {
+/**
+ * @param compact Drop the coverage half and keep only when-and-how.
+ *
+ * Coverage describes the crawl, not the panel, so every panel on a page
+ * repeats the identical sentence — the home page printed the same warning
+ * strip five times. One panel per page carries the full version and the rest
+ * are compact, which keeps each panel's own vintage visible without turning a
+ * warning into wallpaper.
+ */
+export function Provenance({
+  envelope, compact = false,
+}: { envelope?: Partial<Envelope>; compact?: boolean }) {
   if (!envelope?.coverage) return null;
   const { coverage, as_of, methodology_version } = envelope;
+  if (compact) {
+    return (
+      <div className="provenance">
+        {as_of && <span>تا {new Date(as_of).toLocaleString("fa-IR")}</span>}
+        {methodology_version != null && <span>· روش محاسبه نسخه {methodology_version}</span>}
+      </div>
+    );
+  }
   return (
     <div className="provenance">
       {/* The two facts that change how the numbers above should be read, before
@@ -186,7 +233,7 @@ export function Provenance({ envelope }: { envelope?: Partial<Envelope> }) {
       {coverage.complete_sweep ? (
         <span>
           {coverage.ads_covered?.toLocaleString("en-US")} آگهی، آخرین بررسی{" "}
-          {coverage.age_hours} ساعت پیش
+          {since(coverage.age_hours)}
         </span>
       ) : (
         <span className="warn">
@@ -202,6 +249,68 @@ export function Provenance({ envelope }: { envelope?: Partial<Envelope> }) {
       {as_of && <span>· تا {new Date(as_of).toLocaleString("fa-IR")}</span>}
       {methodology_version != null && <span>· روش محاسبه نسخه {methodology_version}</span>}
     </div>
+  );
+}
+
+/** The real span an index answer covers, which is not always the one asked for. */
+export interface IndexWindow {
+  requested_days: number;
+  days: number;
+  clamped: boolean;
+}
+
+/** What an index series stands on, and whether that is enough to say so. */
+export interface IndexSample {
+  cohort_count: number;
+  ad_count: number;
+  thin: boolean;
+  min_cohorts: number;
+  low_coverage_days: number;
+  max_gap_days: number;
+}
+
+/**
+ * Everything about this series that changes how its number should be read.
+ *
+ * Not decoration and not a footnote: the front page's headline move was mostly
+ * one step across a four-day crawler hole, and the same request for "one year"
+ * and "90 days" returned the identical 44 points and the identical figure with
+ * nothing on screen saying so. The Analyse page disclosed its short window and
+ * this one did not — the same data at two levels of honesty.
+ */
+export function SeriesCaveats({
+  window, sample,
+}: { window: IndexWindow; sample?: IndexSample }) {
+  const notes: string[] = [];
+  if (window.clamped) {
+    notes.push(
+      `سابقه شاخص فقط ${fa(window.days)} روز است، نه ${fa(window.requested_days)} روز — ` +
+      "بازه‌های بلندتر همین عدد را برمی‌گردانند.",
+    );
+  }
+  if (sample?.low_coverage_days) {
+    notes.push(
+      `${fa(sample.low_coverage_days)} روز از این بازه کم‌پوشش بوده و در محاسبه تغییر ` +
+      "قیمت شرکت داده نشده است.",
+    );
+  }
+  if (sample && sample.max_gap_days > 1) {
+    notes.push(
+      `بزرگ‌ترین فاصله میان دو روز پیاپی این نمودار ${fa(sample.max_gap_days)} روز است؛ ` +
+      "حرکت آن گام، حاصل چند روز است نه یک روز.",
+    );
+  }
+  if (sample?.thin) {
+    notes.push(
+      `این شاخص روی ${fa(sample.cohort_count)} دسته ساخته شده — کمتر از ` +
+      `${fa(sample.min_cohorts)} دسته‌ای که برای یک عدد قابل اتکا لازم است.`,
+    );
+  }
+  if (!notes.length) return null;
+  return (
+    <p className="badge warn" style={{ display: "block", lineHeight: 1.7 }}>
+      <AlertTriangle size={11} /> {notes.join(" ")}
+    </p>
   );
 }
 
@@ -262,11 +371,7 @@ export function Async<T>({
     return <div className="skeleton" style={{ height }} aria-busy="true" />;
   }
   if (query.error) {
-    return (
-      <div className="state error">
-        {query.error instanceof Error ? query.error.message : "خطایی رخ داد."}
-      </div>
-    );
+    return <div className="state error">{humanError(query.error)}</div>;
   }
   const data = query.data as (T & { available?: boolean; reason?: string }) | undefined;
   if (!data) return <div className="state">{empty ?? "چیزی برای نمایش نیست."}</div>;
@@ -281,6 +386,30 @@ export function Async<T>({
     );
   }
   return <>{children(data)}</>;
+}
+
+/**
+ * A failed request, in the language the rest of the screen is in.
+ *
+ * DRF's `detail` is English written for an API client — "No Ad matches the
+ * given query.", "A live fetch is already running." — and it was being rendered
+ * straight into the page, twice on the listing screen. Status code first,
+ * because that is the part with a reliable meaning; the server's own sentence
+ * is only shown when there is nothing better to say, and never on a 5xx, where
+ * it is a stack-trace fragment.
+ */
+export function humanError(error: unknown): string {
+  const status = error instanceof ApiError ? error.status : 0;
+  if (status === 404) return "این مورد پیدا نشد.";
+  if (status === 400) return "درخواست نامعتبر بود.";
+  if (status === 401 || status === 403) return "برای دیدن این بخش باید وارد شوید.";
+  if (status === 409) return "این کار همین حالا در حال اجراست.";
+  if (status === 429) return "درخواست‌ها بیش از حد مجاز بود — کمی بعد دوباره تلاش کنید.";
+  if (status >= 500) return "خطایی در سرور رخ داد. کمی بعد دوباره تلاش کنید.";
+  if (error instanceof ApiError && /^[؀-ۿ\s]/.test(error.detail)) {
+    return error.detail;  // already Persian: the backend meant it for a reader
+  }
+  return "ارتباط با سرور برقرار نشد.";
 }
 
 function humanReason(reason?: string): string {

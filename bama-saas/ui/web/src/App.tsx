@@ -10,8 +10,8 @@
  * sidebar plus a title bar. The page title went with them: every screen already
  * says what it is, and the nav already says where you are.
  */
-import { lazy, Suspense, type ReactNode } from "react";
-import { Navigate, Route, Routes, useParams } from "react-router-dom";
+import { lazy, Suspense, useEffect, type ReactNode } from "react";
+import { Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { useAuth } from "./auth";
 import { AppHeader, AuthHeader, MobileNav } from "./components/AppHeader";
 import { Deals } from "./pages/Deals";
@@ -37,10 +37,51 @@ export function App() {
 }
 
 /**
+ * Where the reader was heading when they were asked to sign in.
+ *
+ * Module-scoped rather than router state: signing in swaps the whole route tree
+ * — `AuthRoutes` unmounts and `AppShell` mounts at whatever URL the login form
+ * was on — so nothing held in React survives the transition. It does not need
+ * `sessionStorage` either, because `login` sets the user in place without a
+ * page load, and this module is the same instance on both sides of the swap.
+ *
+ * Without it every shared link was discarded at the door: a link to one
+ * listing, to a filtered board and to an analysis scope all three landed on the
+ * front page with no way to tell they had been redirected.
+ */
+let intended: string | null = null;
+
+function rememberIntent(pathname: string, search: string) {
+  // "/" is where an unauthenticated visitor lands anyway, and /login and
+  // /signup would bounce the reader straight back out of the app.
+  if (pathname === "/" || pathname.startsWith("/login") || pathname.startsWith("/signup")) return;
+  intended = pathname + search;
+}
+
+/**
+ * Redirect to the remembered link, or to the front page.
+ *
+ * A route element and not an effect: `AppShell` mounts while the URL is still
+ * `/login`, whose own route already renders a `<Navigate to="/">`. Two effects
+ * both firing on that mount race — child effects run before parent ones, so the
+ * front-page redirect won about half the time. Resolving it *inside* the route
+ * that was going to redirect anyway removes the race instead of ordering it.
+ *
+ * `intended` is read during render and cleared in an effect, so React's
+ * double-invoked render in development sees the same value twice rather than
+ * consuming it on the first pass.
+ */
+function ResumeOrHome() {
+  const target = intended;
+  useEffect(() => { intended = null; }, []);
+  return <Navigate to={target ?? "/"} replace />;
+}
+
+/**
  * Signed-out routes. Two real URLs rather than one screen with a toggle, so the
  * back button works and a signup link is shareable. Anything else redirects to
  * sign-in and does not 404 — a bookmark saved while logged in should land
- * somewhere sensible.
+ * somewhere sensible, and now it lands on the page it named.
  */
 function AuthRoutes() {
   return (
@@ -56,10 +97,16 @@ function AuthRoutes() {
           path="/signup"
           element={<><AuthHeader to="/login" label="ورود" /><Signup /></>}
         />
-        <Route path="*" element={<Navigate to="/login" replace />} />
+        <Route path="*" element={<RememberThenLogin />} />
       </Routes>
     </div>
   );
+}
+
+function RememberThenLogin() {
+  const location = useLocation();
+  rememberIntent(location.pathname, location.search);
+  return <Navigate to="/login" replace />;
 }
 
 function AppShell() {
@@ -67,8 +114,12 @@ function AppShell() {
 
   return (
     <div className="min-h-dvh">
+      {/* Keyboard users tabbed the whole floating header on every page before
+          reaching any content. */}
+      <a href="#main" className="skip-link">پرش به محتوای اصلی</a>
       <AppHeader />
-      <main className="mx-auto max-w-[1600px] px-4 pt-2 pb-24 sm:px-6 lg:pb-16">
+      <main id="main" tabIndex={-1}
+            className="mx-auto max-w-[1600px] px-4 pt-2 pb-24 sm:px-6 lg:pb-16">
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/deals" element={<Deals />} />
@@ -92,10 +143,12 @@ function AppShell() {
           <Route path="/market" element={<Navigate to="/analyse" replace />} />
           <Route path="/research" element={<Navigate to="/analyse" replace />} />
           <Route path="/research/:modelId" element={<LegacyResearchRedirect />} />
-          {/* Signed in, so the auth routes are meaningless here. */}
-          <Route path="/login" element={<Navigate to="/" replace />} />
-          <Route path="/signup" element={<Navigate to="/" replace />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
+          {/* Signed in, so the auth routes are meaningless here — but landing
+              on one is exactly what happens after signing in, and it is where
+              the link the reader actually asked for gets resumed. */}
+          <Route path="/login" element={<ResumeOrHome />} />
+          <Route path="/signup" element={<ResumeOrHome />} />
+          <Route path="*" element={<ResumeOrHome />} />
         </Routes>
       </main>
       <MobileNav />

@@ -166,16 +166,41 @@ def find_gaps(since: datetime | None = None, max_rank: int | None = None,
     return [(lo, hi) for lo, hi in gaps if lo <= hi]
 
 
+# How many uncovered ranks a window may still hold and count as swept.
+#
+# Demanding literally zero was too strict to ever hold. The feed is strictly
+# recency-ordered and shifts under the crawler continuously, so two pages read
+# seconds apart can leave a handful of ranks that neither one claimed — and one
+# such hole, six ranks wide against a ~28,700-rank feed, switched removal
+# detection off entirely. Production flip-flopped between "986 ads marked
+# REMOVED" and "cannot prove an ad is gone" inside sixteen minutes, and the
+# active-ad count drifted upward for as long as it was off.
+#
+# One page. An ad can only hide from a sweep by sitting in an uncovered range
+# for the *whole* window; a range this small is one the constant reshuffling
+# fills in on the next pass, which is why the tolerance is a page and not a
+# percentage — a ratio of a 1,000-page feed would be dozens of pages, and a real
+# multi-page hole is exactly the evidence this check exists to respect.
+COVERAGE_GAP_TOLERANCE_RANKS = PAGE_SIZE
+
+
+def uncovered_ranks(gaps: list[tuple[int, int]]) -> int:
+    """How many ranks the gaps add up to. One definition for every reader."""
+    return sum(hi - lo + 1 for lo, hi in gaps)
+
+
 def coverage_is_complete(since: datetime, until: datetime | None = None) -> bool:
-    """True when every rank up to the known depth was fetched in the window.
+    """True when the window covered the feed to within ``COVERAGE_GAP_TOLERANCE_RANKS``.
 
     With no known depth there is nothing to prove against, so this returns False
-    — callers must fail closed.
+    — callers must fail closed. So does a window with no coverage at all: the
+    whole feed is then one gap, which is far past the tolerance.
     """
     depth = known_feed_depth()
     if not depth:
         return False
-    return not find_gaps(since=since, until=until, max_rank=depth)
+    return uncovered_ranks(find_gaps(since=since, until=until, max_rank=depth)) \
+        <= COVERAGE_GAP_TOLERANCE_RANKS
 
 
 def plan_backfill(gaps: list[tuple[int, int]],
@@ -782,12 +807,21 @@ def fetch_live(**kwargs) -> FetchRun:
 def _fetch_live(*, mode: str = "delta", max_ads: int | None = None,
                 page_pause: float | None = None, request_timeout: int | None = None,
                 max_stale_pages: int | None = None, start_page: int | None = None,
-                end_page: int | None = None) -> FetchRun:
+                end_page: int | None = None, probe: bool = False) -> FetchRun:
     """Stream live Bama ads into Postgres through the shared ingest pipeline.
 
     ``delta``    page 0 until ``max_stale_pages`` consecutive pages carry nothing new.
     ``full``     page 0 until the empty page past the last ad (``reached_end``).
     ``backfill`` an explicit ``start_page``..``end_page`` range for gap repair.
+
+    ``probe`` says this range is deliberately past the known end of the feed —
+    the depth ratchet's only way to grow. bama.ir answers 503 rather than an
+    empty page for a ``pageIndex`` beyond its data, so the probe was recording a
+    FAILED run every time it did its job, and the crawl-health check dutifully
+    reported the crawler as broken because it had worked. On a probe a
+    non-block error is therefore recorded as an *observation* — the feed does
+    not go that deep — and never as a fault. It still does not lower the
+    ceiling: a 503 is not the confirmed empty page ``reached_end`` requires.
 
     Returns the persisted run with ``affected_model_ids`` set, for downstream
     score refreshes.
@@ -1014,6 +1048,19 @@ def _fetch_live(*, mode: str = "delta", max_ads: int | None = None,
             resume_page if stop_reason == FetchRun.StopReason.INTERRUPTED else None
         )
     except Exception as exc:  # noqa: BLE001
+        if probe and not is_waf_block(exc):
+            # The probe asked for a page past the ceiling and the source refused
+            # to produce one. That is the answer, not a fault — see the
+            # docstring. SUCCEEDED with END_UNCONFIRMED and no `feed_end_rank`:
+            # nothing here is evidence of where the feed ends, only that it does
+            # not reach here, so the ratchet is left exactly as it was.
+            run.status = FetchRun.Status.SUCCEEDED
+            run.stop_reason = FetchRun.StopReason.END_UNCONFIRMED
+            run.error = f"probe past the ceiling: {exc}"[:4000]
+            run.finished_at = djtz.now()
+            run.save()
+            reset_cache()
+            return run
         run.status = FetchRun.Status.FAILED
         run.error = str(exc)[:4000]
         # BLOCKED, not ERROR, when the CDN refused us: the gate reads this field

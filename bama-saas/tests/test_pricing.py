@@ -179,19 +179,64 @@ def test_a_thin_condition_band_uses_the_measured_haircut():
 
 
 @pytest.mark.django_db
-def test_a_repainted_car_is_not_a_bargain_against_clean_peers(cohort):
-    """Unit of the product: paint is a price, not a discount."""
+def test_a_repainted_car_carries_the_band_that_keeps_it_off_the_board(cohort):
+    """Unit of the product: paint is a price, not a discount.
+
+    The score itself is now the plain gap to the peer median — that is what the
+    card prints beside it, and scoring against something else made the card's
+    own arithmetic unverifiable. So a repainted car *is* scored, at whatever it
+    is really asking under its cohort, and what keeps it off the recommendation
+    board is the band recorded here. `test_api` asserts the routing; this
+    asserts the fact the routing reads.
+    """
     from apps.core.models import Ad as AdModel
     AdModel.objects.filter(code__startswith="peer").update(body_status="بدون رنگ")
     for i in range(8):
         cohort(f"paint{i:02d}", 1_700_000_000, body_status="کامل رنگ")
-
-    compute_deal_scores()
-
-    assert not DealScoreCache.objects.filter(ad_id="paint00").exists()
     cohort("cleancp1", 1_700_000_000, body_status="بدون رنگ")
+
     compute_deal_scores()
-    assert DealScoreCache.objects.filter(ad_id="cleancp1").exists()
+
+    painted = DealScoreCache.objects.get(ad_id="paint00")
+    clean = DealScoreCache.objects.get(ad_id="cleancp1")
+    assert painted.components["condition_band"] == "painted"
+    assert painted.components["condition_band"] in FP.REVIEW_CONDITION_BANDS
+    assert clean.components["condition_band"] == "clean"
+    assert clean.components["condition_band"] not in FP.REVIEW_CONDITION_BANDS
+    # Both ask the same price against the same peers, so the *gap* is identical.
+    # The difference between them is evidence, not arithmetic.
+    assert painted.discount_pct == clean.discount_pct
+
+
+@pytest.mark.django_db
+def test_the_condition_haircut_ladder_cannot_invert(cohort):
+    """A worse body condition can never cost less than a better one.
+
+    Each rung is measured from a different pool of cohorts, so nothing in the
+    arithmetic enforces the order — and production measured painted at 4.08%
+    against structural at 3.47%, discounting a repainted car harder than one
+    with a replaced panel.
+    """
+    ladder = FP._monotone(
+        {"clean": 0.0, "cosmetic": 0.0146, "painted": 0.0408, "structural": 0.0347},
+        FP.CONDITION_BANDS,
+    )
+    assert list(ladder.values()) == sorted(ladder.values())
+    assert ladder["structural"] == 0.0408  # raised to its predecessor, not refitted
+    assert ladder["cosmetic"] == 0.0146    # a rung the data got right is untouched
+
+    # A band nobody could measure stays absent: "no data" must not become "0%".
+    assert "structural" not in FP._monotone({"clean": 0.0, "painted": 0.04},
+                                            FP.CONDITION_BANDS)
+
+    # Mileage is the same shape and was non-monotonic in three places.
+    miles = FP._monotone(
+        {0: 0.0, 50_000: 0.0069, 100_000: 0.0027, 150_000: 0.0204,
+         200_000: 0.0195, 300_000: 0.0091, 400_000: 0.0325},
+        FP.MILEAGE_BUCKETS,
+    )
+    assert list(miles.values()) == sorted(miles.values())
+    assert miles[300_000] >= miles[150_000]
 
 
 # --- the dynamic top-suggestions window --------------------------------------

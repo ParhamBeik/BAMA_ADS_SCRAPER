@@ -5,8 +5,9 @@ from rest_framework import serializers
 from apps.core import images
 from apps.core.models import Ad, Brand, Model, NotifierSettings, Variant
 from apps.core.pricing import MIN_PEERS
-from apps.core.quality import condition_discounted, price_basis_unclear
+from apps.core.quality import condition_discounted
 from apps.jobs.parsing import absolute_ad_url
+from apps.jobs.verify import MAX_PLAUSIBLE_MILEAGE
 
 
 class BrandSerializer(serializers.ModelSerializer):
@@ -56,8 +57,13 @@ class AdSerializer(serializers.ModelSerializer):
     # derived from text already on the row, so neither costs a query. The deal
     # board *excludes* the first and only *labels* the second — see
     # apps/core/quality.py for why that asymmetry is deliberate.
-    price_basis_unclear = serializers.SerializerMethodField()
     condition_flagged = serializers.SerializerMethodField()
+    # An odometer nobody can believe — 9,000,000 km on a one-year-old Koleos,
+    # 6,900,000 on a Shahin. `verify` already flags these softly and `pricing`
+    # already declines to adjust on them, but every screen still printed the
+    # number as a fact and "most mileage first" ranked the typos to the top.
+    # Same treatment as the two flags above: label the row, never hide it.
+    mileage_implausible = serializers.SerializerMethodField()
     # Photos are served from our own origin (apps/core/images.py), not hotlinked
     # from a CDN that blocks us periodically.
     image_url = serializers.SerializerMethodField()
@@ -80,11 +86,10 @@ class AdSerializer(serializers.ModelSerializer):
     def get_bama_url(self, obj) -> str:
         return absolute_ad_url(obj.url or obj.canonical_path)
 
-    def get_price_basis_unclear(self, obj) -> bool:
-        return price_basis_unclear(
-            title=obj.title, description=obj.description,
-            price_type=obj.price_type, prepayment=obj.current_prepayment,
-        )
+    def get_mileage_implausible(self, obj) -> bool:
+        # The stored column, not a re-derivation: `verify` decided this from the
+        # payload at ingest, and the mileage the row carries is what it judged.
+        return obj.mileage is not None and not 0 <= obj.mileage <= MAX_PLAUSIBLE_MILEAGE
 
     def get_condition_flagged(self, obj) -> bool:
         return condition_discounted(
@@ -103,7 +108,11 @@ class AdSerializer(serializers.ModelSerializer):
             "bama_url", "description", "image_url", "image_urls", "image_count",
             "seller_authenticated", "dealer_name", "seller_type", "status",
             "removed_at", "likely_reason", "reason_confidence", "reposted_from",
+            # `price_basis_unclear` is the stored column now, not a method: the
+            # regex behind it runs at ingest so the browse endpoints can filter
+            # on an index instead of scanning every description.
             "cohort_flags", "price_basis_unclear", "condition_flagged",
+            "mileage_implausible",
         )
 
 

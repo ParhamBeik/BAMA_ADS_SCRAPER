@@ -243,6 +243,16 @@ class Ad(models.Model):
     # different kind of statement: quality_flags judges the row, this judges the
     # row *against its peers*, and only the second changes when the peers do.
     cohort_flags = models.JSONField(default=list, blank=True)
+    # True when `current_price` is not one car's cash price — an instalment
+    # down-payment, a pre-sale deposit, a حواله allocation. Persisted rather
+    # than re-derived because `quality.exclude_unclear_price` used to run an
+    # unindexed regex over descriptions: fine once per deal-board rebuild, not
+    # fine on `/api/ads/`, which paginates and counts on every keystroke.
+    #
+    # Derived, never set by a caller: `save()` below recomputes it from the four
+    # fields it reads, and ingest's UPDATE path puts the same call's result in
+    # `_ad_defaults`. `quality.price_basis_unclear` stays the only definition.
+    price_basis_unclear = models.BooleanField(default=False, db_index=True)
 
     class Meta:
         db_table = "catalog_ad"
@@ -265,6 +275,22 @@ class Ad(models.Model):
                 condition=Q(current_price__gt=0),
             ),
         ]
+
+    def save(self, *args, **kwargs):
+        """Keep the derived price-basis flag true to the row being written.
+
+        Local import: `quality` reaches back into this module for `verified_by_ad`,
+        so importing it at module scope closes a cycle.
+        """
+        from apps.core.quality import price_basis_unclear
+
+        self.price_basis_unclear = price_basis_unclear(
+            title=self.title, description=self.description,
+            price_type=self.price_type, prepayment=self.current_prepayment,
+        )
+        if (fields := kwargs.get("update_fields")) is not None:
+            kwargs["update_fields"] = {*fields, "price_basis_unclear"}
+        super().save(*args, **kwargs)
 
     def __str__(self) -> str:
         return self.code
@@ -672,6 +698,13 @@ class DealScoreCache(models.Model):
     discount_pct = models.FloatField(null=True, blank=True)
     peer_median = models.BigIntegerField(null=True, blank=True)
     components = models.JSONField(default=dict, blank=True)
+    # The listing itself accounts for its discount — a declared repaint or panel
+    # replacement (`pricing.REVIEW_CONDITION_BANDS`). It rides in `components`
+    # too, but the board filters on it three times per request, and a JSON key
+    # lookup also has the wrong semantics for a row that predates the key:
+    # `exclude(components__x__in=[...])` drops rows where `x` is missing,
+    # because SQL's NOT NULL is not TRUE.
+    needs_review = models.BooleanField(default=False, db_index=True)
     calculated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -706,6 +739,15 @@ class MarketIndex(models.Model):
     return_pct = models.FloatField(null=True, blank=True)
     cohort_count = models.IntegerField(default=0)
     ad_count = models.IntegerField(default=0)
+
+    # How many calendar days this point is chained across — 1 on a normal day,
+    # null on the first. The series is drawn from consecutive *available* dates,
+    # so without this a four-day hole plots as one step like any other and the
+    # move accumulated over it reads as a single day's.
+    gap_days = models.IntegerField(null=True, blank=True)
+    # The crawler under-covered this day, so no return was computed from it and
+    # the level was carried forward. See research.MIN_DAY_COVERAGE_RATIO.
+    low_coverage = models.BooleanField(default=False)
 
     calculated_at = models.DateTimeField(auto_now=True)
 

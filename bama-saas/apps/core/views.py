@@ -57,7 +57,14 @@ from apps.core.serializers import (
     NotifierSettingsSerializer,
     VariantSerializer,
 )
-from apps.jobs.fetcher import COVERAGE_WINDOW_HOURS, consecutive_blocks, find_gaps, known_feed_depth
+from apps.jobs.fetcher import (
+    COVERAGE_GAP_TOLERANCE_RANKS,
+    COVERAGE_WINDOW_HOURS,
+    consecutive_blocks,
+    find_gaps,
+    known_feed_depth,
+    uncovered_ranks,
+)
 from apps.jobs.parsing import absolute_ad_url
 from apps.jobs.verify import MAX_JALALI_YEAR, MIN_JALALI_YEAR
 
@@ -98,14 +105,18 @@ def _coverage() -> dict:
                 "source_blocked": bool(blocked)}
 
     gaps = find_gaps(since=now - timedelta(hours=COVERAGE_WINDOW_HOURS), max_rank=depth)
-    missing = sum(hi - lo + 1 for lo, hi in gaps)
+    missing = uncovered_ranks(gaps)
+    # The same judgement `mark_inactive` acts on, not a stricter one. Reporting
+    # "no complete sweep" off a six-rank hole the worker itself tolerates put a
+    # permanent warning strip on every screen.
+    swept = missing <= COVERAGE_GAP_TOLERANCE_RANKS
     last_fetch = (
         PageCoverage.objects.order_by("-fetched_at")
         .values_list("fetched_at", flat=True).first()
     )
     age = now - last_fetch if last_fetch else None
     return {
-        "complete_sweep": not gaps,
+        "complete_sweep": swept,
         "swept_at": last_fetch,
         "ads_covered": depth - missing,
         "deepest_rank": depth,
@@ -113,9 +124,9 @@ def _coverage() -> dict:
         "stale": bool(age and age > FRESH_WITHIN),
         "age_hours": round(age.total_seconds() / 3600, 1) if age else None,
         "source_blocked": bool(blocked),
-        # A gap is exactly the condition mark_inactive refuses to run under, so
-        # this is the same fact the worker acts on.
-        "removal_detection_paused": bool(gaps),
+        # Exactly the condition mark_inactive refuses to run under, so this is
+        # the same fact the worker acts on.
+        "removal_detection_paused": not swept,
     }
 
 
@@ -250,9 +261,7 @@ def model_search(request):
         if q := (params.get("q") or "").strip():
             qs = qs.filter(Q(name_fa__icontains=q) | Q(brand__name_fa__icontains=q))
 
-    listable = without_high_outliers(
-        verified(Ad.objects).filter(status=Ad.Status.ACTIVE, current_price__gt=0)
-    )
+    listable = without_high_outliers(pricing.scorable_rows())
     rows = qs.annotate(ad_count=Count("ads", filter=Q(ads__in=listable), distinct=True))
     if not by_id:
         # A model nobody is currently selling is noise in a picker — but it is
@@ -268,16 +277,30 @@ def model_search(request):
     ])
 
 
+# Everything `GET /api/ads/` actually reads: the filterset's own names, the two
+# DRF backends' parameters, and the one local flag. Derived from `AdFilter`
+# rather than restated, so a filter added there is accepted here without a
+# second edit — the failure mode of a hand-maintained copy is a working filter
+# rejected as unknown.
+_AD_QUERY_PARAMS = frozenset(AdFilter.base_filters) | {
+    "page", "ordering", "include_outliers",
+}
+
+
 class AdViewSet(viewsets.ReadOnlyModelViewSet):
     """GET /api/ads/ and /api/ads/<code>/.
 
-    The list is restricted to verified, ACTIVE, publish-complete, priced ads with
-    the *high* cohort outliers hidden (?include_outliers=true restores them).
-    The catalog and the statistics have to describe the same population, or a
-    user can find an ad the market summary says does not exist.
+    The list is `pricing.scorable_rows()` with the *high* cohort outliers hidden
+    (?include_outliers=true restores them) — the same population the deal board
+    scores and every analytic counts. It used to be a private copy of that
+    filter that had drifted: it took any price above zero and never excluded
+    instalment listings, so sorting by cheapest-first returned eight حواله
+    allocations priced at their deposit before it returned a car, and the app
+    printed four different "active listings" totals on four screens.
 
-    Only the high side is hidden: a price far above its peers is noise, a price
-    far below them is the underpriced car this product exists to find.
+    Only the high side of the outlier flag is hidden: a price far above its
+    peers is noise, a price far below them is the underpriced car this product
+    exists to find.
 
     The detail route is deliberately unrestricted — a saved ad that gets
     delisted must still open, and it renders its own inactive notice.
@@ -291,13 +314,29 @@ class AdViewSet(viewsets.ReadOnlyModelViewSet):
     search_fields = ("title", "brand__name_fa", "model__name_fa")
 
     def get_queryset(self):
-        qs = verified(Ad.objects).select_related("brand", "model", "variant", "city", "dealer")
-        if self.action == "list":
-            qs = qs.filter(status=Ad.Status.ACTIVE, publish_at__isnull=False,
-                           current_price__gt=0)
-            if self.request.query_params.get("include_outliers", "").lower() != "true":
-                qs = without_high_outliers(qs)
+        related = ("brand", "model", "variant", "city", "dealer")
+        if self.action != "list":
+            return verified(Ad.objects).select_related(*related)
+        qs = pricing.scorable_rows().select_related(*related)
+        if self.request.query_params.get("include_outliers", "").lower() != "true":
+            qs = without_high_outliers(qs)
         return qs
+
+    def list(self, request, *args, **kwargs):
+        """Refuse a query parameter nothing here reads.
+
+        DRF ignores unknown parameters, so `?search=پژو` returned every one of
+        the 22,997 listings with a 200 and no hint that the search had not
+        happened — indistinguishable from a search that matched everything. A
+        filter that silently does nothing is worse than one that errors.
+        """
+        unknown = sorted(set(request.query_params) - _AD_QUERY_PARAMS)
+        if unknown:
+            return Response(
+                {"detail": f"unknown query parameter(s): {', '.join(unknown)}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return super().list(request, *args, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -357,10 +396,14 @@ def listing_image(request, code: str, index: int | None = None):
 
 
 def _market_summary() -> list[dict]:
-    """Every model's price summary, ranked by how many cars are listed."""
+    """Every model's price summary, ranked by how many cars are listed.
+
+    Same population as the Explorer and the deal board: it used to omit the
+    ACTIVE filter and the instalment exclusion, so its per-model ad counts and
+    medians described a set no screen could show.
+    """
     rows = (
-        verified(Ad.objects)
-        .filter(current_price__gt=0, publish_at__isnull=False)
+        pricing.scorable_rows()
         .annotate(
             model_name=F("model__name_fa"),
             brand_slug=F("model__brand__slug"),
@@ -462,7 +505,11 @@ def _deal_score_row(obj, *, now=None):
     now = now or timezone.now()
     return {
         "code": obj.ad_id,
-        "score": obj.score,
+        # No `score`. The column exists because SQL orders on it, but it is
+        # `round(discount_pct, 1)` and nothing more, so shipping it beside
+        # `discount_pct` under a name that implies a composite invited the
+        # reader to look for weighting that is not there. Freshness band and
+        # discount are the whole ordering, and both are already in this row.
         "discount_pct": obj.discount_pct,
         "peer_median": obj.peer_median,
         "peer_count": components.get("peer_count"),
@@ -555,10 +602,15 @@ def deal_scores(request):
       short board rather than a month of stale listings.
     * ``all`` — everything at or below the trusted ceiling, same recency
       window, no discount floor.
-    * ``review`` — above the ceiling, same recency window. Not hidden, but not
+    * ``review`` — above the ceiling, *or* carrying a declared body condition
+      that already explains the gap. Same recency window. Not hidden, but not
       recommended either: past ~25% the gap is an attribute the cohort key
-      cannot see far more often than it is a bargain. Ranked by discount, since
-      that is the thing being reviewed.
+      cannot see far more often than it is a bargain, and a repainted or
+      panel-replaced car is that same attribute stated outright by the seller.
+      Ranked by discount, since that is the thing being reviewed.
+
+    The two ranked bands are therefore disjoint from ``review``: a car whose
+    cheapness the listing itself accounts for is not a find.
 
     Returns ``count`` alongside ``results``: the cache holds ~9,800 rows and the
     screen used to show a hard-coded top 50 with no way forward, which put every
@@ -589,10 +641,14 @@ def deal_scores(request):
     qs = _deal_score_qs(now=now, by_freshness=band != "review")
     cutoff = now - timedelta(days=window["window_days"])
 
+    # "The gap has a cause this score cannot see" — once as a threshold on the
+    # discount, once as the seller's own declaration. Built as one predicate so
+    # the three bands cannot drift into overlapping or leaving a row homeless.
+    needs_review = Q(discount_pct__gt=window["ceiling_pct"]) | Q(needs_review=True)
     if band == "review":
-        qs = qs.filter(discount_pct__gt=window["ceiling_pct"])
+        qs = qs.filter(needs_review)
     else:
-        qs = qs.filter(discount_pct__lte=window["ceiling_pct"])
+        qs = qs.exclude(needs_review)
         if band == "top":
             qs = qs.filter(discount_pct__gte=window["min_discount_pct"])
     qs = qs.filter(ad__publish_at__gte=cutoff)
@@ -634,6 +690,39 @@ def deal_score_detail(request, code: str):
     # Same queryset as the board, so the detail card can never disagree with the
     # row the reader clicked.
     return Response(_deal_score_row(get_object_or_404(_deal_score_qs(), ad_id=code)))
+
+
+def _series_sample(series: list[dict]) -> dict:
+    """What the series is standing on, and whether that is enough to say so.
+
+    Every index panel already printed "built from N cohorts and M ads on the
+    last day" — but printed it identically whether N was 40 or 2, so a
+    year-1386 scope drawn from 2 cohorts and 15 ads got the same presentation as
+    the whole market. The judgement belongs with the number, not with whoever
+    reads the caption.
+
+    Measured on the most recent day that actually contributed a return: an
+    under-covered day carries the level forward with nothing behind it, so its
+    zeroes describe the crawler, not the scope.
+    """
+    contributing = [p for p in series if not p.get("low_coverage")]
+    latest = contributing[-1] if contributing else None
+    cohorts = (latest or {}).get("cohort_count") or 0
+    return {
+        "cohort_count": cohorts,
+        "ad_count": (latest or {}).get("ad_count") or 0,
+        # Same bar the movers leaderboard uses to decide a scope is rankable,
+        # and the same one `jobs.market_index` uses to decide a scope gets a
+        # series at all — restating it here would be a third copy to retune.
+        "thin": cohorts < research.MOVER_MIN_COHORTS,
+        "min_cohorts": research.MOVER_MIN_COHORTS,
+        # Days inside the window the crawler under-covered, whose returns were
+        # withheld. A window with several is a window to read carefully.
+        "low_coverage_days": sum(1 for p in series if p.get("low_coverage")),
+        # The largest chained step in the window. 1 on a healthy series; the
+        # market's biggest single "daily" move sat on a four-day hole.
+        "max_gap_days": max((p.get("gap_days") or 1 for p in series), default=1),
+    }
 
 
 @api_view(["GET"])
@@ -683,6 +772,7 @@ def market_index(request):
             "first_date": series[0]["date"] if series else None,
             "last_date": latest["date"] if latest else None,
         },
+        "sample": _series_sample(series),
         "series": series,
     })
 
@@ -828,6 +918,7 @@ def _movement(model_id: int, variant_id: int | None, year: int | None, days: int
             "first_date": rebased[0]["date"],
             "last_date": rebased[-1]["date"],
         },
+        "sample": _series_sample(rebased),
         "series": rebased,
     }
 
@@ -883,8 +974,21 @@ def liquidity_view(request, model_id: int):
 
 @api_view(["GET"])
 def fair_price_view(request, code: str):
-    """Explainable fair-price estimate for one listing, with components."""
-    return envelope(pricing.fair_price(code))
+    """Explainable fair-price estimate for one listing, with components.
+
+    404 when there is no such ad, matching its sibling: `/api/ads/ZZZZNOPE/`
+    answered 404 while `/api/ads/ZZZZNOPE/fair-price/` answered 200 with
+    ``available: false``, so a client could not tell a typo'd code from a real
+    car with too few peers — and the screen rendered "not enough data" for a
+    listing that does not exist.
+
+    ``insufficient_peers`` stays a 200: that one *is* an answer about a real ad.
+    """
+    result = pricing.fair_price(code)
+    if result.get("reason") == "unknown_or_unverified_ad":
+        return Response({"detail": "No Ad matches the given query."},
+                        status=status.HTTP_404_NOT_FOUND)
+    return envelope(result)
 
 
 @api_view(["GET"])
@@ -900,13 +1004,26 @@ def depreciation_view(request, model_id: int):
 def overview_view(request):
     """Market summary: size, freshness and how much is verifiable.
 
-    Uses the same population as the Explorer, or its "priced listings" subtitle
-    would disagree with the Explorer footer by exactly the rows it does not show.
+    Literally the Explorer's queryset, not a description of it. The previous
+    version filtered only on ACTIVE, so the front page's "23,028 active
+    listings" counted rows the Explorer's own footer put at 22,997 and the deal
+    board at 22,170 — three numbers for one market, on three screens of the same
+    app.
+
+    ``priced_listings`` is gone with it. It was `active.filter(price > 0)` over a
+    population that was already priced, so it could only ever equal
+    `active_listings`, and it did: 23,028 printed twice, once as a caption on
+    itself. ``instalment_listings`` answers the question that tile was reaching
+    for — how many listings are excluded because their price is a down payment
+    — and is a number that can differ from the one above it.
     """
-    active = without_high_outliers(verified(Ad.objects).filter(status=Ad.Status.ACTIVE))
+    active = without_high_outliers(pricing.scorable_rows())
+    excluded = without_high_outliers(
+        verified(Ad.objects).filter(status=Ad.Status.ACTIVE, price_basis_unclear=True)
+    )
     return envelope({
         "active_listings": active.count(),
-        "priced_listings": active.filter(current_price__gt=0).count(),
+        "instalment_listings": excluded.count(),
         "brands": active.values("brand_id").distinct().count(),
         "models": active.values("model_id").distinct().count(),
         "top_brands": list(

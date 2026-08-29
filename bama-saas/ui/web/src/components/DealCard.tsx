@@ -49,6 +49,25 @@ export function ageLabel(days: number | null): string {
 }
 
 /**
+ * Why this listing is flagged, naming the field the flag actually came from.
+ *
+ * The tooltip used to say the *description* mentioned accident damage, on every
+ * flagged row. That is only ever the fallback: the flag fires first on Bama's
+ * structured `body_status`, which is filled on 100% of ads. So a car whose
+ * description read «فروش فوری / ماشین فوق العاده سالم» was captioned as
+ * describing itself as crashed — the warning was right and its stated reason
+ * was false, which is the worse of the two failures.
+ *
+ * `condition_band` is present exactly when the structured field is what fired.
+ */
+export function conditionNote(deal: Pick<Deal, "body_status" | "condition_band">): string {
+  if (deal.condition_band && deal.body_status) {
+    return `وضعیت بدنه‌ای که فروشنده در باما ثبت کرده: «${deal.body_status}»`;
+  }
+  return "توضیحات آگهی به تصادف، پلاک منطقه آزاد یا وضعیت بدنه اشاره کرده است";
+}
+
+/**
  * The card is one big click target that also contains a link out to bama.ir.
  *
  * Wrapping the whole card in a `<Link>` made that an `<a>` inside an `<a>`,
@@ -68,10 +87,7 @@ export function DealCard({ deal, suspect }: { deal: Deal; suspect: boolean }) {
         </span>
         {deal.condition_flagged && (
           <span className="card-badges">
-            <span
-              className="badge warn"
-              title={deal.body_status || "توضیحات آگهی به تصادف، پلاک منطقه آزاد یا وضعیت بدنه اشاره کرده است"}
-            >
+            <span className="badge warn" title={conditionNote(deal)}>
               <AlertTriangle size={11} /> {deal.body_status || "وضعیت بدنه"}
             </span>
           </span>

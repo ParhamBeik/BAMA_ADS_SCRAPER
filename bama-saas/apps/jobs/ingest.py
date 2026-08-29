@@ -31,6 +31,7 @@ from apps.core.models import (
     PriceObservation,
     Variant,
 )
+from apps.core.quality import price_basis_unclear
 from apps.jobs.parsing import (
     SEMANTIC_HASH_VERSION,
     fingerprint,
@@ -62,11 +63,52 @@ def reset_cache() -> None:
     _DIM_CACHE.clear()
 
 
+# Names Bama publishes in its `brand_fa` field that are *models*, not marques,
+# mapped to the manufacturer that actually builds them.
+#
+# Bama's own taxonomy is flat: it sends "دنا" and "پراید" where the maker is
+# ایران خودرو and سایپا. Stored verbatim, the catalogue grew a top-level brand
+# per popular model — 135 of them — and one manufacturer's inventory arrived
+# split across a handful of unrelated rows, so "listings by brand" ranked دنا
+# above the company that makes it and no scope could ever say "every سایپا".
+#
+# Only the brand level is rewritten. Model names already carry the identity
+# ("دنا پلاس", "پراید ۱۳۱", "کوییک R"), because Bama's ad titles repeat it — so
+# nothing is lost by filing them under their maker, and the model rows do not
+# have to be renamed to stay unambiguous.
+#
+# Deliberately a literal table and not a heuristic: this is a fact about the
+# Iranian market, and a rule that guessed would eventually fold two real
+# marques together. Anything absent is left exactly as Bama sent it.
+BRAND_PARENT = {
+    # ایران خودرو (IKCO)
+    "سمند": "ایران خودرو",
+    "دنا": "ایران خودرو",
+    "رانا": "ایران خودرو",
+    "تارا": "ایران خودرو",
+    "ری‌را": "ایران خودرو",
+    "ریرا": "ایران خودرو",
+    "آریسان": "ایران خودرو",
+    "سورن": "ایران خودرو",
+    "روآ": "ایران خودرو",
+    # سایپا (SAIPA)
+    "پراید": "سایپا",
+    "تیبا": "سایپا",
+    "کوییک": "سایپا",
+    "ساینا": "سایپا",
+    "شاهین": "سایپا",
+    "آریو": "سایپا",
+    "سهند": "سایپا",
+    "اطلس": "سایپا",
+    "زاگرس": "سایپا",
+}
+
+
 def _brand(name: str | None) -> tuple[Any, bool]:
     """Resolve a brand. Second element is True when this call minted it."""
     if not name:
         return None, False
-    name = name.strip()
+    name = BRAND_PARENT.get(name.strip(), name.strip())
     key = ("brand", name)
     if key in _DIM_CACHE:
         return _DIM_CACHE[key], False  # whoever minted it reported that then
@@ -347,13 +389,16 @@ def _ad_defaults(extracted: dict, dims: dict, observed_at, publish_at, quality_f
         authenticated = authenticated.strip().lower() in {"true", "1", "yes"}
     description = detail.get("description")
     description = description.strip()[:8000] if isinstance(description, str) else ""
+    title = g("title") or ""
+    price_type = g("price_type") or ""
+    prepayment = g("current_prepayment")
     return {
         "brand": dims["brand"],
         "model": dims["model"],
         "variant": dims["variant"],
         "city": dims["city"],
         "dealer": dims["dealer"],
-        "title": g("title") or "",
+        "title": title,
         "year": g("year"),
         "year_jalali": year_jalali,
         "year_gregorian": year_gregorian,
@@ -365,9 +410,9 @@ def _ad_defaults(extracted: dict, dims: dict, observed_at, publish_at, quality_f
         "transmission": g("transmission") or "",
         "current_price": g("current_price"),
         "current_payment": g("current_payment"),
-        "current_prepayment": g("current_prepayment"),
+        "current_prepayment": prepayment,
         "current_installments": g("current_installments"),
-        "price_type": g("price_type") or "",
+        "price_type": price_type,
         "publish_at": publish_at,
         "publish_phrase": g("publish_phrase") or "",
         "last_seen_at": observed_at,
@@ -379,6 +424,17 @@ def _ad_defaults(extracted: dict, dims: dict, observed_at, publish_at, quality_f
         "body_status": g("body_status") or "",
         "fuel": g("fuel") or "",
         "url": g("url") or "",
+        # Derived here as well as in ``Ad.save``, because the re-ingest path
+        # writes through ``queryset.update()`` — which never calls ``save`` — and
+        # all four of its inputs are in this dict. Without it an ad that turned
+        # into an instalment listing on a later crawl kept the flag it was first
+        # seen with, which is the exact staleness this column exists to end.
+        "price_basis_unclear": price_basis_unclear(
+            title=title,
+            description=description,
+            price_type=price_type,
+            prepayment=prepayment,
+        ),
         "canonical_path": (detail.get("url") or "")[:400],
         "image_count": parse_int(detail.get("image_count")) or (len(gallery) or None),
         "description": description,
@@ -499,6 +555,11 @@ def _ingest_ad(extracted, *, run, observed_at, publish_at, dealer=None, rank=Non
         if ad.first_seen_at and observed_at < ad.first_seen_at:
             defaults["first_seen_at"] = observed_at
         Ad.objects.filter(code=code).update(**defaults)
+        # update() never touches the in-memory instance. Later steps (version
+        # FK, price-drop comparison) still use `ad`; without this they see
+        # the pre-observation row.
+        for k, v in defaults.items():
+            setattr(ad, k, v)
         created = False
 
     # 2) Immutable version, deduped by semantic hash.

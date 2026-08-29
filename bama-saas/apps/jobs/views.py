@@ -47,9 +47,50 @@ def _spawn(label: str, work) -> None:
         except Exception:  # noqa: BLE001 — already recorded on the JobRun
             logger.exception("admin job %s failed", label)
         finally:
+            _RUNNING.discard(label)
             connection.close()
 
+    _RUNNING.add(label)
     threading.Thread(target=_run, daemon=True).start()
+
+
+# Jobs this process has in flight. A `set` is enough: these threads are spawned
+# here and only here, and there is one web process — the same assumption the
+# module docstring already makes about the worker loop being the scheduler.
+_RUNNING: set[str] = set()
+
+
+def _already_running(label: str, *steps: str) -> Response | None:
+    """409 if this job is in flight, or was left running by an earlier request.
+
+    `trigger_fetch` has always refused a second concurrent run; the other three
+    accepted any number. Firing `deal_scores` three times in one second gave
+    three 202s and three threads rebuilding the same tables — a full rebuild
+    `DELETE`s every row before it writes, so two overlapping runs can leave the
+    board empty for as long as the slower one takes.
+
+    Both halves are needed: the in-process set catches the double-click before
+    any row exists, and the JobRun check catches a job started by the worker
+    loop or by a web process that has since been replaced.
+
+    ``steps`` names the pipeline steps to look for when they are not the label
+    itself — `refresh-analytics` runs several and writes a JobRun under each of
+    their names, never under its own.
+    """
+    busy = label in _RUNNING or JobRun.objects.filter(
+        name__in=steps or (label,),
+        status=JobRun.Status.RUNNING,
+        started_at__gte=timezone.now() - timedelta(hours=JOB_STALE_AFTER_HOURS),
+    ).exists()
+    if not busy:
+        return None
+    return Response({"detail": f"«{label}» is already running.", "job": label},
+                    status=status.HTTP_409_CONFLICT)
+
+
+# A RUNNING row older than this is a job whose process died mid-write, not a job
+# still working. Without an upper bound one crash would lock the button forever.
+JOB_STALE_AFTER_HOURS = 6
 
 
 def _step(job: str, **opts):
@@ -97,6 +138,11 @@ def trigger_refresh(request):
 
     Runs the local half of the pipeline: snapshots, index, deal scores. No fetch.
     """
+    # Guarded on `deal_scores` as well as on itself: that is the step this
+    # shares with the button next to it, and it deletes every row on the board
+    # before rebuilding, so two overlapping runs can leave it empty.
+    if busy := _already_running("refresh-analytics", "refresh-analytics", "deal_scores"):
+        return busy
     _spawn("refresh-analytics", lambda: pipeline.run(
         cadence="full", skip_fetch=True, triggered_by=JobRun.Trigger.ADMIN,
     ))
@@ -107,6 +153,8 @@ def trigger_refresh(request):
 @permission_classes([IsAdminUser])
 def trigger_deal_scores(request):
     """POST /api/admin/jobs/deal-scores/ — rebuild the deal board (async)."""
+    if busy := _already_running("deal_scores", "deal_scores", "refresh-analytics"):
+        return busy
     raw = request.data.get("model")
     opts = {}
     if raw not in (None, "", "null"):
@@ -127,6 +175,8 @@ def trigger_backfill_images(request):
     Local and idempotent (no network), but it walks every photoless ad, so it is
     an operator action rather than something to run on the hot cadence.
     """
+    if busy := _already_running("backfill_images"):
+        return busy
     _spawn("backfill_images", _step("backfill_images"))
     return _accepted("backfill_images")
 
@@ -147,7 +197,23 @@ def jobs_overview(request):
     latest: dict[str, dict] = {}
     for row in rows:
         latest.setdefault(row["name"], row)
-    return Response({"latest_per_job": list(latest.values()), "recent": rows})
+    return Response({
+        "latest_per_job": list(latest.values()),
+        "recent": rows,
+        # What is in flight right now, so the panel's buttons can say so. The
+        # trigger endpoints return 202 the instant the thread starts, which the
+        # UI was treating as "done" — the buttons never disabled, nothing span,
+        # and firing one three times in a second was possible and did happen.
+        "running": sorted(
+            JobRun.objects.filter(
+                status=JobRun.Status.RUNNING,
+                started_at__gte=timezone.now() - timedelta(hours=JOB_STALE_AFTER_HOURS),
+            ).values_list("name", flat=True).distinct()
+        ),
+        "fetch_running": FetchRun.objects.filter(
+            source=FetchRun.Source.LIVE_FETCH, status=FetchRun.Status.RUNNING,
+        ).exists(),
+    })
 
 
 @api_view(["GET"])

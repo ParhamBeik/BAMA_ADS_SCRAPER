@@ -11,8 +11,13 @@
  */
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Loader2 } from "lucide-react";
 import { api } from "../api";
-import { Async, Card, Stat } from "../ui";
+import { Async, Card, Stat, humanError } from "../ui";
+import { Button } from "../components/ui/button";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "../components/ui/dialog";
 
 const RECENT_RUNS_COLLAPSED = 15;
 
@@ -60,17 +65,58 @@ type JobRow = {
   error: string;
 };
 
-type Jobs = { latest_per_job: JobRow[]; recent: JobRow[] };
+type Jobs = {
+  latest_per_job: JobRow[];
+  recent: JobRow[];
+  /** JobRun names in flight right now, so a button can say so. */
+  running: string[];
+  fetch_running: boolean;
+};
 
+/**
+ * One name per action, everywhere.
+ *
+ * A single button used to be called three different things on the way through:
+ * it read `run_pipeline (skip fetch)`, it posted to `refresh-analytics`, and
+ * the response came back saying `command: "refresh-analytics"` — so the run it
+ * produced could not be found in the table underneath by the name on the
+ * button. `job` is the identifier the API and the JobRun table both use;
+ * `steps` is what to watch for a pipeline that records itself under its parts.
+ */
 const TRIGGERS = [
-  { path: "/api/admin/jobs/fetch/", label: "fetch_live" },
-  { path: "/api/admin/jobs/refresh-analytics/", label: "run_pipeline (skip fetch)" },
-  { path: "/api/admin/jobs/deal-scores/", label: "compute_deal_scores" },
-  { path: "/api/admin/jobs/backfill-images/", label: "backfill_images" },
+  { path: "/api/admin/jobs/fetch/", job: "fetch",
+    about: "برداشت زنده از باما" },
+  { path: "/api/admin/jobs/refresh-analytics/", job: "refresh-analytics",
+    steps: ["snapshot", "market_index", "deal_scores"],
+    about: "بازسازی تحلیل‌ها بدون برداشت تازه" },
+  { path: "/api/admin/jobs/deal-scores/", job: "deal_scores",
+    about: "بازسازی تابلوی معامله‌ها" },
+  { path: "/api/admin/jobs/backfill-images/", job: "backfill_images",
+    about: "پر کردن عکس‌ها از payload ذخیره‌شده" },
 ];
 
 function n(value: number | undefined) {
   return (value ?? 0).toLocaleString("en-US");
+}
+
+/**
+ * A stored timestamp, read in the timezone the rest of this app lives in.
+ *
+ * These are raw UTC ISO strings in the database and were being printed
+ * verbatim onto a Jalali/Tehran page — a 3.5-hour trap next to a "0.2 hours
+ * ago" in the same table.
+ */
+function when(value: string | null | undefined) {
+  if (!value) return "—";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString("fa-IR", {
+    timeZone: "Asia/Tehran", dateStyle: "short", timeStyle: "medium",
+  });
+}
+
+/** Seconds, at the precision anyone reads. Stored rounded now; old rows are not. */
+function seconds(value: number | null | undefined) {
+  return value == null ? "—" : `${value.toFixed(1)}s`;
 }
 
 function bytes(value: number) {
@@ -88,6 +134,7 @@ function statusBadge(status: string) {
 export function Control() {
   const client = useQueryClient();
   const [showAllRuns, setShowAllRuns] = useState(false);
+  const [pending, setPending] = useState<(typeof TRIGGERS)[number] | null>(null);
   const health = useQuery({
     queryKey: ["admin-health"],
     queryFn: ({ signal }) => api.get<Health>("/api/admin/health/", signal),
@@ -96,7 +143,11 @@ export function Control() {
   const jobs = useQuery({
     queryKey: ["jobs-overview"],
     queryFn: ({ signal }) => api.get<Jobs>("/api/admin/jobs/overview/", signal),
-    refetchInterval: 15_000,
+    // Poll hard while something is in flight, idle otherwise. The API returns a
+    // `poll` hint with every 202 and the UI used to ignore it entirely, so a
+    // job's outcome appeared up to fifteen seconds after it finished.
+    refetchInterval: (query) =>
+      query.state.data?.running.length || query.state.data?.fetch_running ? 3_000 : 15_000,
   });
   const trigger = useMutation({
     mutationFn: (path: string) => api.post(path),
@@ -190,31 +241,65 @@ export function Control() {
       </Card>
 
       <Card title="اجرای دستی کار">
+        {/* Every button now knows whether its own job is in flight. The
+            endpoints return 202 the moment the thread starts, which the UI was
+            reading as "finished": nothing disabled, nothing span, and firing
+            `deal_scores` three times in one second was possible — and did
+            happen, producing three threads rebuilding the same tables. */}
         <div className="row">
-          {TRIGGERS.map((t) => (
-            <button
-              key={t.path}
-              className="btn"
-              disabled={trigger.isPending}
-              onClick={() => {
-                if (confirm(`«${t.label}» اجرا شود؟`)) trigger.mutate(t.path);
-              }}
-            >
-              {trigger.isPending ? "در حال شروع…" : t.label}
-            </button>
-          ))}
+          {TRIGGERS.map((t) => {
+            const running = t.job === "fetch"
+              ? Boolean(jobs.data?.fetch_running)
+              : (t.steps ?? [t.job]).some((s) => jobs.data?.running.includes(s));
+            const starting = trigger.isPending && trigger.variables === t.path;
+            return (
+              <button
+                key={t.path}
+                className="btn"
+                disabled={running || trigger.isPending}
+                aria-busy={running || starting}
+                title={t.about}
+                onClick={() => setPending(t)}
+              >
+                {running ? <><Loader2 className="size-4 animate-spin" /> در حال اجرا…</>
+                  : starting ? "در حال شروع…" : t.job}
+              </button>
+            );
+          })}
         </div>
+        <p className="stat-sub">
+          {TRIGGERS.map((t) => `${t.job}: ${t.about}`).join(" · ")}
+        </p>
         {trigger.isSuccess && (
           <p className="stat-sub">
             کار پذیرفته شد. وضعیت نهایی آن پس از تازه‌سازی بعدی در جدول زیر می‌آید.
           </p>
         )}
-        {trigger.isError && (
-          <p className="warn">
-            {(trigger.error as Error).message || "کار شروع نشد."}
-          </p>
-        )}
+        {trigger.isError && <p className="warn">{humanError(trigger.error)}</p>}
       </Card>
+
+      {/* The app's own dialog, not the browser's. `confirm()` is unstyled, sits
+          outside the RTL document, blocks the whole tab, and reads the raw job
+          id with no explanation of what the job does. */}
+      <Dialog open={pending !== null} onOpenChange={(open) => !open && setPending(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>اجرای «{pending?.job}»</DialogTitle>
+            <DialogDescription>{pending?.about}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setPending(null)}>انصراف</Button>
+            <Button
+              onClick={() => {
+                if (pending) trigger.mutate(pending.path);
+                setPending(null);
+              }}
+            >
+              اجرا کن
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Card title="آخرین اجرای هر کار">
         <Async query={jobs}>
@@ -223,7 +308,7 @@ export function Control() {
               <thead>
                 <tr>
                   <th>name</th><th>status</th><th>triggered_by</th>
-                  <th>started_at</th><th>duration_s</th><th>error</th>
+                  <th>started_at (تهران)</th><th>duration_s</th><th>error</th>
                 </tr>
               </thead>
               <tbody>
@@ -232,8 +317,8 @@ export function Control() {
                     <td><code>{r.name}</code></td>
                     <td>{statusBadge(r.status)}</td>
                     <td>{r.triggered_by}</td>
-                    <td>{r.started_at}</td>
-                    <td>{r.duration_s ?? "—"}</td>
+                    <td>{when(r.started_at)}</td>
+                    <td>{seconds(r.duration_s)}</td>
                     <td>{r.error || "—"}</td>
                   </tr>
                 ))}
@@ -259,12 +344,12 @@ export function Control() {
                 <div className="table-wrap">
                 <table className="table inspect-table">
                   <thead>
-                    <tr><th>started_at</th><th>name</th><th>status</th><th>detail</th></tr>
+                    <tr><th>started_at (تهران)</th><th>name</th><th>status</th><th>detail</th></tr>
                   </thead>
                   <tbody>
                     {rows.map((r, i) => (
                       <tr key={`${r.name}-${r.started_at}-${i}`}>
-                        <td>{r.started_at}</td>
+                        <td>{when(r.started_at)}</td>
                         <td><code>{r.name}</code></td>
                         <td>{r.status}</td>
                         <td>{(r.detail || r.error || "—").slice(0, 160)}</td>
@@ -297,8 +382,26 @@ export function Control() {
                   <tr><th>unverified_ads</th><td>{n(data.catalog.unverified_ads)}</td></tr>
                   <tr><th>brands</th><td>{n(data.catalog.brands)}</td></tr>
                   <tr><th>models</th><td>{n(data.catalog.models)}</td></tr>
-                  <tr><th>unconfirmed_brands</th><td>{n(data.catalog.unconfirmed_brands)}</td></tr>
-                  <tr><th>unconfirmed_models</th><td>{n(data.catalog.unconfirmed_models)}</td></tr>
+                  {/* Linked, because these are a queue: a row minted by
+                      ingestion is an unproven catalog entry and every cohort
+                      keyed on it is unproven with it. The count alone gave no
+                      way to act on them. */}
+                  <tr>
+                    <th>unconfirmed_brands</th>
+                    <td>
+                      <a href="/admin/core/brand/?is_confirmed__exact=0">
+                        {n(data.catalog.unconfirmed_brands)}
+                      </a>
+                    </td>
+                  </tr>
+                  <tr>
+                    <th>unconfirmed_models</th>
+                    <td>
+                      <a href="/admin/core/model/?is_confirmed__exact=0">
+                        {n(data.catalog.unconfirmed_models)}
+                      </a>
+                    </td>
+                  </tr>
                   <tr><th>rejects_24h</th><td>{n(data.catalog.rejects_24h)}</td></tr>
                   <tr><th>database size</th><td>{bytes(data.database.size_bytes)}</td></tr>
                   <tr><th>db_connections</th><td>{n(data.database.connections)}</td></tr>

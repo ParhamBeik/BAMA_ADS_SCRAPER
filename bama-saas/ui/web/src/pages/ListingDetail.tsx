@@ -40,6 +40,7 @@ type Ad = {
   reposted_from?: string | null;
   price_basis_unclear?: boolean;
   condition_flagged?: boolean;
+  mileage_implausible?: boolean;
   // Not yet in the generated schema (another agent is adding these to the API);
   // kept optional/local so this page renders fine against an old API response too.
   seller_type?: "dealer" | "private" | null;
@@ -138,8 +139,12 @@ export function ListingDetail() {
       <Async query={ad}>
         {(data) => (
           <>
+            {/* One parent, and the right one. This read
+                «معامله‌ها / جست‌وجو / ...» — two crumbs at the same level, the
+                first of them pointing at the home page and labelled as the
+                deal board. A listing is reached from the Explorer. */}
             <div className="breadcrumb">
-              <Link to="/">معامله‌ها</Link> / <Link to="/explore">جست‌وجو</Link> / <Fa>{data.title}</Fa>
+              <Link to="/explore">جست‌وجوی آگهی‌ها</Link> / <Fa>{data.title}</Fa>
             </div>
             <div className="detail-layout">
               <div className="gallery card">
@@ -167,15 +172,31 @@ export function ListingDetail() {
                       خودرو — به همین دلیل از فهرست معامله‌ها کنار گذاشته شده.
                     </p>
                   )}
+                  {/* Name the field the flag came from. This always blamed the
+                      description, but the flag fires first on Bama's structured
+                      body-status column — so an ad reading «ماشین فوق العاده
+                      سالم» was captioned as describing its own crash. */}
                   {data.condition_flagged && (
                     <p className="badge warn">
-                      توضیحات آگهی به وضعیت خودرو اشاره کرده (تصادف، پلاک منطقه
-                      آزاد یا مشابه) — پیش از مقایسه قیمت آن را بخوانید.
+                      {data.body_status
+                        ? `فروشنده وضعیت بدنه را «${data.body_status}» ثبت کرده — پیش از مقایسه قیمت آن را در نظر بگیرید.`
+                        : "توضیحات آگهی به وضعیت خودرو اشاره کرده (تصادف، پلاک منطقه آزاد یا مشابه) — پیش از مقایسه قیمت آن را بخوانید."}
                     </p>
                   )}
                   <ul className="spec-list">
                     <li>سال ساخت: {data.year_jalali ?? "—"}</li>
-                    <li>کارکرد: {data.mileage?.toLocaleString("en-US") ?? "—"}</li>
+                    {/* The unit is not decoration: "262,000" alone is a
+                        number the reader has to guess the meaning of. */}
+                    <li>
+                      کارکرد: {data.mileage != null
+                        ? `${data.mileage.toLocaleString("en-US")} کیلومتر`
+                        : "—"}
+                      {data.mileage_implausible && (
+                        <span className="badge warn" style={{ marginInlineStart: 6 }}>
+                          باورپذیر نیست — در محاسبه قیمت نادیده گرفته شده
+                        </span>
+                      )}
+                    </li>
                     <li>وضعیت بدنه: <Fa>{data.body_status || "—"}</Fa></li>
                     <li>گیربکس: {data.transmission || "—"}</li>
                     <li>بدنه: {data.body_type || "—"}</li>

@@ -19,7 +19,7 @@
  */
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, SlidersHorizontal, X } from "lucide-react";
+import { ChevronDown, Search, SlidersHorizontal, X } from "lucide-react";
 import { api } from "./api";
 import type { Paginated } from "./api";
 import { useFilters } from "./filters";
@@ -57,10 +57,23 @@ const PRICE_PRESETS: [string, number | null, number | null][] = [
   ["بالای ۵ میلیارد", 5 * BILLION, null],
 ];
 
-/** Jalali, like every year in this app — `Ad.year` mixes 1399 and 2025. */
+/**
+ * Jalali, like every year in this app — `Ad.year` mixes 1399 and 2025.
+ *
+ * Derived from today rather than written down: the labels are relative ("the
+ * last five years") but the values they set are absolute, so a hardcoded pair
+ * silently becomes a lie one Nowruz later. The last preset is the odd one out
+ * on purpose — it names its own year, so it can stay fixed.
+ */
+const THIS_JALALI_YEAR = Number(
+  new Intl.DateTimeFormat("en-u-ca-persian", { year: "numeric" })
+    .format(new Date())
+    .replace(/\D/g, ""),
+);
+
 const YEAR_PRESETS: [string, number | null][] = [
-  ["۵ سال اخیر", 1400],
-  ["۱۰ سال اخیر", 1395],
+  ["۵ سال اخیر", THIS_JALALI_YEAR - 4],
+  ["۱۰ سال اخیر", THIS_JALALI_YEAR - 9],
   ["۱۳۹۰ به بعد", 1390],
 ];
 
@@ -413,7 +426,15 @@ export function FilterPanel({
   );
 }
 
-/** Free-text search. Committed on blur or Enter, never per keystroke. */
+/**
+ * Free-text search. Committed on blur or Enter, never per keystroke.
+ *
+ * A real `<form>` with a real submit button. Enter and blur both worked before
+ * and neither was discoverable: typing changed nothing on screen, there was no
+ * control to press, and nothing said which key would do it — so the box read as
+ * broken. The button is the affordance; Enter still works because a form does
+ * that for free.
+ */
 function SearchBox() {
   const filters = useFilters();
   const current = filters.get("q");
@@ -421,17 +442,24 @@ function SearchBox() {
 
   const commit = () => filters.set({ q: draft.trim() || null, page: 1 });
   return (
-    <input
-      key={current}
-      type="search"
-      aria-label="جست‌وجو در آگهی‌ها"
-      placeholder="عنوان، برند یا توضیحات"
-      value={draft}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => e.key === "Enter" && commit()}
-      className="border-border bg-panel h-8 min-w-0 flex-1 rounded-md border px-3 text-sm sm:max-w-64"
-    />
+    <form
+      className="flex min-w-0 flex-1 items-center gap-1 sm:max-w-72"
+      onSubmit={(e) => { e.preventDefault(); commit(); }}
+    >
+      <input
+        key={current}
+        type="search"
+        aria-label="جست‌وجو در آگهی‌ها"
+        placeholder="عنوان، برند یا توضیحات"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        className="border-border bg-panel h-8 min-w-0 flex-1 rounded-md border px-3 text-sm"
+      />
+      <Button type="submit" size="sm" variant="outline" aria-label="جست‌وجو">
+        <Search className="size-4" />
+      </Button>
+    </form>
   );
 }
 

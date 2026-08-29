@@ -198,7 +198,10 @@ def mark_inactive(*, days: int | None = None,
         ad.status = Ad.Status.REMOVED
         ad.removed_at = ad.last_seen_at
         ad.likely_reason, ad.reason_confidence = _infer_reason(ad, expiry_days, reposted)
-        reasons[ad.likely_reason] += 1
+        # `str()`, not the enum member. This dict is rendered straight into the
+        # operator log, where a TextChoices key prints as `Ad.Reason.SOLD` —
+        # a Python identifier on a Persian status page.
+        reasons[str(ad.likely_reason)] += 1
         updates.append(ad)
     Ad.objects.bulk_update(
         updates, ["status", "removed_at", "likely_reason", "reason_confidence"],
@@ -667,6 +670,9 @@ def coverage(*, since_hours: float = 24.0, max_pages: int | None = None,
     since = timezone.now() - timedelta(hours=since_hours)
     max_rank = known_feed_depth()
     gaps = find_gaps(since=since, max_rank=max_rank)
+    # Set only on the past-the-ceiling branch below. A refusal there is the
+    # feed's answer about its own depth, not a broken crawler — see fetch_live.
+    probing = False
 
     if gaps:
         ranges = _budgeted(plan_backfill(gaps), max_pages)
@@ -681,6 +687,7 @@ def coverage(*, since_hours: float = 24.0, max_pages: int | None = None,
         next_page = max_rank // PAGE_SIZE
         ranges = [(next_page, next_page + PROBE_PAGES - 1)]
         plan = f"no gaps; probing pages {ranges[0][0]}-{ranges[0][1]} past the ceiling"
+        probing = True
 
     if dry_run:
         return {"gaps": len(gaps), "pages": 0, "dry_run": True, "detail": plan}
@@ -689,7 +696,8 @@ def coverage(*, since_hours: float = 24.0, max_pages: int | None = None,
     affected: set[int] = set()
     for start, end in ranges:
         try:
-            run = fetch_live(mode="backfill", start_page=start, end_page=end, **fetch_opts)
+            run = fetch_live(mode="backfill", start_page=start, end_page=end,
+                             probe=probing, **fetch_opts)
         except CrawlBlocked:
             # Stop the whole loop, not just this range: the gate is global, so
             # every remaining range would raise the same thing. The gaps stay

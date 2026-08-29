@@ -151,7 +151,11 @@ def record_job(name: str, triggered_by: str = JobRun.Trigger.SCHEDULER):
     finally:
         if row.status == JobRun.Status.RUNNING:
             row.status = JobRun.Status.OK
-        row.duration_s = time.monotonic() - start
+        # Rounded here rather than formatted at each reader. A raw monotonic
+        # difference is a float with fifteen decimal places, and the operator
+        # table printed "6.837530340999365" seconds in a column where the useful
+        # answer is "6.8".
+        row.duration_s = round(time.monotonic() - start, 2)
         row.finished_at = timezone.now()
         row.save()
 

@@ -179,6 +179,81 @@ def test_index_carries_level_when_nothing_matches(cohorts):
 
 
 @pytest.mark.django_db
+def test_an_outage_day_neither_moves_the_index_nor_breaks_the_chain(cohorts):
+    """A day the crawler barely covered is not a day the market barely moved.
+
+    Unit level: this is arithmetic over snapshot rows, and the failure it
+    encodes is arithmetic — 2026-07-16/17/18 were each built from ~1,950 ads
+    against a normal 21,733, and the returns computed off that slice were
+    published at full confidence. The market's single largest daily step landed
+    on the far side of a four-day hole and carried most of the front page's
+    headline figure.
+    """
+    model, cheap = cohorts["model"], cohorts["cheap"]
+    days = [D0 + timedelta(days=i) for i in range(6)]
+    # Five steady, well-covered days, so there is a norm to be judged against.
+    for day in days[:5]:
+        _snap(model, cheap, day, price=500_000_000, count=100)
+    # Then a day the crawler reached 5% of, on which the surviving slice happens
+    # to be the expensive end of the cohort.
+    _snap(model, cheap, days[5], price=900_000_000, count=5)
+
+    series = compute_index(cohort_series(MarketIndex.Scope.MARKET))
+    outage = series[-1]
+
+    assert outage["low_coverage"] is True
+    assert outage["return_pct"] is None
+    assert outage["index_value"] == pytest.approx(series[-2]["index_value"])
+    # Nothing behind a withheld return, and the counts say so rather than
+    # describing the scope.
+    assert outage["cohort_count"] == 0 and outage["ad_count"] == 0
+
+    # The chain is bridged, not broken: a well-covered day after the outage is
+    # measured against the last well-covered one, so the outage's own prices
+    # never enter the index at all.
+    _snap(model, cheap, days[5] + timedelta(days=1), price=550_000_000, count=100)
+    resumed = compute_index(cohort_series(MarketIndex.Scope.MARKET))[-1]
+    assert resumed["low_coverage"] is False
+    assert resumed["return_pct"] == pytest.approx(10.0)   # 500M -> 550M, not 900M
+    assert resumed["gap_days"] == 2                       # chained across the outage
+
+
+@pytest.mark.django_db
+def test_a_gap_in_the_series_is_reported_as_its_real_width(cohorts):
+    """44 points over 55 days plotted evenly is a chart that invents a trend."""
+    model, cheap = cohorts["model"], cohorts["cheap"]
+    _snap(model, cheap, D0, price=500_000_000, count=10)
+    _snap(model, cheap, D0 + timedelta(days=4), price=520_000_000, count=10)
+
+    series = compute_index(cohort_series(MarketIndex.Scope.MARKET))
+    assert series[0]["gap_days"] is None      # the base day is chained across nothing
+    assert series[1]["gap_days"] == 4
+
+
+@pytest.mark.django_db
+def test_turnover_clamps_a_long_window_instead_of_refusing(cohorts, settings):
+    """The home page asks for 30 days; refusing left the panel empty for everyone.
+
+    Half the clean history, not all of it: the denominator is episodes that
+    started at least `days` ago *and* after the clean cut, so clamping to the
+    full span would leave a zero-width pool and refuse for a different reason.
+    """
+    model, brand = cohorts["model"], cohorts["brand"]
+    now = timezone.now()
+    settings.BAMA_EPISODE_CLEAN_START = (now - timedelta(days=20)).date().isoformat()
+    for i in range(TURNOVER_MIN_EPISODES + 5):
+        _episode(_ad(model, f"clamped{i}", brand=brand),
+                 started=now - timedelta(days=18), ended=now - timedelta(days=15))
+
+    result = turnover(days=30)
+    assert result["available"] is True
+    assert result["clamped"] is True
+    assert result["requested_days"] == 30
+    assert result["window_days"] == 10        # 20 // 2
+    assert result["fastest"][0]["left_pct"] == pytest.approx(100.0)
+
+
+@pytest.mark.django_db
 def test_build_index_is_idempotent(cohorts):
     """Rebuilds replace, never accumulate — the series is chained, so a stale
     suffix would corrupt every later value."""

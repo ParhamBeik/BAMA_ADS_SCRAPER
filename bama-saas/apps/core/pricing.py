@@ -39,6 +39,8 @@ from apps.core.quality import (
     CONDITION_BANDS,
     FLAG_OUTLIER_HIGH,
     FLAG_OUTLIER_LOW,
+    PAINTED,
+    STRUCTURAL,
     condition_band,
     exclude_unclear_price,
     verified,
@@ -132,11 +134,21 @@ class Baseline:
 
         Condition first, because it is the larger effect and the one the cohort
         key cannot see: a repainted car judged against clean peers reads as a
-        16.5% bargain, which is simply what a repainted car costs. Where the
-        band has ``MIN_PEERS`` of its own the band median *is* the answer;
-        below that the pooled haircut measured across the whole catalogue
-        stands in, because the alternative — comparing it to clean cars — is the
-        exact defect being fixed. Unknown band, no adjustment.
+        16.5% bargain, which is simply what a repainted car costs. The
+        adjustment is *always* the pooled haircut measured across the whole
+        catalogue. Unknown band, no adjustment.
+
+        It used to prefer the band's own median wherever the band had
+        ``MIN_PEERS`` of its own, which inverted the sign in production: the
+        damaged cars in a cohort are often its newer, lower-mileage ones, so
+        ``median(band) - median(cohort)`` came out *positive* and paint damage
+        raised a car's value. Measured 2026-08-28, «چند لکه رنگ» on Tondar 90
+        (37 band peers) scored +20,000,000, which is what put that car at the
+        top of the whole deal board. The pooled haircut cannot do that: it is
+        signed by construction.
+
+        ``band_peers`` is still reported, because how many peers shared the
+        band is worth showing even when it no longer moves the number.
 
         Mileage then applies as an absolute delta off the cohort median, exactly
         as before. The two are treated as additive because production says they
@@ -148,10 +160,8 @@ class Baseline:
         band_peers = 0
         band_basis: str | None = None
         if band:
-            med, n = self.band_medians.get(band, (None, 0))
-            if med is not None and n >= MIN_PEERS:
-                band_adj, band_peers, band_basis = int(med - base), n, "peers"
-            elif haircuts and band in haircuts:
+            band_peers = self.band_medians.get(band, (None, 0))[1]
+            if haircuts and band in haircuts:
                 band_adj, band_basis = int(-base * haircuts[band]), "measured"
 
         value = base + (band_adj or 0)
@@ -220,7 +230,7 @@ def condition_haircuts(rows: Iterable[dict] | None = None) -> dict[str, float]:
         return cached
 
     if rows is None:
-        rows = without_cohort_outliers(_scorable_rows()).values(
+        rows = without_cohort_outliers(scorable_rows()).values(
             "model_id", "variant_id", "year_jalali", "current_price",
             "body_status", "cohort_flags",
         )
@@ -255,8 +265,36 @@ def condition_haircuts(rows: Iterable[dict] | None = None) -> dict[str, float]:
         band: max(0.0, round(1 - statistics.median(vals), 4))
         for band, vals in ratios.items()
     }
+    haircuts = _monotone(haircuts, CONDITION_BANDS)
     cache.set(_HAIRCUT_CACHE_KEY, haircuts, HAIRCUT_CACHE_SECONDS)
     return haircuts
+
+
+def _monotone(measured: dict, order) -> dict:
+    """Force a measured haircut ladder to be non-decreasing along ``order``.
+
+    Each rung is measured from a different pool of cohorts, so nothing in the
+    arithmetic makes a worse car cost less — and in production it did not.
+    Measured 2026-08-28 the condition ladder read clean 0%, cosmetic 1.46%,
+    painted 4.08%, **structural 3.47%**: a car with a replaced panel was
+    discounted less than one that had merely been repainted. The mileage ladder
+    was worse, non-monotonic in three places, with 300,000 km penalised less
+    than 150,000 km.
+
+    Severity is the one thing about these ladders that is known a priori, so it
+    is imposed rather than hoped for: a rung measured below the one before it is
+    raised to match. This is a running maximum and not a re-fit, so every rung
+    the data got right passes through untouched, and a rung with no measurement
+    at all stays absent — an unmeasured band still means "no adjustment".
+
+    Only ever *raises* a discount, so it cannot turn a haircut into a premium.
+    """
+    out, floor = {}, 0.0
+    for key in order:
+        if key not in measured:
+            continue
+        floor = out[key] = max(floor, measured[key])
+    return out
 
 
 def mileage_haircuts(rows: Iterable[dict] | None = None) -> dict[int, float]:
@@ -271,7 +309,7 @@ def mileage_haircuts(rows: Iterable[dict] | None = None) -> dict[int, float]:
         return cached
 
     if rows is None:
-        rows = without_cohort_outliers(_scorable_rows()).values(
+        rows = without_cohort_outliers(scorable_rows()).values(
             "model_id", "variant_id", "year_jalali", "current_price",
             "mileage", "cohort_flags",
         )
@@ -303,6 +341,9 @@ def mileage_haircuts(rows: Iterable[dict] | None = None) -> dict[int, float]:
         key: max(0.0, round(1 - statistics.median(vals), 4))
         for key, vals in ratios.items()
     }
+    # Same reason as the condition ladder: more kilometres cannot make a car
+    # worth more, but the measured buckets said otherwise in three places.
+    haircuts = _monotone(haircuts, MILEAGE_BUCKETS)
     cache.set(_MILEAGE_HAIRCUT_CACHE_KEY, haircuts, HAIRCUT_CACHE_SECONDS)
     return haircuts
 
@@ -328,14 +369,19 @@ def percentile(values: list[float], p: int) -> float:
     return ordered[rank - 1]
 
 
-def _scorable_rows():
-    """The population both the board and the haircut pool are measured over.
+def scorable_rows():
+    """The population every screen counts, lists, ranks and averages over.
 
-    One definition, because two drifted apart once already: `cohort_peers` used
-    `current_price > 0` and no instalment filter while the board used the 10M
-    sentinel and `exclude_unclear_price`, so the listing page quoted a median
-    dragged down by down-payments the board had thrown out — 11.7% of active
-    priced ads. AGENTS.md asserts the two agree; this is what makes that true.
+    One definition, because it drifted apart twice already. First `cohort_peers`
+    used `current_price > 0` and no instalment filter while the board used the
+    10M sentinel and `exclude_unclear_price`, so the listing page quoted a
+    median dragged down by down-payments the board had thrown out — 11.7% of
+    active priced ads. Then the *browse* endpoints turned out never to have
+    applied it either, which is why the app showed four different "active ads"
+    totals on four screens, and why sorting the Explorer by cheapest-first
+    returned eight حواله allocations priced at their deposit instead of cars.
+    `views` now reads this same function; AGENTS.md asserts they agree, and this
+    is what makes that true.
 
     Cohort outliers are deliberately NOT excluded here. They must be dropped
     from a *baseline* (an unbelievable price cannot help define believability)
@@ -362,7 +408,7 @@ def cohort_peers(*, model_id: int, variant_id, year_jalali
     """
     return [
         (price, mileage, condition_band(status))
-        for price, mileage, status in without_cohort_outliers(_scorable_rows())
+        for price, mileage, status in without_cohort_outliers(scorable_rows())
         .filter(model_id=model_id, variant_id=variant_id, year_jalali=year_jalali)
         .values_list("current_price", "mileage", "body_status")
     ]
@@ -554,7 +600,11 @@ def flag_high_outliers(*, model_id: int | None = None) -> dict:
 # The deal board
 # ---------------------------------------------------------------------------
 #
-#     score = discount_pct = (fair_value - asking) / fair_value * 100
+#     score = discount_pct = (peer_median - asking) / peer_median * 100
+#
+# Against the peer median, not `fair_value`, because the median is the number
+# every surface prints beside the badge. Scoring against one and displaying the
+# other made the card's own arithmetic unverifiable.
 
 # Asking below half the peer median is a deposit or a missing-zero typo, not a
 # deal. Written as a ratio rather than in MADs so a noisy cohort cannot admit a
@@ -574,6 +624,26 @@ MIN_ASK_VS_MEDIAN = 0.5
 # that is not recency-weighted, or damaged/fake listings) and not a supply of
 # quarter-price cars.
 TRUSTED_MAX_DISCOUNT = 25.0
+
+# Declared body conditions that route a listing to the review band whatever its
+# discount is.
+#
+# The ceiling above is a *guess* at "this gap has a cause the cohort key cannot
+# see". For these two the cause is not a guess: the seller declared it, in
+# Bama's own structured field, on every ad. Since the score became the plain
+# gap to the peer median, a repainted car reading 16% under its cohort is
+# reported as a 16% deal — which is how the served board came to be 23 damaged
+# cars out of 24, with one clean Lexus on it.
+#
+# `cosmetic` deliberately stays on the board: a single paint spot or light
+# scratches is what an ordinary used car looks like, and measured against
+# cohort medians it costs ~1.4%. Excluding it would empty the board of normal
+# cars to no one's benefit.
+#
+# Nothing is hidden — `review` is a tab, it is labelled, and `band=all` still
+# returns these rows. This is the same rule the ceiling already encodes, applied
+# to evidence rather than to a threshold.
+REVIEW_CONDITION_BANDS = (PAINTED, STRUCTURAL)
 
 # --- the dynamic top-suggestions window ------------------------------------
 #
@@ -627,6 +697,12 @@ def deal_window(*, now=None) -> dict:
         verified_by_ad(DealScoreCache.objects.filter(discount_pct__gt=0,
                                                      discount_pct__lte=TRUSTED_MAX_DISCOUNT))
         .filter(ad__publish_at__isnull=False)
+        # Measured over the population the window is *for*. Leaving the
+        # review-band conditions in would set the top band's discount floor from
+        # rows the top band cannot contain — and repainted cars sit well below
+        # their cohorts, so the floor would be pulled up by exactly the listings
+        # it is meant to be independent of.
+        .filter(needs_review=False)
         .values_list("ad__publish_at", "discount_pct")
     )
 
@@ -666,7 +742,7 @@ def compute_deal_scores(*, model_id: int | None = None) -> dict:
     refresh drops only that model's.
     """
     outliers = flag_high_outliers(model_id=model_id)
-    base = _scorable_rows()
+    base = scorable_rows()
     if model_id is not None:
         base = base.filter(model_id=model_id)
 
@@ -737,15 +813,24 @@ def compute_deal_scores(*, model_id: int | None = None) -> dict:
             # because nothing ever checked.
             if fair_value <= 0 or price < floor:
                 continue
-            discount_pct = (fair_value - price) / fair_value * 100
+            # Measured against the cohort median, which is the number every
+            # surface prints next to it. It used to be measured against
+            # `fair_value` while the card struck through `peer_median`, so the
+            # two figures on screen could not be reconciled by the reader — a
+            # Tondar 90 showed price 1.20B, median 1.20B and a badge of 9%.
+            # The condition and mileage adjustments still ride along in
+            # `components` and still drive the fair-price estimate on the
+            # listing page; they simply no longer move the headline number.
+            discount_pct = (baseline.base - price) / baseline.base * 100
             if discount_pct <= 0:
-                continue  # priced at or above fair value: not a deal
+                continue  # priced at or above the peer median: not a deal
             first_seen = r["first_seen_at"]
             objs.append(DealScoreCache(
                 ad_id=r["code"],
                 score=round(min(100.0, discount_pct), 1),
                 discount_pct=round(discount_pct, 2),
                 peer_median=int(baseline.base),
+                needs_review=adjusted.band in REVIEW_CONDITION_BANDS,
                 components={
                     "discount_pct": round(discount_pct, 2),
                     "peer_median": int(baseline.base),

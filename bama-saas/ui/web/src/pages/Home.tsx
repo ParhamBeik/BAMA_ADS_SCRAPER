@@ -23,11 +23,16 @@
 import { lazy, Suspense } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, PackagePlus, Timer, TrendingDown, TrendingUp } from "lucide-react";
+import {
+  AlertTriangle, ArrowLeft, PackagePlus, Timer, TrendingDown, TrendingUp,
+} from "lucide-react";
 import { api } from "../api";
 import type { Envelope } from "../api";
 import { qs, useFilters } from "../filters";
-import { Async, Card, Fa, Provenance, Stat, Table, pct } from "../ui";
+import {
+  Async, Card, Fa, Provenance, SeriesCaveats, Stat, Table, fa, pct,
+  type IndexSample,
+} from "../ui";
 import { Sparkline } from "../components/Sparkline";
 import { WindowPicker } from "../components/WindowPicker";
 import { ModelCombobox } from "../components/ModelCombobox";
@@ -42,7 +47,8 @@ const SHORTLIST = 6;
 
 interface OverviewData extends Envelope {
   active_listings: number;
-  priced_listings: number;
+  /** Listings kept out of every count because their price is a down payment. */
+  instalment_listings: number;
   brands: number;
   models: number;
   top_brands: { brand__name_fa: string; n: number }[];
@@ -54,6 +60,10 @@ interface IndexPoint {
   return_pct: number | null;
   cohort_count: number;
   ad_count: number;
+  /** Calendar days this point is chained across; 1 on a healthy series. */
+  gap_days: number | null;
+  /** The crawler under-covered this day, so no return was taken from it. */
+  low_coverage: boolean;
 }
 
 interface MarketIndex extends Partial<Envelope> {
@@ -62,6 +72,7 @@ interface MarketIndex extends Partial<Envelope> {
   change_pct: number | null;
   window: { requested_days: number; days: number; clamped: boolean;
             first_date: string | null; last_date: string | null };
+  sample: IndexSample;
   series: IndexPoint[];
 }
 
@@ -94,7 +105,11 @@ interface TurnoverRow {
 }
 
 interface Turnover extends Partial<Envelope> {
+  /** The window actually used, which is not always the one asked for. */
   window_days: number;
+  requested_days: number;
+  clamped: boolean;
+  clean_days: number;
   fastest: TurnoverRow[];
 }
 
@@ -218,7 +233,7 @@ function MoversPanel({ days }: { days: number }) {
                   میانه — تغییر در ترکیب آگهی‌ها روی آن اثر ندارد. ستون‌های آگهی و
                   دسته می‌گویند این عدد بر چه پایه‌ای ساخته شده است.
                 </p>
-                <Provenance envelope={data} />
+                <Provenance envelope={data} compact />
               </>
             )}
           </Async>
@@ -265,19 +280,31 @@ function SupplyAndDemand({ days }: { days: number }) {
                   </tr>
                 ))}
               </Table>
-              <Provenance envelope={data} />
+              <Provenance envelope={data} compact />
             </>
           )}
         </Async>
       </Card>
 
       <Card title="سریع‌ترین خروج از بازار">
+        {/* The window comes from the answer, not from the request. The panel
+            used to print the requested one — and since the home page asks for
+            30 days against a much shorter clean history, the endpoint refused
+            and this card was empty for every reader, every time. */}
         <p className="stat-sub" style={{ marginTop: 0 }}>
-          <Timer size={12} /> چه سهمی از آگهی‌ها ظرف {days} روز از سایت برداشته شدند
+          <Timer size={12} /> چه سهمی از آگهی‌ها ظرف{" "}
+          {fa(turnover.data?.window_days ?? days)} روز از سایت برداشته شدند
         </p>
         <Async query={turnover} shape="table">
           {(data) => (
             <>
+              {data.clamped && (
+                <p className="badge warn" style={{ display: "block", lineHeight: 1.7 }}>
+                  <AlertTriangle size={11} /> بازه به {fa(data.window_days)} روز کوتاه
+                  شد، چون سابقه قابل اتکای ما {fa(data.clean_days)} روز است و برای
+                  اندازه‌گیری «خروج ظرف {fa(data.requested_days)} روز» کافی نیست.
+                </p>
+              )}
               <Table head={["خودرو", "خارج‌شده", "از میان"]}>
                 {data.fastest.map((row) => (
                   <tr key={row.model_id}>
@@ -298,12 +325,12 @@ function SupplyAndDemand({ days }: { days: number }) {
                   no reason for a listing disappearing, so "sold" would be an
                   assertion nothing here observed. */}
               <p className="empty-hint">
-                فقط آگهی‌هایی شمرده می‌شوند که دست‌کم {days} روز پیش ثبت شده‌اند، تا
-                هر آگهی فرصت کامل این بازه را داشته باشد. «خارج‌شده» یعنی از باما
-                برداشته شده — فروش، پایان اعتبار یا انصراف فروشنده، که باما تفاوتشان
-                را اعلام نمی‌کند.
+                فقط آگهی‌هایی شمرده می‌شوند که دست‌کم {fa(data.window_days)} روز پیش
+                ثبت شده‌اند، تا هر آگهی فرصت کامل این بازه را داشته باشد. «خارج‌شده»
+                یعنی از باما برداشته شده — فروش، پایان اعتبار یا انصراف فروشنده، که
+                باما تفاوتشان را اعلام نمی‌کند.
               </p>
-              <Provenance envelope={data} />
+              <Provenance envelope={data} compact />
             </>
           )}
         </Async>
@@ -341,9 +368,13 @@ function BestBuys() {
                   page quotes them rather than describing a filter whose value
                   it does not know. */}
               <p className="stat-sub" style={{ marginTop: 0 }}>
-                آگهی‌های {board.window?.window_days ?? "—"} روز گذشته که دست‌کم{" "}
-                {board.window?.min_discount_pct ?? "—"}٪ زیر میانه قیمت آگهی‌های
-                مشابه خود هستند.
+                آگهی‌های {fa(board.window?.window_days)} روز گذشته که دست‌کم{" "}
+                {/* One decimal: the floor is a percentile of today's board and
+                    "7.15%" offers a precision that is an artefact of which
+                    listings happen to be live this hour. */}
+                {board.window ? pct(board.window.min_discount_pct, 1) : "—"} زیر
+                میانه قیمت آگهی‌های مشابه خود هستند. خودروهایی که خودِ آگهی
+                ارزانی‌شان را توضیح می‌دهد در «نیازمند بررسی»‌اند.
               </p>
               <div className="card-grid">
                 {rows.map((deal) => (
@@ -403,23 +434,30 @@ export function Home() {
                     label="تغییر در این بازه"
                     value={pct(data.change_pct)}
                     tone={toneOf(data.change_pct)}
+                    // Persian digits, like the window chips directly above
+                    // this card. The two sat side by side reading «۳۰ روز» and
+                    // "30 روز" — the same value in two numeral systems.
                     sub={
                       data.window.clamped
-                        ? `${data.window.days} روز واقعی از ${data.window.requested_days} روز درخواستی`
-                        : `${data.window.days} روز`
+                        ? `${fa(data.window.days)} روز واقعی از ${fa(data.window.requested_days)} روز درخواستی`
+                        : `${fa(data.window.days)} روز`
                     }
                   />
                   <Stat
                     label="شاخص"
                     value={data.latest_index != null ? data.latest_index.toFixed(1) : "—"}
-                    sub={`پایه ${data.base_value}`}
+                    sub={`پایه ${fa(data.base_value)}`}
                   />
                   <Async query={overview}>
                     {(o) => (
                       <Stat
                         label="آگهی‌های فعال"
                         value={o.active_listings.toLocaleString("en-US")}
-                        sub={`${o.priced_listings.toLocaleString("en-US")} آگهی قیمت‌دار`}
+                        // The sub-label used to read "N آگهی قیمت‌دار" over the
+                        // same N: it counted priced ads inside a population
+                        // that was already priced, so the tile captioned
+                        // itself. This is a number that can differ.
+                        sub={`${o.instalment_listings.toLocaleString("en-US")} آگهی اقساطی کنار گذاشته شده`}
                       />
                     )}
                   </Async>
@@ -437,17 +475,23 @@ export function Home() {
                 {/* The index's own sample size, which is much smaller than the
                     sweep's coverage reported in the strip below — printed here
                     so the two are never read as the same number. */}
+                <SeriesCaveats window={data.window} sample={data.sample} />
                 {last && (
                   <p className="stat-sub">
-                    ساخته‌شده از {last.cohort_count.toLocaleString("en-US")} دسته و{" "}
-                    {last.ad_count.toLocaleString("en-US")} آگهی در آخرین روز. هر
-                    دسته فقط با خودش مقایسه می‌شود، تا تغییر در ترکیب آگهی‌های موجود
-                    به‌اشتباه حرکت قیمت به نظر نرسد.
+                    ساخته‌شده از {data.sample.cohort_count.toLocaleString("en-US")} دسته
+                    و {data.sample.ad_count.toLocaleString("en-US")} آگهی در آخرین روزِ
+                    دارای پوشش کامل. هر دسته فقط با خودش مقایسه می‌شود، تا تغییر در
+                    ترکیب آگهی‌های موجود به‌اشتباه حرکت قیمت به نظر نرسد.
                   </p>
                 )}
                 {points.length ? (
                   <Suspense fallback={<p className="muted">…</p>}>
+                    {/* A real time axis. As a category axis the four multi-day
+                        holes in this series were drawn as ordinary one-day
+                        steps, which put the market's largest "daily" move on a
+                        gap the crawler never covered. */}
                     <Chart
+                      xType="time"
                       x={points.map((p) => p.date)}
                       series={[{ name: "شاخص", data: points.map((p) => p.index_value), area: true }]}
                       yFormatter={(v) => v.toFixed(1)}
@@ -501,7 +545,7 @@ export function Home() {
                 </tr>
               ))}
             </Table>
-            <Provenance envelope={data} />
+            <Provenance envelope={data} compact />
           </Card>
         )}
       </Async>

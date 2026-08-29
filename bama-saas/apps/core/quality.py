@@ -200,19 +200,18 @@ def exclude_unclear_price(qs, prefix: str = ""):
 
     ``prefix`` is the relation path to the Ad ("" for Ad itself, "ad__" for the
     notifier's DealScoreCache). One function, so the predicate cannot drift
-    between the board and the alerts that quote it. The regex runs in Postgres,
-    so callers that only need a count never load the descriptions.
+    between the board and the alerts that quote it.
 
-    ponytail: unindexed regex seq-scan over ~27k active priced ads (~0.3s on the
-    scheduled deal-board rebuild). If this ever lands on a hot read path,
-    persist it as a boolean written at ingest with ``price_basis_unclear``.
+    Reads the indexed column ``Ad.price_basis_unclear`` rather than re-running
+    ``FINANCE`` over every description. That regex has no index and scanned all
+    ~27k active priced ads per call — tolerable once per deal-board rebuild, and
+    the reason the browse endpoints never applied this filter at all, which is
+    how «حواله» rows ended up at the top of "cheapest first" while the analytics
+    on the next screen counted a different population. ``Ad.save`` derives the
+    column from ``price_basis_unclear``, so the verdict is still defined in
+    exactly one place.
     """
-    return qs.exclude(
-        Q(**{f"{prefix}price_type": "installment"})
-        | Q(**{f"{prefix}current_prepayment__gt": 0})
-        | Q(**{f"{prefix}title__regex": FINANCE})
-        | Q(**{f"{prefix}description__regex": FINANCE})
-    )
+    return qs.exclude(**{f"{prefix}price_basis_unclear": True})
 
 
 if __name__ == "__main__":

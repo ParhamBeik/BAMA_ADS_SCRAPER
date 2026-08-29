@@ -23,7 +23,7 @@ import { api } from "../api";
 import type { Envelope } from "../api";
 import { qs, useFilters } from "../filters";
 import {
-  Async, Card, Fa, Provenance, Stat, Table, pct, toman,
+  Async, Card, Fa, Provenance, SeriesCaveats, Stat, Table, fa, pct, toman,
 } from "../ui";
 import { ScopePicker, useScopeLabel } from "../components/ScopePicker";
 import { WindowPicker } from "../components/WindowPicker";
@@ -36,12 +36,19 @@ const Chart = lazy(() => import("../Chart").then((m) => ({ default: m.Chart })))
 const DEFAULT_DAYS = 90;
 const SHORTLIST = 8;
 
-interface IndexPoint { date: string; index_value: number | null; cohort_count: number; ad_count: number }
+interface IndexPoint {
+  date: string; index_value: number | null; cohort_count: number; ad_count: number;
+  gap_days: number | null; low_coverage: boolean;
+}
 interface Trend extends Partial<Envelope> {
   latest_index: number | null;
   change_pct: number | null;
   base_value: number;
   window: { requested_days: number; days: number; clamped: boolean };
+  sample: {
+    cohort_count: number; ad_count: number; thin: boolean; min_cohorts: number;
+    low_coverage_days: number; max_gap_days: number;
+  };
   series: IndexPoint[];
 }
 
@@ -70,6 +77,11 @@ interface Survival extends Partial<Envelope> {
   delisted: number;
   censored: number;
   median_days: number | null;
+  /** When the curve never reaches 50%, the median is censored rather than
+   *  missing: this is the "longer than we have watched" bound. */
+  median_days_at_least: number | null;
+  observed_days: number;
+  clean_days: number;
   naive_mean_days_finished_only: number | null;
   curve: { day: number; still_listed: number; at_risk: number }[];
 }
@@ -124,19 +136,21 @@ function TrendPanel({ url }: { url: string }) {
                         : data.change_pct >= 0 ? "up" : "down"}
                   sub={
                     data.window.clamped
-                      ? `${data.window.days} روز واقعی از ${data.window.requested_days} روز درخواستی`
-                      : `${data.window.days} روز`
+                      ? `${fa(data.window.days)} روز واقعی از ${fa(data.window.requested_days)} روز درخواستی`
+                      : `${fa(data.window.days)} روز`
                   }
                 />
                 <Stat
                   label="شاخص"
                   value={data.latest_index != null ? data.latest_index.toFixed(1) : "—"}
-                  sub={`پایه ${data.base_value} در ابتدای بازه`}
+                  sub={`پایه ${fa(data.base_value)} در ابتدای بازه`}
                 />
               </div>
+              <SeriesCaveats window={data.window} sample={data.sample} />
               {points.length > 1 ? (
                 <Suspense fallback={<p className="muted">…</p>}>
                   <Chart
+                    xType="time"
                     x={points.map((p) => p.date)}
                     series={[{ name: "شاخص", data: points.map((p) => p.index_value), area: true }]}
                     yFormatter={(v) => v.toFixed(1)}
@@ -148,10 +162,12 @@ function TrendPanel({ url }: { url: string }) {
               )}
               {last && (
                 <p className="empty-hint">
-                  در آخرین روز از {last.cohort_count.toLocaleString("en-US")} دسته و{" "}
-                  {last.ad_count.toLocaleString("en-US")} آگهی ساخته شده است. هر دسته
-                  تنها با خودش مقایسه می‌شود، پس ورود و خروج آگهی‌ها شاخص را جابه‌جا
-                  نمی‌کند.
+                  در آخرین روزِ دارای پوشش کامل از{" "}
+                  {data.sample.cohort_count.toLocaleString("en-US")} دسته و{" "}
+                  {data.sample.ad_count.toLocaleString("en-US")} آگهی ساخته شده است.
+                  هر دسته تنها با خودش مقایسه می‌شود، پس ورود و خروج آگهی‌ها شاخص را
+                  جابه‌جا نمی‌کند — روزهای کم‌پوشش هم اصلاً وارد محاسبه نمی‌شوند،
+                  چون آنجا «ترکیب آگهی‌ها» همان بخشی است که خزنده به آن نرسیده.
                 </p>
               )}
               <Provenance envelope={data} />
@@ -286,7 +302,15 @@ function SurvivalPanel({
         {(data) => (
           <>
             <Suspense fallback={<p className="muted">…</p>}>
+              {/* A numeric axis, not a category one. These are event *times*
+                  (0.26, 0.27, 0.36, 1.05 … 9.98 days) and drawing them evenly
+                  spaced made the curve a picture of the sort order — it fell
+                  fastest wherever delistings were most frequent, regardless of
+                  when they happened. `yMax` because this is a probability and
+                  the auto-scaled axis ran to 102%. */}
               <Chart
+                xType="value"
+                yMax={100}
                 x={data.curve.map((p) => p.day)}
                 series={[{ name: "هنوز فهرست‌شده",
                            data: data.curve.map((p) => Math.round(p.still_listed * 1000) / 10),
@@ -298,10 +322,24 @@ function SurvivalPanel({
             <div className="grid cols-2" style={{ marginTop: 10 }}>
               <div>
                 <div className="card-title">میانه (با احتساب آگهی‌های فعال)</div>
+                {/* An em dash here left the figure labelled "misleading" as the
+                    only number on the panel with a value. The median is not
+                    missing — more than half these listings are still up, so it
+                    is censored, and its lower bound is a real answer. */}
                 <div className="stat">
-                  {data.median_days != null ? `${data.median_days.toFixed(0)} روز` : "—"}
+                  {data.median_days != null
+                    ? `${data.median_days.toFixed(0)} روز`
+                    : data.median_days_at_least != null
+                      ? `بیش از ${data.median_days_at_least.toFixed(0)} روز`
+                      : "—"}
                 </div>
-                <div className="stat-sub">از {data.n.toLocaleString("en-US")} آگهی</div>
+                <div className="stat-sub">
+                  از {data.n.toLocaleString("en-US")} آگهی
+                  {data.median_days == null && (
+                    <> — بیش از نیمی از آنها هنوز فعال‌اند، پس میانه واقعی از این
+                      عدد بزرگ‌تر است</>
+                  )}
+                </div>
               </div>
               <div>
                 <div className="card-title">میانگین ساده (گمراه‌کننده)</div>
@@ -320,6 +358,14 @@ function SurvivalPanel({
                 </div>
               </div>
             </div>
+            {/* The span every figure above is bounded by, stated the way the
+                price index states its own. "۴ روز" with nothing saying it came
+                from a fortnight of history reads as a fact about the market. */}
+            <p className="empty-hint">
+              روی {fa(data.clean_days)} روز سابقه قابل اتکا محاسبه شده و طولانی‌ترین
+              آگهیِ زیر نظر {fa(Math.round(data.observed_days))} روز است — هیچ‌کدام
+              از این اعداد درباره بازه‌های بلندتر از آن چیزی نمی‌گویند.
+            </p>
             <Provenance envelope={data} />
           </>
         )}
