@@ -535,23 +535,37 @@ export function BrandMark({ size = 28 }: { size?: number }) {
       width={size}
       height={size}
       viewBox="0 0 32 32"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
       role="img"
-      aria-label="بازار خودرو باما"
+      aria-label="رادار باما — هوش بازار خودرو"
     >
+      {/* Aerodynamic car silhouette roofline & nose */}
       <path
-        d="M6 23.5 12.5 10l4.25 8 3.5-5.5L26 23.5"
-        fill="none"
+        d="M4.5 21C5 18.8 6.6 17.6 8.8 17.2L12 11.8C13 10.2 14.8 9.2 16.8 9.2H20.6C22.4 9.2 24 10.1 24.9 11.6L27.2 15.6C29.2 16.1 30.5 17.4 30.8 19.6"
         stroke="currentColor"
+        strokeWidth="2.2"
         strokeLinecap="round"
         strokeLinejoin="round"
-        strokeWidth="3"
       />
+      {/* Rising price & analytics momentum sparkline */}
       <path
-        d="M6 26h20"
-        fill="none"
+        d="M3.5 22.5L10 18L14.5 21.5L21.5 13L26.5 17"
         stroke="currentColor"
+        strokeWidth="2.4"
         strokeLinecap="round"
-        strokeWidth="3"
+        strokeLinejoin="round"
+        opacity="0.9"
+      />
+      {/* Pulse peak point */}
+      <circle cx="21.5" cy="13" r="2" fill="currentColor" />
+      {/* Sleek ground track */}
+      <path
+        d="M3 26H29"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        opacity="0.35"
       />
     </svg>
   );
