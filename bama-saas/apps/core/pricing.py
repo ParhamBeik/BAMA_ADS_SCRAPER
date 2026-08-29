@@ -270,39 +270,38 @@ def condition_haircuts(rows: Iterable[dict] | None = None) -> dict[str, float]:
     return haircuts
 
 
-def _monotone(measured: dict, order) -> dict:
+def _monotone(measured: dict, order, *, non_negative: bool = True) -> dict:
     """Force a measured haircut ladder to be non-decreasing along ``order``.
 
     Each rung is measured from a different pool of cohorts, so nothing in the
     arithmetic makes a worse car cost less — and in production it did not.
-    Measured 2026-08-28 the condition ladder read clean 0%, cosmetic 1.46%,
-    painted 4.08%, **structural 3.47%**: a car with a replaced panel was
-    discounted less than one that had merely been repainted. The mileage ladder
-    was worse, non-monotonic in three places, with 300,000 km penalised less
-    than 150,000 km.
-
     Severity is the one thing about these ladders that is known a priori, so it
     is imposed rather than hoped for: a rung measured below the one before it is
-    raised to match. This is a running maximum and not a re-fit, so every rung
-    the data got right passes through untouched, and a rung with no measurement
-    at all stays absent — an unmeasured band still means "no adjustment".
+    raised to match.
 
-    Only ever *raises* a discount, so it cannot turn a haircut into a premium.
+    When ``non_negative`` is True (condition bands), discounts cannot turn into
+    premiums. When False (mileage buckets), low mileage can express a negative
+    haircut (i.e. a premium over a worn-out cohort median).
     """
-    out, floor = {}, 0.0
+    out = {}
+    floor = 0.0 if non_negative else None
     for key in order:
         if key not in measured:
             continue
-        floor = out[key] = max(floor, measured[key])
+        if floor is None:
+            floor = measured[key]
+        else:
+            floor = max(floor, measured[key])
+        out[key] = floor
     return out
 
 
 def mileage_haircuts(rows: Iterable[dict] | None = None) -> dict[int, float]:
-    """How far under its cohort each mileage bucket trades, catalogue-wide.
+    """How far under (or above for low mileage) its cohort each mileage bucket trades.
 
     Same shape as ``condition_haircuts``: the fallback for a bucket too thin
-    to have its own median. High-mileage cars were the ones that never cleared
-    ``MIN_PEERS``, so they got no correction — the opposite of what we want.
+    to have its own median. Supports signed adjustments so low-mileage cars in
+    older cohorts do not receive a zero-premium penalty when their bucket is thin.
     """
     cached = cache.get(_MILEAGE_HAIRCUT_CACHE_KEY)
     if cached is not None and rows is None:
@@ -338,12 +337,10 @@ def mileage_haircuts(rows: Iterable[dict] | None = None) -> dict[int, float]:
                 ratios[key].append(statistics.median(bucket_prices) / cohort_median)
 
     haircuts = {
-        key: max(0.0, round(1 - statistics.median(vals), 4))
+        key: round(1.0 - statistics.median(vals), 4)
         for key, vals in ratios.items()
     }
-    # Same reason as the condition ladder: more kilometres cannot make a car
-    # worth more, but the measured buckets said otherwise in three places.
-    haircuts = _monotone(haircuts, MILEAGE_BUCKETS)
+    haircuts = _monotone(haircuts, MILEAGE_BUCKETS, non_negative=False)
     cache.set(_MILEAGE_HAIRCUT_CACHE_KEY, haircuts, HAIRCUT_CACHE_SECONDS)
     return haircuts
 

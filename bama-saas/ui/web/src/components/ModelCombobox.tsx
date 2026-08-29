@@ -50,6 +50,17 @@ export function useModelLabel(modelId?: string) {
   return query.data?.[0];
 }
 
+function normalizePersianInput(input: string): string {
+  const digits: Record<string, string> = {
+    "۰": "0", "۱": "1", "۲": "2", "۳": "3", "۴": "4",
+    "۵": "5", "۶": "6", "۷": "7", "۸": "8", "۹": "9",
+    "٠": "0", "١": "1", "٢": "2", "٣": "3", "٤": "4",
+    "٥": "5", "٦": "6", "٧": "7", "٨": "8", "٩": "9",
+    "ي": "ی", "ك": "ک", "\u200c": " ", "،": " ",
+  };
+  return input.replace(/[۰-۹٠-٩يك\u200c،]/g, (ch) => digits[ch] ?? ch).trim();
+}
+
 export function ModelCombobox({
   value,
   brand,
@@ -72,7 +83,7 @@ export function ModelCombobox({
   const selected = useModelLabel(value);
 
   useEffect(() => {
-    const id = setTimeout(() => setTerm(draft), 220);
+    const id = setTimeout(() => setTerm(normalizePersianInput(draft)), 220);
     return () => clearTimeout(id);
   }, [draft]);
 

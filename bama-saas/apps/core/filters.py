@@ -59,26 +59,64 @@ class AdFilter(django_filters.FilterSet):
     def filter_q(self, queryset, name, value):
         if not value:
             return queryset
-        return queryset.filter(
-            Q(title__icontains=value)
-            | Q(brand__name_fa__icontains=value)
-            | Q(model__name_fa__icontains=value)
-            | Q(description__icontains=value)
-        )
+        from apps.core.normalization import search_tokens, to_persian_digits
+
+        tokens = search_tokens(value)
+        if not tokens:
+            return queryset
+
+        combined_q = Q()
+        for t in tokens:
+            token_q = (
+                Q(title__icontains=t)
+                | Q(brand__name_fa__icontains=t)
+                | Q(model__name_fa__icontains=t)
+                | Q(description__icontains=t)
+            )
+            # If the token contains digits, also query Persian digit representation
+            persian_t = to_persian_digits(t)
+            if persian_t != t:
+                token_q |= (
+                    Q(title__icontains=persian_t)
+                    | Q(model__name_fa__icontains=persian_t)
+                    | Q(description__icontains=persian_t)
+                )
+            combined_q &= token_q
+
+        return queryset.filter(combined_q)
 
     def filter_condition(self, queryset, name, value):
         """Four-band body condition, matching ``quality.condition_band``."""
         if value == "structural":
-            return queryset.filter(body_status__regex=r"تعویض|تصادفی|سوخته|اوراقی")
+            return queryset.filter(body_status__regex=r"تعویض|تصادفی|سوخته|اوراقی|اتاق")
+        if value == "painted":
+            return queryset.filter(
+                body_status__regex=(
+                    r"چند.?لکه|دو.?لکه|سه.?لکه|چهار.?لکه|دور.?رنگ|کامل.?رنگ|تمام.?رنگ"
+                    r"|درب.?رنگ|گلگیر.?رنگ|کاپوت.?رنگ|سقف.?رنگ|رنگ"
+                )
+            ).exclude(body_status__regex=r"تعویض|تصادفی|سوخته|اوراقی|اتاق|بدون.?رنگ")
         if value == "cosmetic":
-            return queryset.filter(body_status__regex=r"لکه|صافکاری|خط.?و.?خش")
+            return (
+                queryset.filter(
+                    body_status__regex=r"یک.?لکه|لکه|صافکاری|خط.?و.?خش|لیسه|قلم.?گیری"
+                )
+                .exclude(
+                    body_status__regex=(
+                        r"چند.?لکه|دو.?لکه|سه.?لکه|چهار.?لکه|تعویض|تصادفی|سوخته|اوراقی|اتاق"
+                    )
+                )
+                .exclude(
+                    body_status__regex=(
+                        r"دور.?رنگ|کامل.?رنگ|تمام.?رنگ|درب.?رنگ|گلگیر.?رنگ|کاپوت.?رنگ|سقف.?رنگ"
+                    )
+                )
+            )
         if value == "clean":
             return queryset.filter(body_status__regex=r"بدون.?رنگ").exclude(
-                body_status__regex=r"صافکاری|لکه|خط.?و.?خش"
-            )
-        if value == "painted":
-            return queryset.filter(body_status__regex=r"رنگ").exclude(
-                body_status__regex=r"تعویض|تصادفی|سوخته|اوراقی|لکه|صافکاری|خط.?و.?خش|بدون.?رنگ"
+                body_status__regex=(
+                    r"صافکاری|یک.?لکه|لکه|خط.?و.?خش|لیسه|قلم.?گیری|تعویض|تصادفی|سوخته|اوراقی|اتاق"
+                )
             )
         return queryset
 

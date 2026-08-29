@@ -259,7 +259,31 @@ def model_search(request):
         if brand := params.get("brand"):
             qs = qs.filter(brand__slug=brand)
         if q := (params.get("q") or "").strip():
-            qs = qs.filter(Q(name_fa__icontains=q) | Q(brand__name_fa__icontains=q))
+            from apps.core.normalization import (
+                ASSEMBLER_BRAND_SLUGS,
+                normalize_text,
+                search_tokens,
+                to_persian_digits,
+            )
+
+            tokens = search_tokens(q)
+            if tokens:
+                for t in tokens:
+                    token_q = (
+                        Q(name_fa__icontains=t)
+                        | Q(brand__name_fa__icontains=t)
+                        | Q(brand__slug__icontains=t)
+                    )
+                    persian_t = to_persian_digits(t)
+                    if persian_t != t:
+                        token_q |= Q(name_fa__icontains=persian_t)
+
+                    # Check assembler aliases
+                    norm_t = normalize_text(t)
+                    if norm_t in ASSEMBLER_BRAND_SLUGS:
+                        token_q |= Q(brand__slug__in=ASSEMBLER_BRAND_SLUGS[norm_t])
+
+                    qs = qs.filter(token_q)
 
     listable = without_high_outliers(pricing.scorable_rows())
     rows = qs.annotate(ad_count=Count("ads", filter=Q(ads__in=listable), distinct=True))

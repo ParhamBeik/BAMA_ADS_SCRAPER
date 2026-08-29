@@ -138,12 +138,21 @@ CLEAN, COSMETIC, PAINTED, STRUCTURAL = "clean", "cosmetic", "painted", "structur
 CONDITION_BANDS = (CLEAN, COSMETIC, PAINTED, STRUCTURAL)
 
 _BAND_RULES = (
-    # تعویض (panel replaced), تصادفی (accident), سوخته (burnt), اوراقی (scrapped)
-    (STRUCTURAL, re.compile(r"تعویض|تصادفی|سوخته|اوراقی")),
-    # لکه رنگ (spot paint), صافکاری (PDR/panel-beating), خط و خش (scratches)
-    (COSMETIC, re.compile(r"لکه|صافکاری|خط.?و.?خش")),
+    # تعویض (panel replaced), تصادفی (accident), سوخته, اوراقی, اتاق (chassis swap)
+    (STRUCTURAL, re.compile(r"تعویض|تصادفی|سوخته|اوراقی|اتاق")),
+    # Multi-spot and full panel paint: چند لکه, دو لکه, دور رنگ, کامل رنگ, درب/گلگیر/کاپوت رنگ
+    (
+        PAINTED,
+        re.compile(
+            r"چند.?لکه|دو.?لکه|سه.?لکه|چهار.?لکه|دور.?رنگ|کامل.?رنگ|تمام.?رنگ"
+            r"|درب.?رنگ|گلگیر.?رنگ|کاپوت.?رنگ|سقف.?رنگ"
+        ),
+    ),
+    # Minor cosmetic blemishes: یک لکه رنگ, صافکاری, خط و خش, لیسه, قلم گیری
+    (COSMETIC, re.compile(r"یک.?لکه|لکه|صافکاری|خط.?و.?خش|لیسه|قلم.?گیری")),
+    # Clean: بدون رنگ
     (CLEAN, re.compile(r"بدون.?رنگ")),
-    # Whatever paint is left: دور رنگ, کامل رنگ, گلگیر/درب/کاپوت رنگ
+    # Catch-all paint
     (PAINTED, re.compile(r"رنگ")),
 )
 
