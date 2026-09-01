@@ -173,6 +173,21 @@ def test_hot_cadence_skips_warm_steps(stub_jobs):
 
 
 @pytest.mark.django_db
+def test_train_cadence_fits_before_it_scores(stub_jobs):
+    """Order, not membership, and it shipped backwards once.
+
+    A cadence's steps are sorted by ``STEP_ORDER``, not run in the order the
+    cadence lists them — so with `ml_train` at the end of that tuple, `train`
+    ran `ml_score` first: it scored the board with the outgoing models, then
+    fitted new ones and never scored with them. A promotion took a full day to
+    reach a reader.
+    """
+    stub_jobs()
+    report = P.run(cadence="train")
+    assert [s.name for s in report.steps] == ["ml_train", "ml_score"]
+
+
+@pytest.mark.django_db
 def test_warm_cadence_skips_fetch_and_deals(stub_jobs):
     seen = stub_jobs()
     report = P.run(cadence="warm")

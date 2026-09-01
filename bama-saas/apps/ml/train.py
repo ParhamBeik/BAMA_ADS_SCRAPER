@@ -916,10 +916,33 @@ def train_all(only: str | None = None) -> dict:
     # pipeline gives its other steps.
     if errored and len(errored) == len(names):
         raise RuntimeError(f"every ml trainer failed: {results[errored[0]].get('detail')}")
+    # A summary, not the metrics. `pipeline.record_job` stringifies whatever it
+    # gets into `JobRun.detail`, and returning the full nested results put a
+    # 4KB Python repr — `np.float64(24.557)` and all — into a column whose job
+    # is to be readable at a glance. The metrics are already durable and
+    # queryable in `MLModel.metrics`, which is where a second copy belongs least.
     return {
         "trained": [n for n, r in results.items() if r.get("trained")],
         "promoted": [n for n, r in results.items() if r.get("promoted")],
         "refused": {n: r.get("reason") for n, r in results.items() if not r.get("trained")},
         "errored": errored,
-        "results": results,
+        # Just enough to see what happened without opening the registry: the
+        # version each trainer produced and the gate's one-word verdict. Read
+        # back from the rows rather than from the trainers' return values —
+        # `promote` writes the decision onto the record, so the record is the
+        # authoritative copy and a second one here could disagree with it.
+        "verdicts": _verdicts(results),
+    }
+
+
+def _verdicts(results: dict) -> dict:
+    trained = {n: r["version"] for n, r in results.items() if r.get("version")}
+    if not trained:
+        return {}
+    rows = MLModel.objects.filter(name__in=list(trained)).values("name", "version",
+                                                                 "status", "metrics")
+    return {
+        r["name"]: {"version": r["version"], "status": r["status"],
+                    "gate": ((r["metrics"] or {}).get("promotion") or {}).get("reason")}
+        for r in rows if trained.get(r["name"]) == r["version"]
     }

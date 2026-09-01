@@ -63,10 +63,18 @@ JOBS: dict[str, Callable[..., dict]] = {
 # so a run in this order can never announce the previous tick's answers.
 # link_reposts sits between removal marking and episodes: it needs the
 # delisted set to be current, and episodes reads the links it writes.
+#
+# `ml_train` sits immediately before `ml_score`, and its position is the whole
+# reason to be careful with this tuple: a cadence's steps are *sorted by this
+# order*, not run in the order the cadence lists them. `ml_train` was at the end
+# of this tuple and the `train` cadence therefore ran `ml_score` first — scoring
+# with the outgoing models, then fitting new ones and never scoring with them,
+# so a promotion took a full day to reach the board. One global order cannot put
+# `ml_score` on both sides of a training step, and this is the side that
+# matters: `ml_train` is in no other cadence, so nothing else is affected.
 STEP_ORDER = ("fetch", "mark_inactive", "link_reposts", "episodes", "snapshot",
-              "market_index", "deal_scores", "ml_score", "probe_sold", "notify",
-              "alerts", "coverage", "backfill_images", "prune", "health",
-              "ml_train")
+              "market_index", "deal_scores", "ml_train", "ml_score", "probe_sold",
+              "notify", "alerts", "coverage", "backfill_images", "prune", "health")
 
 CADENCES = {
     "hot": ("fetch", "mark_inactive", "deal_scores", "ml_score", "probe_sold",
