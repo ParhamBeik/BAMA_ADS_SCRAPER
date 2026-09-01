@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 import statistics
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import timedelta
 
@@ -19,6 +19,7 @@ from django.db import transaction
 from django.db.models import Count, Sum
 from django.utils import timezone
 
+from apps.core import research
 from apps.core.models import (
     Ad,
     AdObservation,
@@ -31,7 +32,7 @@ from apps.core.models import (
     MarketIndex,
     PageCoverage,
 )
-from apps.core.notify import notify_deals
+from apps.core.notify import deliver_alerts, notify_deals
 from apps.core.pricing import compute_deal_scores, deal_window, refresh_cohort_deal_scores
 from apps.core.quality import verified
 from apps.core.research import build_index
@@ -468,6 +469,27 @@ def market_index() -> dict:
     for model_id in eligible("model_id"):
         points += build_index(MarketIndex.Scope.MODEL, str(model_id))
         scopes += 1
+
+    # Segment axes. Membership is resolved once here and handed to every
+    # build_index call: it is one pass over the latest snapshot plus one over
+    # the ad table, and re-deriving it per segment would repeat both for each of
+    # ~15 segments. See research.cohort_segments for why membership is fixed
+    # rather than recomputed per day.
+    segments = research.cohort_segments()
+    if segments:
+        by_axis: dict[str, Counter] = defaultdict(Counter)
+        for memberships in segments.values():
+            for axis, key in memberships.items():
+                by_axis[axis][key] += 1
+        for axis in research.SEGMENT_SCOPES:
+            for key, cohorts in by_axis.get(axis, {}).items():
+                # Same bar the brand and model loops use: below it an "index" is
+                # one or two cars pretending to be a segment.
+                if cohorts < MIN_SCOPE_COHORTS:
+                    continue
+                points += build_index(axis, key, segments=segments)
+                scopes += 1
+
     return {"scopes": scopes, "points": points}
 
 
@@ -515,6 +537,18 @@ def deal_scores(*, incremental: bool = False, model: int | None = None) -> dict:
 def notify(*, dry_run: bool = False) -> dict:
     """Telegram for deals clearing the notifier bars. Must follow ``deal_scores``."""
     return notify_deals(dry_run=dry_run)
+
+
+def alerts(*, dry_run: bool = False) -> dict:
+    """Fill every user's alert feed. Must follow ``deal_scores``.
+
+    Separate from ``notify`` rather than folded into it: that one is the
+    operator's single Telegram chat and this one is every user's in-app feed.
+    They read the same board through the same matcher, but a Telegram outage
+    must not stop a feed row from being written, and neither should be able to
+    fail the other.
+    """
+    return deliver_alerts(dry_run=dry_run)
 
 
 SOLD_PROBE_BATCH = int(os.environ.get("BAMA_SOLD_PROBE_ADS", "20"))

@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import {
-  Async, BamaLink, FLAG_LABEL, Fa, ListingActions, PriceBar, Provenance, toman,
+  Async, BamaLink, FLAG_LABEL, Fa, ListingActions, PriceBar, Provenance, pct, toman,
 } from "../ui";
 import type { Distribution } from "../ui";
 
@@ -54,6 +54,7 @@ type FairPrice = {
   asking?: number | null;
   gap_pct?: number | null;
   peer_count?: number;
+  cohort_stale?: boolean;
   distribution?: Distribution;
   as_of?: string;
   methodology_version?: number;
@@ -246,11 +247,29 @@ export function ListingDetail() {
                   بر پایه {fp.peer_count} آگهی مشابه با همان مدل، تیپ و سال ساخت.
                 </p>
               )}
+              {/* Why the confidence may read lower than the peer count alone
+                  suggests. Without this the badge appears to contradict the
+                  number printed beside it. */}
+              {fp.cohort_stale && (
+                <p className="badge warn">
+                  آگهی‌های مشابه این خودرو مدتی است دوباره دیده نشده‌اند، پس این
+                  برآورد با احتیاط بیشتری خوانده شود.
+                </p>
+              )}
               {fp.as_of && <Provenance envelope={fp as never} />}
             </>
           )}
         </Async>
       </div>
+
+      {/* The deal board's own verdict on this listing.
+          `/api/analytics/deal-scores/<code>/` exists so a detail card can never
+          disagree with the row the reader clicked — and until now nothing
+          called it, so the listing page showed a fair-price estimate with no
+          way to tell whether the board had picked this car out at all. A 404
+          is the ordinary case (most listings are not on the board), so it
+          renders nothing rather than an error. */}
+      <DealVerdict code={code} />
 
       <div className="card">
         <h2>تاریخچه قیمت</h2>
@@ -276,6 +295,58 @@ export function ListingDetail() {
           }}
         </Async>
       </div>
+    </div>
+  );
+}
+
+interface Verdict {
+  discount_pct: number | null;
+  peer_median: number | null;
+  peer_count: number | null;
+  confidence: string | null;
+  days_listed: number | null;
+  liquidity?: { left_pct: number; n: number; window_days: number } | null;
+  components?: { cohort_stale?: boolean };
+}
+
+function DealVerdict({ code }: { code: string }) {
+  const verdict = useQuery({
+    queryKey: ["deal-score", code],
+    enabled: !!code,
+    // Not on the board is the common case and not an error, so a 404 must not
+    // be retried and must not surface as a failed panel.
+    retry: false,
+    queryFn: ({ signal }) =>
+      api.get<Verdict>(`/api/analytics/deal-scores/${code}/`, signal),
+  });
+
+  if (!verdict.data) return null;
+  const d = verdict.data;
+  return (
+    <div className="card">
+      <h2>در فهرست معامله‌ها</h2>
+      <p className="stat-sub" style={{ marginTop: 0 }}>
+        این آگهی روی تابلوی معامله‌ها هست — یعنی زیر میانه قیمت آگهی‌های مشابه
+        خودش قیمت خورده است.
+      </p>
+      <ul className="spec-list">
+        <li>
+          فاصله تا میانه مشابه‌ها: {d.discount_pct != null ? pct(d.discount_pct) : "—"}
+        </li>
+        <li>میانه قیمت مشابه‌ها: {toman(d.peer_median)}</li>
+        <li>
+          تعداد آگهی مشابه: {d.peer_count ?? "—"}
+          {d.components?.cohort_stale && " (مدتی است دوباره دیده نشده‌اند)"}
+        </li>
+        {d.liquidity && (
+          <li>
+            {Math.round(d.liquidity.left_pct)}٪ از این مدل ظرف{" "}
+            {d.liquidity.window_days} روز از باما برداشته می‌شوند — از{" "}
+            {d.liquidity.n} آگهی
+          </li>
+        )}
+      </ul>
+      <Link className="btn" to="/deals">همه معامله‌ها</Link>
     </div>
   );
 }

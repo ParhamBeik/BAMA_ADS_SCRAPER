@@ -46,6 +46,7 @@ JOBS: dict[str, Callable[..., dict]] = {
     "deal_scores": jobs.deal_scores,
     "probe_sold": jobs.probe_sold,
     "notify": jobs.notify,
+    "alerts": jobs.alerts,
     "coverage": jobs.coverage,
     "backfill_images": jobs.backfill_images,
     "prune": jobs.prune,
@@ -60,11 +61,11 @@ JOBS: dict[str, Callable[..., dict]] = {
 # link_reposts sits between removal marking and episodes: it needs the
 # delisted set to be current, and episodes reads the links it writes.
 STEP_ORDER = ("fetch", "mark_inactive", "link_reposts", "episodes", "snapshot",
-              "market_index", "deal_scores", "probe_sold", "notify", "coverage",
-              "backfill_images", "prune", "health")
+              "market_index", "deal_scores", "probe_sold", "notify", "alerts",
+              "coverage", "backfill_images", "prune", "health")
 
 CADENCES = {
-    "hot": ("fetch", "mark_inactive", "deal_scores", "probe_sold", "notify"),
+    "hot": ("fetch", "mark_inactive", "deal_scores", "probe_sold", "notify", "alerts"),
     "warm": ("link_reposts", "episodes", "snapshot", "market_index"),
     "coverage": ("coverage",),
     # backfill_images is local and idempotent: it sweeps up rows whose photos
@@ -72,7 +73,7 @@ CADENCES = {
     # the board can show it.
     "maintenance": ("deal_scores", "backfill_images", "prune", "health"),
     "full": ("fetch", "mark_inactive", "link_reposts", "episodes", "snapshot",
-             "market_index", "deal_scores", "probe_sold", "notify"),
+             "market_index", "deal_scores", "probe_sold", "notify", "alerts"),
 }
 
 # A failed *fetch* deliberately does not cascade: the local steps are idempotent
@@ -88,6 +89,11 @@ DEPENDS_ON = {
     # On a failed snapshot the index would extend a chained series using
     # yesterday's inventory and report the gap as a real market move.
     "market_index": ("snapshot",),
+    # Alerts are read off the board. A rebuild that failed leaves the previous
+    # tick's scores in place, which are stale by exactly the amount the rebuild
+    # would have corrected — and an alert is the most acted-upon thing this app
+    # emits, so it is the one place stale is not good enough.
+    "alerts": ("deal_scores",),
 }
 
 # ``health`` is a report, not a step: a red crawler must not make the

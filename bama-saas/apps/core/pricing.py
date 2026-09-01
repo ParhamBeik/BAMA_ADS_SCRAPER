@@ -56,6 +56,18 @@ MIN_PEERS = 8
 # trusted, so it drives the label the user sees.
 TIERS = ((40, "high"), (15, "medium"), (MIN_PEERS, "low"))
 
+# ...but not on its own. Forty peers nobody has seen in three days is not the
+# same evidence as forty seen this morning, and the tier said "high" for both:
+# confidence was a pure headcount, so a scope the crawler had stopped reaching
+# kept its badge indefinitely while the prices behind it went stale.
+#
+# Two days rather than the envelope's 13 hours. `views.FRESH_WITHIN` judges the
+# *sweep* — whether the crawl as a whole is current — and one missed tick makes
+# it stale. This judges a cohort's own listings, which are re-seen on their own
+# schedule as the feed reorders, so a bar that tight would mark most of the
+# catalogue stale on a perfectly healthy crawl.
+COHORT_STALE_AFTER = timedelta(days=2)
+
 # Mileage buckets in km. Per-bucket rather than one straight line because
 # depreciation is steep early and flattens later.
 #
@@ -122,10 +134,32 @@ class Baseline:
     peer_count: int
     bucket_medians: dict[int, tuple[float, int]] = field(default_factory=dict)
     band_medians: dict[str, tuple[float, int]] = field(default_factory=dict)
+    # The most recent time any peer in this cohort was seen on the feed. None
+    # when the caller had nothing to say about it, which must mean "no opinion"
+    # and never "stale" — a caller that cannot measure freshness must not have
+    # its answers silently downgraded.
+    newest_seen: object | None = None
+
+    @property
+    def stale(self) -> bool:
+        """Has nothing in this cohort been seen recently enough to trust it?"""
+        if self.newest_seen is None:
+            return False
+        return timezone.now() - self.newest_seen > COHORT_STALE_AFTER
 
     @property
     def confidence(self) -> str:
-        return tier(self.peer_count)
+        """Sample size, dropped one tier when the cohort itself has gone quiet.
+
+        One tier, not straight to "insufficient": stale peers are still
+        evidence, just weaker evidence, and refusing to answer would hide a
+        cohort rather than qualify it.
+        """
+        label = tier(self.peer_count)
+        if not self.stale:
+            return label
+        order = [name for _, name in TIERS] + ["insufficient"]
+        return order[min(order.index(label) + 1, len(order) - 1)]
 
     def adjusted(self, mileage: int | None, band: str | None = None,
                  haircuts: dict[str, float] | None = None,
@@ -190,27 +224,32 @@ def cohort_baseline(
 ) -> Baseline | None:
     """Median price of a cohort plus its per-bucket and per-band medians.
 
-    Accepts ``(price, mileage)`` as well as ``(price, mileage, band)`` so a
-    caller that has no condition to offer still gets a usable baseline — it just
-    gets no band strata, and therefore no condition adjustment.
+    Accepts ``(price, mileage)``, ``(price, mileage, band)`` and
+    ``(price, mileage, band, last_seen_at)`` so a caller that has no condition
+    or no freshness to offer still gets a usable baseline — it just gets no band
+    strata, no condition adjustment, and no staleness opinion. Each extra
+    element is additive and optional on purpose: three callers build these
+    tuples and none of them should have to be changed to add a fourth fact.
     """
-    triples = [(p, m, (t[0] if t else None))
+    triples = [(p, m, (t[0] if t else None), (t[1] if len(t) > 1 else None))
                for p, m, *t in peers if p]
     if len(triples) < MIN_PEERS:
         return None
     by_bucket: dict[int, list[int]] = {}
     by_band: dict[str, list[int]] = {}
-    for price, mileage, band in triples:
+    for price, mileage, band, _seen in triples:
         key = bucket(mileage)
         if key is not None:
             by_bucket.setdefault(key, []).append(price)
         if band:
             by_band.setdefault(band, []).append(price)
+    seen = [s for _, _, _, s in triples if s is not None]
     return Baseline(
-        base=statistics.median([p for p, _, _ in triples]),
+        base=statistics.median([p for p, _, _, _ in triples]),
         peer_count=len(triples),
         bucket_medians={k: (statistics.median(v), len(v)) for k, v in by_bucket.items()},
         band_medians={k: (statistics.median(v), len(v)) for k, v in by_band.items()},
+        newest_seen=max(seen) if seen else None,
     )
 
 
@@ -397,17 +436,21 @@ def scorable_rows():
 
 
 def cohort_peers(*, model_id: int, variant_id, year_jalali
-                 ) -> list[tuple[int, int, str | None]]:
-    """Priced, active, verified ``(price, mileage, condition_band)`` peers.
+                 ) -> list[tuple[int, int, str | None, object]]:
+    """Priced, active, verified ``(price, mileage, condition_band, last_seen)``.
 
     Cohort outliers excluded: a price that is not believable must not help define
     the baseline that judges believability.
+
+    ``last_seen`` rides along so the baseline can tell a cohort of forty cars
+    seen this morning from forty nobody has laid eyes on in a week. It costs one
+    more column on a query that was already running.
     """
     return [
-        (price, mileage, condition_band(status))
-        for price, mileage, status in without_cohort_outliers(scorable_rows())
+        (price, mileage, condition_band(status), last_seen)
+        for price, mileage, status, last_seen in without_cohort_outliers(scorable_rows())
         .filter(model_id=model_id, variant_id=variant_id, year_jalali=year_jalali)
-        .values_list("current_price", "mileage", "body_status")
+        .values_list("current_price", "mileage", "body_status", "last_seen_at")
     ]
 
 
@@ -478,13 +521,19 @@ def fair_price(code: str) -> dict:
         ),
         "components": components,
         "peer_count": baseline.peer_count,
-        "dispersion": dispersion([p for p, _, _ in peers], baseline.base),
+        "dispersion": dispersion([p for p, *_ in peers], baseline.base),
         "confidence": baseline.confidence,
+        # The freshness of the cohort this number was built from, as opposed to
+        # the freshness of the crawl as a whole (which is what the envelope's
+        # `coverage` describes). A healthy sweep can still be quoting a cohort
+        # nothing has re-seen in a week.
+        "cohort_stale": baseline.stale,
+        "cohort_last_seen": baseline.newest_seen,
         # Where this car sits among its peers, as a shape rather than a verdict.
         # A components table answers "how was the number built"; this answers
         # "is this cheap", which is the question people actually arrive with.
         # Free: it is the same peer list the baseline was computed from.
-        "distribution": peer_distribution([p for p, _, _ in peers]),
+        "distribution": peer_distribution([p for p, *_ in peers]),
     }
 
 
@@ -727,6 +776,22 @@ def deal_window(*, now=None) -> dict:
     return window
 
 
+def _turnover_rates() -> dict[int, dict]:
+    """Per-model time-to-leave, or nothing if there is not enough history yet.
+
+    Wrapped so a rebuild is never taken down by the liquidity join: turnover
+    needs clean episode history that a fresh install simply does not have, and a
+    board that refuses to build because it cannot annotate is worse than a board
+    that builds without the annotation.
+    """
+    from apps.core import research  # local: research imports this module
+
+    try:
+        return research.turnover_rates()
+    except Exception:  # pragma: no cover - defensive; the board must still build
+        return {}
+
+
 def compute_deal_scores(*, model_id: int | None = None) -> dict:
     """Rebuild deal scores for every eligible ad, or one model's.
 
@@ -745,7 +810,8 @@ def compute_deal_scores(*, model_id: int | None = None) -> dict:
 
     rows = list(base.values(
         "code", "model_id", "variant_id", "year_jalali",
-        "current_price", "first_seen_at", "mileage", "cohort_flags", "body_status",
+        "current_price", "first_seen_at", "last_seen_at", "mileage",
+        "cohort_flags", "body_status",
     ))
 
     # Pooled across the whole catalogue, never just this model's slice — a
@@ -753,6 +819,14 @@ def compute_deal_scores(*, model_id: int | None = None) -> dict:
     # and get a different answer every tick. Cached; the full rebuild drops it.
     haircuts = condition_haircuts(rows if model_id is None else None)
     mile_haircuts = mileage_haircuts(rows if model_id is None else None)
+
+    # How fast each model's listings leave the feed, joined onto the score so a
+    # card can say whether the discount is on something that actually moves.
+    # Imported locally: `research` imports this module for its own baselines, so
+    # a module-level import here would be a cycle. Empty until there is enough
+    # clean episode history, and a missing rate is left absent rather than
+    # defaulted — "we do not know how fast this sells" is not "it sells slowly".
+    liquidity = _turnover_rates()
 
     peers_by_cohort: dict = defaultdict(list)
     for r in rows:
@@ -772,7 +846,8 @@ def compute_deal_scores(*, model_id: int | None = None) -> dict:
         clean = [r for r in peers if not set(r["cohort_flags"] or []) & COHORT_FLAGS]
         baseline_rows = clean if len(clean) >= MIN_PEERS else peers
         baseline = cohort_baseline(
-            [(r["current_price"], r["mileage"], condition_band(r["body_status"]))
+            [(r["current_price"], r["mileage"], condition_band(r["body_status"]),
+              r["last_seen_at"])
              for r in baseline_rows]
         )
         if baseline is None:
@@ -836,6 +911,10 @@ def compute_deal_scores(*, model_id: int | None = None) -> dict:
                     "age_days": (now - first_seen).days if first_seen else 0,
                     "peer_count": baseline.peer_count,
                     "confidence": baseline.confidence,
+                    # Why the confidence may be lower than the peer count alone
+                    # would suggest. Without this the badge appears to
+                    # contradict the number printed next to it.
+                    "cohort_stale": baseline.stale,
                     "dispersion": spread,
                     "model_id": mid,
                     "variant_id": vid,
@@ -850,6 +929,10 @@ def compute_deal_scores(*, model_id: int | None = None) -> dict:
                     "condition_adjustment": adjusted.band_adjustment,
                     "condition_band_peers": adjusted.band_peers,
                     "condition_basis": adjusted.band_basis,
+                    # Absent, not zero, when there is no measured rate for this
+                    # model: the UI must be able to tell "sells slowly" from
+                    # "we have not watched it long enough to say".
+                    **({"liquidity": liquidity[mid]} if mid in liquidity else {}),
                 },
             ))
 

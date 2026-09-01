@@ -38,8 +38,12 @@ urlpatterns = [
     path("analytics/turnover/", views.turnover_view, name="turnover"),
     path("analytics/arrivals/", views.arrivals_view, name="arrivals"),
     path("analytics/distribution/", views.distribution_view, name="distribution"),
-    # Finer than the three persisted index scopes, so computed per request.
+    # Finer than the persisted index scopes, so computed per request.
     path("analytics/movement/", views.movement_view, name="movement"),
+    # The three panels above, read as one position. Every input rides along.
+    path("analytics/market-read/", views.market_read_view, name="market-read"),
+    # Money in, cars out — the only endpoint that runs that direction.
+    path("analytics/affordable/", views.affordable_view, name="affordable"),
 
     path("research/liquidity/<int:model_id>/", views.liquidity_view, name="liquidity"),
     path("research/depreciation/<int:model_id>/", views.depreciation_view, name="depreciation"),

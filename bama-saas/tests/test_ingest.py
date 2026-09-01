@@ -645,14 +645,26 @@ def _cover(at, lo=1, hi=FEED_DEPTH, run=None):
     return run
 
 
-def _ad(catalog, code, last_seen, *, price=1_000_000_000, mileage=100_000):
+def _ad(catalog, code, last_seen, *, price=1_000_000_000, mileage=100_000,
+        seen_recently=False):
+    """One ACTIVE listing.
+
+    `seen_recently` decouples "when was this published" from "when did the
+    crawler last see it", because this file needs both. The removal tests are
+    *about* `last_seen` and pass an arbitrary past instant, which must land on
+    the row unchanged. The pricing test needs a cohort that looks live, because
+    confidence now reads cohort freshness (`pricing.COHORT_STALE_AFTER`) and a
+    cohort last seen weeks ago legitimately reads as stale — so it opts in
+    rather than the default quietly rewriting what every other test asserts on.
+    """
     return Ad.objects.create(
         code=code, brand=catalog["brand"], model=catalog["model"],
         variant=catalog["variant"], city=catalog["city"],
         year=1399, year_jalali=1399, year_calendar="jalali",
         mileage=mileage, current_price=price,
         publish_at=last_seen, first_seen_at=last_seen - timedelta(days=10),
-        last_seen_at=last_seen, status=Ad.Status.ACTIVE,
+        last_seen_at=djtz.now() if seen_recently else last_seen,
+        status=Ad.Status.ACTIVE,
     )
 
 
@@ -912,9 +924,15 @@ def test_asking_above_peer_median_is_not_a_deal(catalog):
 
 @pytest.mark.django_db
 def test_honest_discount_is_scored_with_evidence(catalog):
+    # `seen_recently`: confidence reads cohort freshness, and this cohort is
+    # meant to be live. Without it the fixture's fixed NOW ages past
+    # COHORT_STALE_AFTER and the badge drops a tier for a reason the test is
+    # not about.
     for i in range(8):
-        _ad(catalog, f"peer{i:03d}", NOW, price=1_000_000_000, mileage=100_000)
-    cheap = _ad(catalog, "bargain1", NOW, price=800_000_000, mileage=100_000)
+        _ad(catalog, f"peer{i:03d}", NOW, price=1_000_000_000, mileage=100_000,
+            seen_recently=True)
+    cheap = _ad(catalog, "bargain1", NOW, price=800_000_000, mileage=100_000,
+                seen_recently=True)
 
     compute_deal_scores()
 

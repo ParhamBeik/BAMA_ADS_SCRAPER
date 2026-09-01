@@ -13,7 +13,7 @@
  * bargain, and the colour has to carry that before any label is read.
  */
 import { Link } from "react-router-dom";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Timer } from "lucide-react";
 import {
   BamaLink, ConfidenceDots, Fa, Thumb, km, pct, toman,
 } from "@/ui";
@@ -39,6 +39,31 @@ export interface Deal {
   image_url: string;
   bama_url: string;
   condition_flagged: boolean;
+  /** How fast this model's listings leave the feed. Null — never zero — when
+   *  there is not enough clean history to say; "we have not watched it long
+   *  enough" and "it sells slowly" are different facts. */
+  liquidity?: {
+    left_pct: number;
+    n: number;
+    window_days: number;
+  } | null;
+}
+
+/**
+ * How quickly this model moves, in words.
+ *
+ * A discount is not a deal on its own: 15% off a car that leaves the feed in
+ * ten days and 15% off one that sits for ninety are different propositions, and
+ * the board presented them identically because liquidity lived on a screen the
+ * buyer never had open at the same time.
+ *
+ * "Left the feed", never "sold" — Bama publishes no reason, so a delisting is a
+ * sale, an expiry or a withdrawal with no way to tell which.
+ */
+export function liquidityNote(deal: Pick<Deal, "liquidity">): string | null {
+  const l = deal.liquidity;
+  if (!l) return null;
+  return `${Math.round(l.left_pct)}٪ از این مدل ظرف ${l.window_days} روز از باما برداشته می‌شوند (از ${l.n} آگهی)`;
 }
 
 /** "۰ روز در بازار" is technically right and reads like a bug. */
@@ -116,6 +141,20 @@ export function DealCard({ deal, suspect }: { deal: Deal; suspect: boolean }) {
           <span>·</span>
           <span>{ageLabel(deal.days_listed)}</span>
         </div>
+        {/* Whether the discount is on something that actually moves. Absent
+            rather than zeroed when unmeasured — see `liquidityNote`. */}
+        {deal.liquidity && (
+          <div className="row">
+            {/* "Leaves the market", never "is sold": Bama publishes no reason
+                for a delisting, so a sale, an expiry and a withdrawal are
+                indistinguishable and the stronger word would be an assertion
+                nothing here observed. */}
+            <span className="stat-sub" title={liquidityNote(deal) ?? undefined}>
+              <Timer size={11} /> {Math.round(deal.liquidity.left_pct)}٪ ظرف{" "}
+              {deal.liquidity.window_days} روز از بازار خارج می‌شوند
+            </span>
+          </div>
+        )}
         <div className="row">
           <BamaLink href={deal.bama_url} className="ghost above-stretch" />
         </div>

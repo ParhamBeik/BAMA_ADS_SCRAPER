@@ -173,6 +173,40 @@ def condition_band(body_status: str | None) -> str | None:
     return None
 
 
+def condition_band_q(band: str, *, prefix: str = "") -> Q:
+    """``condition_band`` as a queryset predicate, derived from the same rules.
+
+    ``_BAND_RULES`` is ordered and first-match-wins, and that ordering is
+    load-bearing — "صافکاری بدون رنگ" contains "بدون رنگ", "بدون رنگ" contains
+    "رنگ", and PAINTED appears twice because the last rule is a catch-all that
+    must only fire once the specific ones have not. Reproducing that as a
+    hand-written include/exclude pair per band is how the two definitions drift,
+    so this builds the predicate *from the rules themselves*: for each position
+    the band occupies, match that rule and exclude every rule before it.
+
+    ``apps/core/filters.py`` used to carry its own copy of these regexes. It now
+    calls this, so a rule added to ``_BAND_RULES`` reaches the filter, the
+    distribution and the scorer at once.
+    """
+    field = f"{prefix}body_status"
+    combined = Q()
+    matched = False
+    for i, (rule_band, pattern) in enumerate(_BAND_RULES):
+        if rule_band != band:
+            continue
+        matched = True
+        clause = Q(**{f"{field}__regex": pattern.pattern})
+        for _, earlier in _BAND_RULES[:i]:
+            clause &= ~Q(**{f"{field}__regex": earlier.pattern})
+        combined |= clause
+    if not matched:
+        # An unknown band must select nothing, never everything: an empty Q()
+        # passed to filter() is a no-op and would return the whole scope under a
+        # label saying it had been narrowed.
+        return Q(pk__in=[])
+    return combined
+
+
 def price_basis_unclear(
     *,
     title: str = "",

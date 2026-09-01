@@ -68,6 +68,7 @@ class Command(BaseCommand):
                 "mark_inactive": ("days",),
                 "episodes": ("limit",),
                 "notify": ("dry_run",),
+                "alerts": ("dry_run",),
             }.get(job, ())
             picked = {k: given[k] for k in wanted if k in given and given[k] is not False}
             if job == "fetch":

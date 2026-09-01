@@ -13,6 +13,7 @@ the deal board still showing the car.
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 
 import requests
 from django.conf import settings
@@ -46,33 +47,86 @@ def toman(value: int | None) -> str:
     return f"{value:,}"
 
 
-def _candidates(cfg: NotifierSettings, limit: int = MAX_PER_RUN):
-    """Unsent listings clearing every configured bar, best discount first."""
+def matching_deals(
+    *,
+    min_discount_pct: float,
+    min_peers: int,
+    price_min: int | None = None,
+    price_max: int | None = None,
+    mileage_max: int | None = None,
+    model_ids: list[int] | None = None,
+    brand_slug: str = "",
+    variant_id: int | None = None,
+    year_jalali: int | None = None,
+    exclude_review: bool = False,
+    already_sent=None,
+    limit: int = MAX_PER_RUN,
+):
+    """Scored listings clearing every bar, best discount first.
+
+    The one matcher, used by both the operator's singleton and every per-user
+    `AlertRule`. Two implementations of "is this worth interrupting for" would
+    let the same listing qualify on one path and not the other, which is exactly
+    the class of disagreement the deal board's own single-population rule exists
+    to prevent.
+
+    ``already_sent`` is a queryset of ad codes this recipient has had, passed in
+    rather than assumed, because "already sent" is global for the singleton
+    (`NotifiedAd`) and per-user for a rule (`AlertDelivery`).
+    """
     qs = (
         verified_by_ad(DealScoreCache.objects.select_related("ad"))
-        .filter(discount_pct__gte=cfg.min_discount_pct)
-        .exclude(ad__notified__isnull=False)
+        .filter(discount_pct__gte=min_discount_pct)
     )
     # Gated here as well as at build time: the cache is rebuilt on a schedule,
     # and ordering by -discount_pct puts whatever slipped through straight into
     # the first message the user ever receives.
     qs = exclude_unclear_price(qs, prefix="ad__")
-    if cfg.price_min is not None:
-        qs = qs.filter(ad__current_price__gte=cfg.price_min)
-    if cfg.price_max is not None:
-        qs = qs.filter(ad__current_price__lte=cfg.price_max)
-    if cfg.model_ids:
-        qs = qs.filter(ad__model_id__in=cfg.model_ids)
+    if already_sent is not None:
+        qs = qs.exclude(ad_id__in=already_sent)
+    if exclude_review:
+        # The same rule the board's `top` band applies. A repainted car reading
+        # 16% under its cohort is what a repainted car costs, and delivering it
+        # as a find is how an alert feed teaches someone to ignore it.
+        qs = qs.filter(needs_review=False)
+    if price_min is not None:
+        qs = qs.filter(ad__current_price__gte=price_min)
+    if price_max is not None:
+        qs = qs.filter(ad__current_price__lte=price_max)
+    if mileage_max is not None:
+        qs = qs.filter(ad__mileage__lte=mileage_max)
+    if model_ids:
+        qs = qs.filter(ad__model_id__in=model_ids)
+    if brand_slug:
+        qs = qs.filter(ad__model__brand__slug=brand_slug)
+    if variant_id:
+        qs = qs.filter(ad__variant_id=variant_id)
+    if year_jalali:
+        qs = qs.filter(ad__year_jalali=year_jalali)
 
     # peer_count lives in the components JSON, so this one bar is applied in
     # Python — a JSON cast per row for an already-short list is not worth it.
     out = []
     for row in qs.order_by("-discount_pct")[: limit * 5]:
-        if (row.components or {}).get("peer_count", 0) >= cfg.min_peers:
+        if (row.components or {}).get("peer_count", 0) >= min_peers:
             out.append(row)
         if len(out) >= limit:
             break
     return out
+
+
+def _candidates(cfg: NotifierSettings, limit: int = MAX_PER_RUN):
+    """The operator singleton's candidates, through the shared matcher."""
+    return matching_deals(
+        min_discount_pct=cfg.min_discount_pct,
+        min_peers=cfg.min_peers,
+        price_min=cfg.price_min,
+        price_max=cfg.price_max,
+        model_ids=cfg.model_ids,
+        # Global rather than per-recipient: this is the one-chat operator feed.
+        already_sent=NotifiedAd.objects.values("ad_id"),
+        limit=limit,
+    )
 
 
 def format_message(row: DealScoreCache) -> str:
@@ -112,6 +166,84 @@ def send_telegram(text: str, chat_id: str) -> bool:
         # pipeline down: the deal is still on the board either way.
         log.warning("notify: telegram send failed: %s", exc)
         return False
+
+
+def format_alert(row: DealScoreCache) -> str:
+    """Same message shape as the operator's, so both channels read alike."""
+    return format_message(row)
+
+
+# One user's rules can only put this many cars in their feed per tick. A rule
+# written too loosely — 2% off anything — would otherwise deliver hundreds on
+# its first run and the feed would be useless from the moment it was created.
+MAX_PER_USER_PER_RUN = 12
+
+
+def deliver_alerts(*, dry_run: bool = False) -> dict:
+    """Fill every user's alert feed from the deal board.
+
+    Reads the board rather than re-scoring anything, for the same reason the
+    operator notifier does: a second implementation of "is this a deal" is a
+    second answer to it.
+
+    In-app delivery is the product; Telegram is optional and per rule. A failed
+    send therefore marks `telegram_sent=False` and leaves the row — the user
+    still has the alert, which is the part that matters. The operator singleton
+    does the opposite (no row unless the send succeeded) because there the
+    message *is* the delivery.
+    """
+    from apps.accounts.models import AlertDelivery, AlertRule
+
+    rules = list(AlertRule.objects.filter(enabled=True).select_related("user"))
+    if not rules:
+        return {"rules": 0, "delivered": 0, "telegram_sent": 0}
+
+    delivered = telegram_sent = 0
+    # Per user, so two of one user's rules matching the same car deliver it
+    # once. Loaded per user rather than per rule for the same reason.
+    per_user: dict = defaultdict(int)
+    for rule in rules:
+        if per_user[rule.user_id] >= MAX_PER_USER_PER_RUN:
+            continue
+        seen = AlertDelivery.objects.filter(user_id=rule.user_id).values("ad_id")
+        rows = matching_deals(
+            min_discount_pct=rule.min_discount_pct,
+            min_peers=rule.min_peers,
+            price_min=rule.price_min,
+            price_max=rule.price_max,
+            mileage_max=rule.mileage_max,
+            model_ids=[rule.model_id] if rule.model_id else None,
+            brand_slug=rule.brand_slug,
+            variant_id=rule.variant_id,
+            year_jalali=rule.year_jalali,
+            exclude_review=rule.exclude_review,
+            already_sent=seen,
+            limit=MAX_PER_USER_PER_RUN - per_user[rule.user_id],
+        )
+        for row in rows:
+            if dry_run:
+                delivered += 1
+                continue
+            # get_or_create, not create: two rules of the same user can select
+            # the same ad inside one tick, before either is in `seen`.
+            entry, created = AlertDelivery.objects.get_or_create(
+                user_id=rule.user_id, ad_id=row.ad_id,
+                defaults={"rule": rule, "discount_pct": row.discount_pct,
+                          "peer_median": row.peer_median},
+            )
+            if not created:
+                continue
+            delivered += 1
+            per_user[rule.user_id] += 1
+            if rule.telegram_chat_id and send_telegram(
+                format_alert(row), rule.telegram_chat_id
+            ):
+                entry.telegram_sent = True
+                entry.save(update_fields=["telegram_sent"])
+                telegram_sent += 1
+
+    return {"rules": len(rules), "delivered": delivered,
+            "telegram_sent": telegram_sent, "dry_run": dry_run}
 
 
 def notify_deals(*, dry_run: bool = False) -> dict:

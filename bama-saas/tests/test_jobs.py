@@ -156,8 +156,11 @@ def test_hot_cadence_skips_warm_steps(stub_jobs):
     report = P.run(cadence="hot", skip_fetch=True)
 
     assert "episodes" not in seen and "snapshot" not in seen
+    # `alerts` follows `notify` and precedes nothing: the operator's single
+    # Telegram chat and every user's in-app feed read the same board, and
+    # neither may be able to fail the other.
     assert [s.name for s in report.steps] == [
-        "mark_inactive", "deal_scores", "probe_sold", "notify",
+        "mark_inactive", "deal_scores", "probe_sold", "notify", "alerts",
     ]
 
 

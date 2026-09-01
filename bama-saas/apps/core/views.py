@@ -44,6 +44,7 @@ from apps.core.models import (
     Variant,
 )
 from apps.core.quality import (
+    CONDITION_BANDS,
     condition_band,
     condition_discounted,
     verified,
@@ -506,6 +507,40 @@ def _opt(params, key, cast):
         ) from exc
 
 
+def _condition(params):
+    """`?condition=`, refused outside the four bands `quality` defines.
+
+    A closed vocabulary for the same reason `_model_year` is bounded: it enters
+    a cache key, and an axis that accepts anything is an axis with unlimited
+    distinct keys. It is also the difference between a typo returning an empty
+    scope and a typo returning the whole one.
+    """
+    value = (params.get("condition") or "").strip()
+    if not value:
+        return None
+    if value not in CONDITION_BANDS:
+        raise ValueError(f"condition must be one of {', '.join(CONDITION_BANDS)}")
+    return value
+
+
+def _mileage_bucket(params):
+    """`?mileage_bucket=`, refused unless it is one of pricing's own edges.
+
+    The bucket *is* the lower edge, so accepting an arbitrary integer would both
+    unbound the cache key and silently answer a different question than the one
+    the ladder is calibrated on.
+    """
+    value = _opt(params, "mileage_bucket", int)
+    if value is None:
+        return None
+    if value not in pricing.MILEAGE_BUCKETS:
+        raise ValueError(
+            "mileage_bucket must be one of "
+            f"{', '.join(str(e) for e in pricing.MILEAGE_BUCKETS)}"
+        )
+    return value
+
+
 def _model_year(params):
     """`?year=`, refused outside the range the catalogue can hold.
 
@@ -571,6 +606,11 @@ def _deal_score_row(obj, *, now=None):
         "body_status": obj.ad.body_status,
         "condition_band": condition_band(obj.ad.body_status),
         "district": getattr(obj.ad, "district", "") or "",
+        # How fast this model's listings leave the feed, so "is this a good
+        # deal" and "will this car actually move" are answerable on one card.
+        # Null when there is not enough clean history — never zero, which would
+        # read as "nothing sells".
+        "liquidity": components.get("liquidity"),
         "components": components,
     }
 
@@ -811,6 +851,12 @@ def market_index(request):
 # cycle, so a cached summary is never more than one tick behind its data.
 PULSE_CACHE_SECONDS = 120
 
+# Which scopes the movers board can rank. The market series has nothing to be
+# ranked against — it is one row — so it is the one scope excluded.
+RANKABLE_SCOPES = tuple(
+    s for s in MarketIndex.Scope.values if s != MarketIndex.Scope.MARKET
+)
+
 
 def _window_days(params, default: int = 30) -> int:
     """`?days=`, clamped. Two days is the shortest thing that can have a change."""
@@ -842,8 +888,8 @@ def movers_view(request):
     is reach, not new computation.
     """
     scope = request.query_params.get("scope", MarketIndex.Scope.MODEL)
-    if scope not in (MarketIndex.Scope.BRAND, MarketIndex.Scope.MODEL):
-        return Response({"detail": "scope must be brand or model"},
+    if scope not in RANKABLE_SCOPES:
+        return Response({"detail": f"scope must be one of {', '.join(RANKABLE_SCOPES)}"},
                         status=status.HTTP_400_BAD_REQUEST)
     limit = _leaderboard_limit(request.query_params)
     days = _window_days(request.query_params)
@@ -886,6 +932,12 @@ def arrivals_view(request):
 def distribution_view(request):
     """Asking-price shape for any scope, market-wide down to one model year.
 
+    ``condition`` and ``mileage_bucket`` narrow it to the car the reader
+    actually means. Both are bounded to a fixed vocabulary rather than taken as
+    given, for the same reason `_model_year` bounds the year: an unbounded axis
+    is an unbounded number of cache keys, each one a miss that re-runs the scan
+    behind it.
+
     Cached because the population filter includes the installment-ad regex,
     which the query it lives on documents as an unindexed scan — fine once a
     cycle, not fine once per keystroke in a scope picker.
@@ -897,12 +949,80 @@ def distribution_view(request):
             "model_id": _opt(params, "model", int),
             "variant_id": _opt(params, "variant", int),
             "year_jalali": _model_year(params),
+            "condition": _condition(params),
+            "mileage_bucket": _mileage_bucket(params),
         }
     except ValueError as exc:
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
     payload, coverage = cached_answer(
         cache_key("distribution", scope), MARKETS_CACHE_SECONDS,
         lambda: research.price_distribution(**scope),
+    )
+    return envelope(payload, coverage=coverage)
+
+
+@api_view(["GET"])
+def market_read_view(request):
+    """Buy or wait, as one position with the evidence attached.
+
+    The front page had the index, arrivals and turnover as three separate cards
+    and left the reader to combine them — which is the one step that actually
+    answers "where should I position myself".
+    """
+    days = _window_days(request.query_params)
+    payload, coverage = cached_answer(
+        cache_key("pulse:read", {"days": days}), PULSE_CACHE_SECONDS,
+        lambda: research.market_read(days=days),
+    )
+    return envelope(payload, coverage=coverage)
+
+
+# A budget is user-typed and unbounded, so it is snapped to a coarse grid before
+# it reaches the cache key. Without this every distinct rial anybody types is a
+# fresh key that misses and re-runs the scan — the same rule `_model_year`
+# applies to years, for the same reason. 10M toman is finer than any real
+# decision boundary and collapses the keyspace by seven orders of magnitude.
+BUDGET_CACHE_GRID = 10_000_000
+MAX_BUDGET = 500_000_000_000
+
+
+@api_view(["GET"])
+def affordable_view(request):
+    """What a given budget actually buys, grouped by cohort.
+
+    The one endpoint that runs from money to cars rather than from a car to its
+    price, which is how most readers arrive.
+    """
+    params = request.query_params
+    try:
+        budget = _opt(params, "budget", int)
+        if not budget or budget <= 0:
+            return Response({"detail": "budget must be a positive integer"},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if budget > MAX_BUDGET:
+            return Response({"detail": f"budget must not exceed {MAX_BUDGET}"},
+                            status=status.HTTP_400_BAD_REQUEST)
+        tolerance = _opt(params, "tolerance", float)
+        mileage_max = _opt(params, "mileage_max", int)
+        condition = _condition(params)
+    except ValueError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    scope = {
+        "budget": budget - (budget % BUDGET_CACHE_GRID),
+        "tolerance_pct": (
+            research.DEFAULT_TOLERANCE_PCT if tolerance is None else round(tolerance, 1)
+        ),
+        "brand": params.get("brand") or None,
+        "condition": condition,
+        "mileage_max": mileage_max,
+        "limit": _leaderboard_limit(params, default=40),
+    }
+    key = cache_key("affordable", scope)
+    snapped = scope.pop("budget")
+    payload, coverage = cached_answer(
+        key, MARKETS_CACHE_SECONDS,
+        lambda: research.affordable(snapped, **scope),
     )
     return envelope(payload, coverage=coverage)
 

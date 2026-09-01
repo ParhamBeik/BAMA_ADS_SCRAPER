@@ -17,12 +17,13 @@
  */
 import { NavLink, useNavigate } from "react-router-dom";
 import {
-  Activity, BarChart3, Bookmark, LogOut, Moon, Percent, Search, Sun,
-  MonitorCog, Sparkles, User,
+  Activity, BarChart3, Bell, Bookmark, LogOut, Moon, Percent, Search, Sun,
+  MonitorCog, Sparkles, User, Wallet,
 } from "lucide-react";
 import { useAuth } from "@/auth";
 import { useTheme, type ThemeChoice } from "@/theme";
 import { BrandMark } from "@/ui";
+import { useUnreadAlerts } from "@/alerts";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
@@ -32,16 +33,24 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 /**
  * The five destinations, in the order a buyer meets them: what is the market
- * doing, what is cheap, find a specific car, study one, and what did I keep.
- * `Control` is deliberately not here — it is an operator screen, and it moved
- * into the account menu so the main nav stays the product.
+ * doing, what can I afford, what is cheap, find a specific car, study one.
+ *
+ * Five and not seven. Two screens arrived at once — the budget shortlist and
+ * the alert feed — and a tab bar with seven Persian labels clips them mid-word
+ * on a phone, which is the failure the bottom row exists to avoid. So the two
+ * *personal* surfaces, saved cars and alerts, moved to the icon cluster on the
+ * right: they are "my stuff" rather than ways into the market, the alert badge
+ * has to be visible from every screen anyway, and both read fine as icons.
+ *
+ * `Control` is deliberately not here either — it is an operator screen, and it
+ * lives in the account menu so the main nav stays the product.
  */
 export const NAV = [
   { to: "/", label: "نبض بازار", icon: Sparkles, end: true },
+  { to: "/budget", label: "بودجه من", icon: Wallet, end: false },
   { to: "/deals", label: "معامله‌ها", icon: Percent, end: false },
   { to: "/explore", label: "جست‌وجو", icon: Search, end: false },
   { to: "/analyse", label: "تحلیل", icon: BarChart3, end: false },
-  { to: "/saved", label: "ذخیره‌شده‌ها", icon: Bookmark, end: false },
 ];
 
 const THEME_OPTIONS: { value: ThemeChoice; label: string; Icon: typeof Sun }[] = [
@@ -172,10 +181,72 @@ export function AppHeader() {
         ))}
       </nav>
       <div className="ms-auto flex flex-none items-center gap-2">
+        <IconLink to="/saved" label="ذخیره‌شده‌ها" Icon={Bookmark} />
+        <AlertsBell />
         <ThemeToggle />
         <AccountMenu />
       </div>
     </HeaderShell>
+  );
+}
+
+/** One of the two personal destinations, as an icon with a real accessible name. */
+function IconLink({
+  to, label, Icon, children,
+}: {
+  to: string;
+  label: string;
+  Icon: typeof Bookmark;
+  children?: React.ReactNode;
+}) {
+  return (
+    <NavLink to={to} aria-label={label} title={label} className="relative">
+      {({ isActive }) => (
+        <>
+          <Button
+            variant={isActive ? "secondary" : "outline"}
+            size="icon"
+            // The NavLink is the control; this is only its surface. Without
+            // this the button steals the tab stop and the link becomes
+            // unreachable by keyboard.
+            tabIndex={-1}
+            aria-hidden
+          >
+            <Icon className="size-4" />
+          </Button>
+          {children}
+        </>
+      )}
+    </NavLink>
+  );
+}
+
+/**
+ * The alert feed, with its unread count.
+ *
+ * The badge is why this is an icon in the header rather than a sixth tab: it
+ * has to be visible from every screen, and a count that only appears once you
+ * are already looking at the feed tells you nothing.
+ */
+function AlertsBell() {
+  const unread = useUnreadAlerts();
+  const count = unread.data?.unread ?? 0;
+  return (
+    <IconLink to="/alerts" label={count ? `اعلان‌ها (${count} خوانده‌نشده)` : "اعلان‌ها"}
+              Icon={Bell}>
+      {count > 0 && (
+        <span
+          aria-hidden
+          className={
+            "bg-primary text-primary-foreground pointer-events-none absolute " +
+            "-top-1 -end-1 grid min-w-4 place-items-center rounded-full px-1 " +
+            "text-[10px] font-bold leading-4"
+          }
+        >
+          {count > 99 ? "۹۹+" : count}
+        </span>
+      )}
+    </IconLink>
   );
 }
 

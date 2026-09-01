@@ -22,13 +22,17 @@ from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import ensure_csrf_cookie
 from rest_framework import serializers, status, viewsets
+from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
-from apps.accounts.models import Favorite, User
+from apps.accounts.models import AlertDelivery, AlertRule, Favorite, User, Watchlist
+from apps.core import images
 from apps.core.models import PriceDropEvent
+from apps.core.pricing import MIN_PEERS
+from apps.jobs.parsing import absolute_ad_url
 
 
 def _user_payload(user) -> dict:
@@ -216,3 +220,203 @@ class FavoriteViewSet(viewsets.ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         self.get_object().delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------------------
+# Watchlists and alerts
+# ---------------------------------------------------------------------------
+#
+# Every viewset here is scoped to `request.user` in `get_queryset` and assigns
+# the owner in `perform_create`. Neither is optional: without the first, an id
+# in the URL reads somebody else's row, and without the second a client can post
+# a `user` field and write into another account. The favourites viewset above is
+# the pattern; these follow it exactly rather than inventing a second one.
+
+
+class ScopeSerializerMixin(serializers.Serializer):
+    """The four scope fields, plus the labels a client needs to render them.
+
+    `scope_key` is read-only and derived in `Model.save()`. Exposing it is
+    deliberate: the frontend uses it to tell whether the scope currently on
+    screen is already being watched, and re-deriving that comparison in
+    TypeScript is how the two definitions drift.
+    """
+
+    model_name = serializers.CharField(source="model.name_fa", read_only=True, default="")
+    variant_name = serializers.CharField(source="variant.name_fa", read_only=True,
+                                         default="")
+    brand_name = serializers.CharField(source="model.brand.name_fa", read_only=True,
+                                       default="")
+    scope_key = serializers.CharField(read_only=True)
+
+
+class WatchlistSerializer(ScopeSerializerMixin, serializers.ModelSerializer):
+    class Meta:
+        model = Watchlist
+        fields = ["id", "brand_slug", "model", "variant", "year_jalali",
+                  "scope_key", "model_name", "variant_name", "brand_name",
+                  "created_at"]
+        read_only_fields = ["id", "created_at"]
+
+
+class AlertRuleSerializer(ScopeSerializerMixin, serializers.ModelSerializer):
+    class Meta:
+        model = AlertRule
+        fields = ["id", "name", "enabled", "brand_slug", "model", "variant",
+                  "year_jalali", "scope_key", "model_name", "variant_name",
+                  "brand_name", "min_discount_pct", "min_peers", "price_min",
+                  "price_max", "mileage_max", "exclude_review",
+                  "telegram_chat_id", "created_at"]
+        read_only_fields = ["id", "created_at"]
+
+    def validate_min_discount_pct(self, value):
+        # 100% would be a free car; 0 would deliver every listing on the site.
+        if not 0 < value < 100:
+            raise serializers.ValidationError("must be between 0 and 100")
+        return value
+
+    def validate_min_peers(self, value):
+        # The same floor the operator singleton enforces, and for the same
+        # reason: below `MIN_PEERS` the median this is measured against is not
+        # one the app will quote, let alone interrupt somebody with.
+        if value < MIN_PEERS:
+            raise serializers.ValidationError(
+                f"must be at least {MIN_PEERS} — the fair-price engine's peer minimum"
+            )
+        return value
+
+    def validate(self, attrs):
+        lo = attrs.get("price_min", getattr(self.instance, "price_min", None))
+        hi = attrs.get("price_max", getattr(self.instance, "price_max", None))
+        if lo is not None and hi is not None and lo > hi:
+            raise serializers.ValidationError({"price_min": "must not exceed price_max"})
+        return attrs
+
+
+class _OwnedViewSet(viewsets.ModelViewSet):
+    """Rows belonging to the signed-in user, and only those."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return super().get_queryset().filter(user=self.request.user)
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+
+class WatchlistViewSet(_OwnedViewSet):
+    """Cars this user is following. POST a scope; unique per user."""
+
+    serializer_class = WatchlistSerializer
+    http_method_names = ["get", "post", "delete", "head", "options"]
+    queryset = Watchlist.objects.select_related("model", "variant", "model__brand")
+
+    def create(self, request, *args, **kwargs):
+        """Idempotent, like favourites.
+
+        The unique constraint is on the *derived* `scope_key`, so a duplicate
+        cannot be caught by looking at the posted fields — the same car can
+        arrive as `{model: 42}` twice and as `{model: 42, variant: null}` once.
+        Build the instance, let it derive its key, then look for that.
+        """
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        candidate = Watchlist(user=request.user, **serializer.validated_data)
+        existing = Watchlist.objects.filter(
+            user=request.user, scope_key=candidate.build_scope_key()
+        ).first()
+        if existing is not None:
+            return Response(self.get_serializer(existing).data, status=status.HTTP_200_OK)
+        candidate.save()
+        return Response(self.get_serializer(candidate).data,
+                        status=status.HTTP_201_CREATED)
+
+
+class AlertRuleViewSet(_OwnedViewSet):
+    """What this user wants to be told about."""
+
+    serializer_class = AlertRuleSerializer
+    queryset = AlertRule.objects.select_related("model", "variant", "model__brand")
+
+
+class AlertDeliverySerializer(serializers.ModelSerializer):
+    """One alert, carrying what was true when it fired.
+
+    `discount_pct` and `peer_median` are the stored copies, not a join to
+    `DealScoreCache`: that table is dropped and rebuilt on a schedule, so a feed
+    that joined to it would blank out an alert the moment the listing stopped
+    qualifying — which is the one moment the reader most needs to see what it
+    said.
+    """
+
+    code = serializers.CharField(source="ad_id", read_only=True)
+    title = serializers.CharField(source="ad.title", read_only=True)
+    price = serializers.IntegerField(source="ad.current_price", read_only=True)
+    year = serializers.IntegerField(source="ad.year_jalali", read_only=True)
+    mileage = serializers.IntegerField(source="ad.mileage", read_only=True)
+    city_name = serializers.CharField(source="ad.city.name_fa", read_only=True,
+                                      default="")
+    status = serializers.CharField(source="ad.status", read_only=True)
+    image_url = serializers.SerializerMethodField()
+    bama_url = serializers.SerializerMethodField()
+    rule_name = serializers.CharField(source="rule.name", read_only=True, default="")
+
+    class Meta:
+        model = AlertDelivery
+        fields = ["id", "code", "title", "price", "year", "mileage", "city_name",
+                  "status", "image_url", "bama_url", "discount_pct",
+                  "peer_median", "rule_name", "created_at", "read_at"]
+        read_only_fields = fields
+
+    def get_image_url(self, obj) -> str:
+        return images.ad_image_paths(obj.ad)[0]
+
+    def get_bama_url(self, obj) -> str:
+        return absolute_ad_url(obj.ad.url or obj.ad.canonical_path)
+
+
+class AlertViewSet(viewsets.ReadOnlyModelViewSet):
+    """The user's alert feed, plus one action to mark it read.
+
+    Read-only apart from that: alerts are written by the worker
+    (`jobs.alerts`), never by a client, so there is no create or update here to
+    get the ownership check wrong on.
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = AlertDeliverySerializer
+    queryset = AlertDelivery.objects.select_related("ad", "ad__city", "rule")
+
+    def get_queryset(self):
+        qs = super().get_queryset().filter(user=self.request.user)
+        if self.request.query_params.get("unread") == "true":
+            qs = qs.filter(read_at__isnull=True)
+        return qs
+
+    @action(detail=False, methods=["post"], url_path="mark-read")
+    def mark_read(self, request):
+        """Mark the whole feed read, or the codes given.
+
+        `update()` rather than a loop: this fires on opening the feed, and a
+        save per row would make the cost of reading proportional to how long the
+        user has been away.
+        """
+        qs = self.get_queryset().filter(read_at__isnull=True)
+        codes = request.data.get("codes")
+        if codes:
+            qs = qs.filter(ad_id__in=codes)
+        return Response({"marked": qs.update(read_at=timezone.now())})
+
+    @action(detail=False, methods=["get"], url_path="unread-count")
+    def unread_count(self, request):
+        """Just the number, for the header badge.
+
+        Its own route so the badge does not have to fetch and discard a page of
+        alerts on every screen the user visits.
+        """
+        return Response({
+            "unread": AlertDelivery.objects.filter(
+                user=request.user, read_at__isnull=True
+            ).count()
+        })

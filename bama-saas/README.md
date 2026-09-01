@@ -1,10 +1,12 @@
 # Bama — personal deal finder
 
-Crawls bama.ir listings and answers three questions about them: what is this car
-worth (**fair price**), which listings are underpriced against their own cohort
-(**deal board**), and did the market actually move (**matched-cohort index**,
-**Kaplan–Meier time-to-sell**). Session login, one operator screen, an optional
-Telegram notifier. PostgreSQL only — SQLite is not supported.
+Crawls bama.ir listings and answers the questions a buyer actually arrives with:
+what is this car worth (**fair price**), which listings are underpriced against
+their own cohort (**deal board**), where is the market going and in which
+segment (**matched-cohort index**, robust slopes, **Kaplan–Meier
+time-to-sell**), what a given budget can reach, and — once you follow a car —
+being told when one of them turns up. Session login, one operator screen, an
+optional Telegram notifier. PostgreSQL only — SQLite is not supported.
 
 ## Stack
 
@@ -21,7 +23,8 @@ broker: the scheduler is a shell loop plus `flock`.
 bama-saas/
 ├── config/settings.py       one settings file; DJANGO_DEBUG=1 picks local
 ├── apps/
-│   ├── accounts/            user, session auth, saved cars
+│   ├── accounts/            user, session auth, saved cars,
+│   │                        watchlists + alert rules + the alert inbox
 │   ├── core/                models, views, serializers + the analytics:
 │   │                        pricing.py quality.py research.py notify.py
 │   └── jobs/                the crawler side:
@@ -29,7 +32,7 @@ bama-saas/
 │                            jobs.py pipeline.py
 ├── ui/web/                  React + Vite + TypeScript
 ├── deploy/                  worker.sh (the scheduler), backup, VPS deploy
-├── tests/                   pytest-django, 8 files
+├── tests/                   pytest-django, 9 files
 ├── docker-compose.yml       local: postgres, redis, django, worker, vite
 └── docker-compose.prod.yml  VPS: postgres, redis, gunicorn, worker, nginx
 ```
@@ -41,13 +44,19 @@ fills it. `parsing.py` is the only module with no Django import.
 
 | Path | Page |
 | --- | --- |
-| `/` | Deal board |
+| `/` | Market pulse — the read, movers by segment, what is turning |
+| `/budget` | "I have this much money" — reachable cars, ranked |
+| `/deals` | Deal board |
 | `/explore` | Catalog explorer |
-| `/listing/:code` | Listing detail + fair price |
-| `/market` | Market overview / index |
-| `/research/:modelId` | Kaplan–Meier time-to-sell + year retention |
+| `/analyse` | One scope, market → brand → model → trim → year, in the URL |
+| `/listing/:code` | Listing detail + fair price + the deal verdict |
+| `/alerts` | Alert inbox and the rules behind it |
 | `/saved` | Saved cars |
 | `/control` | Crawl health + job triggers (staff only) |
+
+Five of these are tabs; `/alerts` and `/saved` are icons in the header, because
+they are "my stuff" rather than ways into the market and the unread badge has to
+be visible from every screen.
 
 ## Running it
 
@@ -95,15 +104,15 @@ Cadences bundle jobs; a job name runs that job alone.
 
 | Cadence | Jobs | Worker interval |
 | --- | --- | --- |
-| `hot` | fetch → mark_inactive → deal_scores → probe_sold → notify | 15 min |
+| `hot` | fetch → mark_inactive → deal_scores → probe_sold → notify → alerts | 15 min |
 | `coverage` | coverage | 10 min |
-| `warm` | episodes → snapshot → market_index | 30 min |
+| `warm` | link_reposts → episodes → snapshot → market_index | 30 min |
 | `maintenance` | deal_scores → backfill_images → prune → health | 6 h |
 | `full` | every hot + warm step, full deal rebuild | on demand |
 
-Jobs: `fetch`, `mark_inactive`, `episodes`, `snapshot`, `market_index`,
-`deal_scores`, `probe_sold`, `notify`, `coverage`, `backfill_images`, `prune`, `health`,
-`reap_orphans`.
+Jobs: `fetch`, `mark_inactive`, `link_reposts`, `episodes`, `snapshot`,
+`market_index`, `deal_scores`, `probe_sold`, `notify`, `alerts`, `coverage`,
+`backfill_images`, `prune`, `health`, `reap_orphans`.
 Every step writes a `JobRun` row, so "did last night's snapshot run?" is a
 query rather than a log excavation. A step whose declared prerequisite failed is
 recorded as `skipped`, never allowed to publish a number computed from stale
@@ -135,19 +144,32 @@ Everything under `/api/`. Health: `/api/health/`, `/api/db/health/`.
   `/api/analytics/overview/`
 - **Market pulse** — all arithmetic over rows the warm tick already writes, no
   extra crawl load:
-  `/api/analytics/movers/?scope=brand|model&days=&limit=` (scopes ranked by
-  index change, each row carrying the cohort and ad counts behind it),
+  `/api/analytics/market-read/?days=` (one categorical position — price
+  direction crossed with absorption — with all three inputs attached as
+  evidence),
+  `/api/analytics/movers/?scope=brand|model|price_band|year_band|body_type&days=&limit=`
+  (scopes ranked by index change, each row carrying its cohort and ad counts, a
+  robust Theil–Sen slope, a 7-day slope, and a `turning` flag when the two
+  disagree),
   `/api/analytics/turnover/?days=` (share of a model's listings that left the
   feed inside the window — departures, never "sold"),
   `/api/analytics/arrivals/?days=` (new listings per model),
-  `/api/analytics/distribution/?brand=&model=&variant=&year=` (percentiles,
-  histogram, city and model-year facets for any scope),
+  `/api/analytics/distribution/?brand=&model=&variant=&year=&condition=&mileage_bucket=`
+  (percentiles, histogram, city and model-year facets; the payload says whether
+  the conditioning was `filtered`, `adjusted` or refused),
+  `/api/analytics/affordable/?budget=&tolerance_pct=` (which cars a budget
+  actually reaches, and at what percentile of each cohort),
   `/api/analytics/movement/?model=&variant=&year=&days=` (an index below the
   three persisted scopes, computed per request)
 - **Research** — `/api/research/{liquidity,depreciation}/<model_id>/`, both
   accepting `?variant=` and (liquidity) `?year=`
 - **Saved cars** — `/api/favorites/`, session-scoped to the user
-- **Notifier** — `/api/notifier-settings/` (singleton, disabled by default)
+- **Follow and be told** — `/api/watchlists/` (a car, a trim or a whole brand;
+  POST is idempotent and answers 200 on a repeat), `/api/alert-rules/` (the
+  thresholds a user wants to hear about), `/api/alerts/` (the inbox, plus
+  `mark-read/` and `unread-count/`). All user-scoped, all `IsAuthenticated`.
+- **Notifier** — `/api/notifier-settings/` (the *operator's* Telegram channel, a
+  singleton, disabled by default — separate from the per-user alerts above)
 - **Operator** (staff only) — `POST /api/admin/jobs/{fetch,refresh-analytics,deal-scores,backfill-images}/`
   (202, runs in a thread), `GET /api/admin/jobs/{overview,crawl-health}/`
   (503 when unhealthy), `GET /api/admin/health/`,
@@ -193,6 +215,19 @@ return. Input is `DailyInventorySnapshot`.
   says when *our crawler* arrived) and the discount only orders within a group.
   How far back it looks and how good a deal must be are both measured per
   rebuild from the batch on the board (`pricing.deal_window`), never hardcoded.
+- **Stale peers are not confident peers.** A cohort whose newest listing has not
+  been seen for two days drops one confidence tier and is badged `cohort_stale`.
+  Forty peers last seen three weeks ago used to score exactly like forty fresh
+  ones.
+- **A segment's membership is fixed before its index is chained.** Price bands
+  and age bands are assigned once, from the latest snapshot. Recomputed daily,
+  a cohort whose price crossed a band edge would leave one series and join
+  another, and both would report a move that was only a car changing shelves.
+- **A conditioned price distribution says how it was produced.** `filtered` when
+  the damage/mileage slice is itself big enough, `adjusted` when the pooled
+  measured haircut is shifted onto the full scope instead, `unconditioned` when
+  there is no measured haircut to shift by. The third case exists because
+  claiming "adjusted" while applying a factor of 1.0 is a false label.
 - **Above 25% is a review band, not a recommendation.** The peer key is
   (model, trim, year) and knows nothing about damage, free-zone plates or
   pre-sales, so past that the gap is usually an attribute the model cannot see.
@@ -247,6 +282,7 @@ recommended.
 pytest
 ```
 
-Eight files, one per subject: `test_parsing` (pure Python, no DB), `test_verify`,
+Nine files, one per subject: `test_parsing` (pure Python, no DB), `test_verify`,
 `test_ingest`, `test_fetcher`, `test_jobs`, `test_pricing`, `test_research`,
-`test_api`. Shared fixtures are in `conftest.py`.
+`test_api`, plus `test_logical_fixes` for regressions that span subjects. Shared
+fixtures are in `conftest.py`.

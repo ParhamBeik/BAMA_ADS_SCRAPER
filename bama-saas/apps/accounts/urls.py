@@ -16,6 +16,11 @@ app_name = "accounts"
 
 router = DefaultRouter()
 router.register("favorites", views.FavoriteViewSet, basename="favorite")
+# The per-user layer. All three are scoped to request.user in get_queryset, so
+# an id in the URL can only ever reach the caller's own rows.
+router.register("watchlists", views.WatchlistViewSet, basename="watchlist")
+router.register("alert-rules", views.AlertRuleViewSet, basename="alert-rule")
+router.register("alerts", views.AlertViewSet, basename="alert")
 
 
 class _ThrottledTokenView(jwt.TokenObtainPairView):

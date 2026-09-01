@@ -38,6 +38,7 @@ from apps.core.models import (
     Model,
 )
 from apps.core.quality import (
+    condition_band_q,
     exclude_unclear_price,
     verified,
     verified_by_ad,
@@ -104,12 +105,138 @@ COVERAGE_REFERENCE_DAYS = 7
 MIN_COVERAGE_REFERENCE_DAYS = 3
 
 
+# ---------------------------------------------------------------------------
+# Segment axes
+# ---------------------------------------------------------------------------
+#
+# Brand and model answer "which nameplate moved". These answer "which part of
+# the market moved" — the question someone deciding whether to buy now or wait
+# a month is actually asking, and the one the index could not be asked before.
+#
+# Every axis is derived from rows the warm tick already writes; none of them add
+# a crawl, a column or a job. What they do add is one rule that has to hold:
+
+# **A cohort's segment is fixed, not re-derived per day.** A price band assigned
+# from each day's own median would move a cohort out of the band as its price
+# rose, and the band's index would then be measuring reclassification rather
+# than prices — the exact failure the matched-cohort design exists to avoid.
+# Membership is therefore taken once, from the most recent snapshot, and applied
+# to the whole history.
+
+# Upper edges in toman. Chosen to split the market into bands that hold
+# comparable numbers of cohorts rather than on round numbers alone: below 500M
+# is the old-domestic floor, 500M-1B and 1-2B are where most of the volume sits,
+# and everything above 5B is one band because the tail is thin.
+PRICE_BAND_EDGES = (500_000_000, 1_000_000_000, 2_000_000_000, 5_000_000_000)
+
+# Upper edges in years of age, measured against the newest model year present.
+# Under 3 is near-new, 3-7 is the bulk of the used market, 8-15 is older stock
+# and past that age stops being the thing that prices the car.
+YEAR_BAND_EDGES = (3, 7, 15)
+
+SEGMENT_SCOPES = (
+    MarketIndex.Scope.PRICE_BAND,
+    MarketIndex.Scope.YEAR_BAND,
+    MarketIndex.Scope.BODY_TYPE,
+)
+
+
+def _banded(value, edges, prefix: str) -> str:
+    """``value`` placed in the band ``edges`` describes, as a stable key."""
+    for i, edge in enumerate(edges):
+        if value < edge:
+            return f"{prefix}{i}"
+    return f"{prefix}{len(edges)}"
+
+
+def price_band_label(key: str) -> str:
+    """The toman range a ``price_band`` key stands for, for the UI to phrase."""
+    i = int(key[1:])
+    low = PRICE_BAND_EDGES[i - 1] if i else None
+    high = PRICE_BAND_EDGES[i] if i < len(PRICE_BAND_EDGES) else None
+    return f"{low or 0}-{high or ''}"
+
+
+def year_band_label(key: str) -> str:
+    i = int(key[1:])
+    low = YEAR_BAND_EDGES[i - 1] if i else 0
+    high = YEAR_BAND_EDGES[i] if i < len(YEAR_BAND_EDGES) else None
+    return f"{low}-{high or ''}"
+
+
+def _model_body_types() -> dict[int, str]:
+    """Each model's modal body type, over the population every screen counts.
+
+    Modal rather than "the body type of any ad": a handful of miscategorised
+    listings must not decide which segment a whole model belongs to.
+    """
+    tally: dict[int, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for model_id, body_type in (
+        pricing.scorable_rows()
+        .exclude(body_type="")
+        .exclude(model_id__isnull=True)
+        .values_list("model_id", "body_type")
+        .iterator()
+    ):
+        tally[model_id][body_type] += 1
+    return {
+        model_id: max(counts.items(), key=lambda kv: kv[1])[0]
+        for model_id, counts in tally.items()
+    }
+
+
+def cohort_segments() -> dict[tuple, dict[str, str]]:
+    """``{cohort_key: {axis: segment_key}}``, fixed by the most recent snapshot.
+
+    One pass over the latest day's rows plus one pass over the ad table for body
+    types. Cohorts absent from the latest snapshot get no membership at all and
+    therefore contribute to no segment — they are cohorts that no longer exist,
+    and letting history alone put them in a band would have a segment's index
+    driven by cars nobody is selling.
+    """
+    latest = (
+        DailyInventorySnapshot.objects.order_by("-date")
+        .values_list("date", flat=True).first()
+    )
+    if latest is None:
+        return {}
+
+    rows = list(
+        DailyInventorySnapshot.objects.filter(
+            date=latest, median_price__isnull=False, model_id__isnull=False
+        ).values_list("model_id", "variant_id", "year_jalali", "median_price")
+    )
+    if not rows:
+        return {}
+
+    # Age is measured against the newest model year actually present, not
+    # against the calendar: the Jalali year rolls over in March and a fixed
+    # "current year" would silently age every car by one overnight.
+    newest_year = max((r[2] for r in rows if r[2] is not None), default=None)
+    body_types = _model_body_types()
+
+    out: dict[tuple, dict[str, str]] = {}
+    for model_id, variant_id, year, median_price in rows:
+        segments: dict[str, str] = {
+            MarketIndex.Scope.PRICE_BAND: _banded(median_price, PRICE_BAND_EDGES, "p"),
+        }
+        if year is not None and newest_year is not None:
+            segments[MarketIndex.Scope.YEAR_BAND] = _banded(
+                newest_year - year, YEAR_BAND_EDGES, "y"
+            )
+        if model_id in body_types:
+            segments[MarketIndex.Scope.BODY_TYPE] = body_types[model_id]
+        out[(model_id, variant_id, year)] = segments
+    return out
+
+
 def cohort_series(
     scope: str,
     scope_id: str | None = None,
     *,
     variant_id: int | None = None,
     year_jalali: int | None = None,
+    segments: dict | None = None,
 ) -> dict:
     """``{date: {cohort_key: (median_price, ad_count)}}`` for one scope.
 
@@ -119,6 +246,13 @@ def cohort_series(
     writes every thirty minutes, for a question most sessions never ask — so
     those two are answered on demand instead. The snapshot rows are already
     keyed on both, so this is a filter, not a new aggregation.
+
+    A segment scope filters on ``cohort_segments()`` in Python rather than in
+    SQL, because membership is a property of the cohort *tuple* and matching a
+    set of tuples in SQL costs more than the scan it would save. ``segments`` is
+    accepted so a caller building every segment's series in one pass — which is
+    what ``jobs.market_index`` does — resolves membership once rather than per
+    scope.
     """
     qs = DailyInventorySnapshot.objects.filter(
         median_price__isnull=False, model_id__isnull=False
@@ -132,11 +266,18 @@ def cohort_series(
     if year_jalali is not None:
         qs = qs.filter(year_jalali=year_jalali)
 
+    membership = None
+    if scope in SEGMENT_SCOPES:
+        membership = cohort_segments() if segments is None else segments
+
     by_date: dict = defaultdict(dict)
     for d, model_id, variant_id, year, median_price, ad_count in qs.values_list(
         "date", "model_id", "variant_id", "year_jalali", "median_price", "ad_count"
     ):
-        by_date[d][(model_id, variant_id, year)] = (median_price, ad_count)
+        key = (model_id, variant_id, year)
+        if membership is not None and membership.get(key, {}).get(scope) != scope_id:
+            continue
+        by_date[d][key] = (median_price, ad_count)
     return by_date
 
 
@@ -245,13 +386,16 @@ def compute_index(by_date: dict) -> list[dict]:
     return series
 
 
-def build_index(scope: str, scope_id: str | None = None) -> int:
+def build_index(scope: str, scope_id: str | None = None, *, segments: dict | None = None) -> int:
     """Recompute and persist one scope's whole series. Returns rows written.
 
     Full rebuild, not incremental append: the series is chained, so a corrected
     snapshot changes every value after it.
+
+    ``segments`` is passed straight through so a caller rebuilding every segment
+    of an axis resolves membership once instead of once per segment.
     """
-    series = compute_index(cohort_series(scope, scope_id))
+    series = compute_index(cohort_series(scope, scope_id, segments=segments))
     MarketIndex.objects.filter(scope=scope, scope_id=scope_id).delete()
     if not series:
         return 0
@@ -297,9 +441,112 @@ MOVER_MIN_DAYS = 3
 # which scopes get a series built at all.
 MOVER_MIN_COHORTS = 5
 
+# How many days at the end of the window count as "recently". Seven, so the
+# short leg is a week — short enough to turn before the long leg does, long
+# enough not to be one noisy Friday.
+SHORT_WINDOW_DAYS = 7
+
+# Below this the short and long legs are both flat and calling their
+# disagreement a turn would flag every scope on the board. In percent per day:
+# 0.05%/day is ~1.5% a month, which is the smallest move worth a reader's
+# attention given day-over-day feed drift is under 1%.
+MIN_TURN_SLOPE = 0.05
+
+# A Theil-Sen slope is the median of every pairwise slope, so the share of those
+# pairs that agree with it in sign says how consistent the trend is. 0.5 is a
+# coin flip; this is the bar below which a slope is not called a direction.
+MIN_SLOPE_AGREEMENT = 0.6
+
+
+def theil_sen(values: list[float]) -> tuple[float, float]:
+    """Robust trend of an evenly-indexed series: ``(slope, agreement)``.
+
+    The median of all pairwise slopes, rather than a least-squares fit. The
+    series this runs on is chained and carries thin days whose level is simply
+    carried forward, and one such flat step drags an OLS line toward zero while
+    a single spike drags it the other way; the median of pairs ignores both.
+
+    ``agreement`` is the fraction of pairwise slopes sharing the median's sign —
+    a free measure of how consistent the trend is, since the pairs are computed
+    anyway. A steadily rising series scores near 1.0, noise scores near 0.5.
+
+    Slope is per index step (one point, i.e. one *available* day) rather than per
+    calendar day. That is what the reader sees plotted, and normalising by
+    calendar gaps would let one long hole rescale the whole trend.
+    """
+    n = len(values)
+    if n < 2:
+        return 0.0, 0.0
+    slopes = [
+        (values[j] - values[i]) / (j - i)
+        for i in range(n - 1)
+        for j in range(i + 1, n)
+    ]
+    slope = statistics.median(slopes)
+    if slope == 0:
+        return 0.0, 0.0
+    agreeing = sum(1 for s in slopes if (s > 0) == (slope > 0))
+    return slope, agreeing / len(slopes)
+
+
+def _trend(values: list[float]) -> dict:
+    """A scope's direction, its consistency, and whether it is turning.
+
+    Three numbers instead of the one this used to publish. ``change_pct`` — the
+    ratio of the last point to the first — is a chord between two arbitrary days:
+    it is set entirely by which day the window happens to open on, and a scope
+    that fell for three weeks and has risen for four days reports as a faller.
+    It is still returned, because it is what "prices are up 3% this month"
+    means, but it no longer decides the ranking.
+
+    Slopes are expressed in percent of the window's mean level per step, so a
+    2,000-toman-a-day move on a cheap cohort and on an expensive one are
+    comparable.
+    """
+    base = statistics.fmean(values) if values else 0.0
+    scale = (100.0 / base) if base else 0.0
+    slope, agreement = theil_sen(values)
+    short_values = values[-SHORT_WINDOW_DAYS:]
+    short_slope, short_agreement = theil_sen(short_values)
+
+    slope_pct = slope * scale
+    short_pct = short_slope * scale
+    # A turn is the long leg and the recent leg disagreeing about direction,
+    # with both legs actually moving and the recent one consistent enough to
+    # believe. Without the agreement bar a single last-day blip inverts the
+    # short slope and every quiet scope reports a reversal.
+    turning = (
+        len(short_values) >= 3
+        and abs(slope_pct) >= MIN_TURN_SLOPE
+        and abs(short_pct) >= MIN_TURN_SLOPE
+        and (slope_pct > 0) != (short_pct > 0)
+        and short_agreement >= MIN_SLOPE_AGREEMENT
+    )
+    return {
+        "slope_pct": round(slope_pct, 4),
+        "slope_agreement": round(agreement, 3),
+        "recent_slope_pct": round(short_pct, 4),
+        "recent_days": len(short_values),
+        "turning": turning,
+        # Which way the turn goes, so the UI never has to re-derive it from two
+        # signed numbers and get the edge case wrong.
+        "turning_up": turning and short_pct > 0,
+        # A direction only when the trend is consistent enough to be one.
+        "direction": (
+            "flat" if abs(slope_pct) < MIN_TURN_SLOPE or agreement < MIN_SLOPE_AGREEMENT
+            else "up" if slope_pct > 0 else "down"
+        ),
+    }
+
 
 def _scope_names(scope: str, ids: list[str]) -> dict[str, dict]:
-    """Human labels for a set of scope ids, resolved in one query per scope."""
+    """Human labels for a set of scope ids, resolved in one query per scope.
+
+    Segment scopes resolve without a query: their ids either *are* the label
+    (a body type is Bama's own word for it) or encode a range the UI phrases
+    from the numeric bounds this returns. Persian prose is composed in the UI,
+    not here — the same rule the fair-price components follow.
+    """
     if scope == MarketIndex.Scope.BRAND:
         rows = Brand.objects.filter(slug__in=ids).values_list("slug", "name_fa")
         return {str(slug): {"name": name, "brand_name": None} for slug, name in rows}
@@ -309,6 +556,14 @@ def _scope_names(scope: str, ids: list[str]) -> dict[str, dict]:
             .values_list("pk", "name_fa", "brand__name_fa")
         )
         return {str(pk): {"name": name, "brand_name": brand} for pk, name, brand in rows}
+    if scope == MarketIndex.Scope.PRICE_BAND:
+        return {i: {"name": i, "brand_name": None, "bounds": price_band_label(i)}
+                for i in ids}
+    if scope == MarketIndex.Scope.YEAR_BAND:
+        return {i: {"name": i, "brand_name": None, "bounds": year_band_label(i)}
+                for i in ids}
+    if scope == MarketIndex.Scope.BODY_TYPE:
+        return {i: {"name": i, "brand_name": None} for i in ids}
     return {}
 
 
@@ -351,7 +606,8 @@ def movers(scope: str, *, days: int = 30, limit: int = 10) -> dict:
         sampled = next((p for p in reversed(points) if not p[4]), last)
         if sampled[3] < MOVER_MIN_COHORTS:
             continue
-        ranked.append({
+        values = [v for _, v, _, _, _ in points]
+        row = {
             "scope_id": scope_id,
             "change_pct": round((last[1] / first[1] - 1) * 100, 2),
             "latest_index": round(last[1], 2),
@@ -362,13 +618,25 @@ def movers(scope: str, *, days: int = 30, limit: int = 10) -> dict:
             "cohort_count": sampled[3],
             # Enough to draw a sparkline beside the row, without a second call
             # per row. Rounded here so the payload is not full of float noise.
-            "series": [round(v, 2) for _, v, _, _, _ in points],
-        })
+            "series": [round(v, 2) for v in values],
+        }
+        row.update(_trend(values))
+        ranked.append(row)
 
     names = _scope_names(scope, [r["scope_id"] for r in ranked])
     for row in ranked:
         row.update(names.get(row["scope_id"], {"name": row["scope_id"], "brand_name": None}))
 
+    # `change_pct` still ranks the two columns, because "which cars changed most
+    # over this window" is a real question and the chord is its honest answer.
+    # What it is NOT is a trend: a scope that rose for a fortnight and has been
+    # flat since reports the same 100% as one still climbing. That distinction
+    # used to be unavailable, so the board presented the chord *as* a direction.
+    # Every row now also carries `slope_pct`, `direction` and `turning` — and
+    # the turning scopes get their own list, because a scope whose recent leg
+    # has just diverged from its long one sits nowhere near either end of a
+    # change ranking, which is exactly why a two-column board could never
+    # surface the thing a buyer most wants to know.
     ranked.sort(key=lambda r: r["change_pct"], reverse=True)
     if not ranked:
         return {"available": False, "reason": "insufficient_index_history",
@@ -385,6 +653,12 @@ def movers(scope: str, *, days: int = 30, limit: int = 10) -> dict:
         # Steepest fall first in its own column, rather than the reader having
         # to scan a table upwards.
         "fallers": [r for r in reversed(ranked) if r["change_pct"] < 0][:limit],
+        # Sharpest reversal first. Ordered on the recent leg because that is the
+        # half that just changed its mind.
+        "turning": sorted(
+            (r for r in ranked if r["turning"]),
+            key=lambda r: abs(r["recent_slope_pct"]), reverse=True,
+        )[:limit],
     }
 
 
@@ -593,6 +867,60 @@ TURNOVER_MIN_EPISODES = 15
 MIN_TURNOVER_WINDOW_DAYS = 7
 
 
+def _turnover_tally(days: int, cutoff) -> tuple[dict, dict]:
+    """``({model_id: {n, left}}, {model_id: (name, brand)})`` — the raw counts.
+
+    Split out of ``turnover`` so the deal board can join the same numbers onto a
+    listing without going through the leaderboard's ranking and truncation. One
+    definition of "left the feed within N days", so a rate printed on a card and
+    the same rate on the home page cannot disagree.
+    """
+    tally: dict = defaultdict(lambda: {"n": 0, "left": 0})
+    meta: dict = {}
+    for model_id, model_name, brand_name, started_at, ended_at in (
+        _episode_qs().filter(started_at__lte=cutoff).values_list(
+            "ad__model_id", "ad__model__name_fa", "ad__model__brand__name_fa",
+            "started_at", "ended_at",
+        )
+    ):
+        if model_id is None:
+            continue
+        entry = tally[model_id]
+        entry["n"] += 1
+        if ended_at is not None and (ended_at - started_at) <= timedelta(days=days):
+            entry["left"] += 1
+        meta.setdefault(model_id, (model_name, brand_name))
+    return tally, meta
+
+
+def turnover_rates(*, days: int = 30) -> dict[int, dict]:
+    """``{model_id: {"left_pct", "n", "window_days"}}`` for every eligible model.
+
+    What the deal board reads. A discount is not a deal on its own: 15% off a
+    car that leaves the feed in ten days and 15% off one that sits for ninety
+    are different propositions, and the board presented them identically because
+    liquidity lived on a screen the buyer never had open at the same time.
+
+    Same clamp and the same minimum as ``turnover`` — a rate computed over five
+    episodes is not one to print on a card.
+    """
+    now = timezone.now()
+    clean_days = max(0, (now - clean_start()).days)
+    days = min(days, clean_days // 2)
+    if days < MIN_TURNOVER_WINDOW_DAYS:
+        return {}
+    tally, _ = _turnover_tally(days, now - timedelta(days=days))
+    return {
+        model_id: {
+            "left_pct": round(entry["left"] / entry["n"] * 100, 1),
+            "n": entry["n"],
+            "window_days": days,
+        }
+        for model_id, entry in tally.items()
+        if entry["n"] >= TURNOVER_MIN_EPISODES
+    }
+
+
 def turnover(*, days: int = 30, limit: int = 10) -> dict:
     """Share of each model's listings that left the feed within ``days``.
 
@@ -637,22 +965,7 @@ def turnover(*, days: int = 30, limit: int = 10) -> dict:
                 "window_days": requested_days, "clean_days": clean_days,
                 "clean_start": clean_start().date().isoformat()}
     cutoff = now - timedelta(days=days)
-
-    rows = _episode_qs().filter(started_at__lte=cutoff).values_list(
-        "ad__model_id", "ad__model__name_fa", "ad__model__brand__name_fa",
-        "started_at", "ended_at",
-    )
-
-    tally: dict = defaultdict(lambda: {"n": 0, "left": 0})
-    meta: dict = {}
-    for model_id, model_name, brand_name, started_at, ended_at in rows:
-        if model_id is None:
-            continue
-        entry = tally[model_id]
-        entry["n"] += 1
-        if ended_at is not None and (ended_at - started_at) <= timedelta(days=days):
-            entry["left"] += 1
-        meta.setdefault(model_id, (model_name, brand_name))
+    tally, meta = _turnover_tally(days, cutoff)
 
     ranked = [
         {
@@ -739,6 +1052,102 @@ def arrivals(*, days: int = 30, limit: int = 10) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Buy or wait: the three panels, read as one position
+# ---------------------------------------------------------------------------
+#
+# The front page had the price index, arrivals and turnover as three independent
+# cards and left the reader to combine them. They only mean something together:
+# a rising index with inventory building is a very different market from a
+# rising index with stock clearing, and "should I buy now or wait" is a question
+# about both at once.
+
+# How far either side of 1.0 counts as balanced. Arrivals and departures are
+# counted over the same window, so the ratio is self-normalising and 1.0 is a
+# real threshold rather than a chosen one — but it is a ratio of two noisy
+# counts, and without a dead band the read would flip between labels week to
+# week on no real change.
+ABSORPTION_DEAD_BAND = 0.05
+
+# Below this many episodes on either side the ratio is two small numbers
+# dividing into a large opinion.
+MIN_FLOW_EPISODES = 30
+
+
+def market_read(*, days: int = 30) -> dict:
+    """Where the market is, as one position plus the evidence for it.
+
+    Two independent facts, deliberately not blended into a score:
+
+    * **Price direction** — the slope of the composition-controlled index, which
+      cannot move because the mix of listings moved.
+    * **Absorption** — departures divided by arrivals over the same window.
+      Above 1.0, stock is clearing faster than it arrives and the market is
+      tightening; below, inventory is building. A ratio rather than either count
+      alone, because both grow with the size of the crawl and neither is
+      interpretable on its own.
+
+    The position is the pair, named. It is not a recommendation and does not
+    pretend to be a forecast: it says what the market is doing now, and every
+    number behind it rides along so a reader can disagree.
+    """
+    series = read_index(MarketIndex.Scope.MARKET, None, days=days)
+    contributing = [p for p in series if not p["low_coverage"]]
+    if len(contributing) < MOVER_MIN_DAYS:
+        return {"available": False, "reason": "insufficient_index_history",
+                "window_days": days, "days_on_record": len(contributing)}
+
+    trend = _trend([p["index_value"] for p in series])
+
+    # Both flows over the same window and the same population, so the ratio is
+    # a like-for-like comparison. Episodes, not snapshot counts: an episode is
+    # one listing's life, which is what "arrived" and "left" mean.
+    now = timezone.now()
+    cutoff = now - timedelta(days=days)
+    episodes = _episode_qs()
+    arrived = episodes.filter(started_at__gte=cutoff).count()
+    departed = episodes.filter(ended_at__gte=cutoff).count()
+
+    if arrived < MIN_FLOW_EPISODES or departed < MIN_FLOW_EPISODES:
+        absorption = None
+        flow = "unknown"
+    else:
+        absorption = departed / arrived
+        flow = (
+            "balanced" if abs(absorption - 1.0) <= ABSORPTION_DEAD_BAND
+            else "tightening" if absorption > 1.0 else "building"
+        )
+
+    # The four readings this data can actually support. Anything finer would be
+    # a claim about causes, and the feed carries none.
+    if trend["direction"] == "up" and flow == "tightening":
+        position = "sellers_market"
+    elif trend["direction"] == "down" and flow == "building":
+        position = "buyers_market"
+    elif trend["direction"] == "flat" and flow == "balanced":
+        position = "stable"
+    else:
+        position = "mixed"
+
+    return {
+        "available": True,
+        "window_days": days,
+        "position": position,
+        # Named separately from `position` so the UI can show the two facts even
+        # when their combination lands in "mixed", which is the common case and
+        # the one where the reader most needs the parts.
+        "price_direction": trend["direction"],
+        "price_trend": trend,
+        "flow": flow,
+        "absorption": round(absorption, 3) if absorption is not None else None,
+        "arrived": arrived,
+        "departed": departed,
+        "clean_start": clean_start().date().isoformat(),
+        "index_days": len(contributing),
+        "latest_index": series[-1]["index_value"],
+    }
+
+
+# ---------------------------------------------------------------------------
 # What a scope's prices actually look like
 # ---------------------------------------------------------------------------
 
@@ -761,6 +1170,8 @@ def price_distribution(
     model_id: int | None = None,
     variant_id: int | None = None,
     year_jalali: int | None = None,
+    condition: str | None = None,
+    mileage_bucket: int | None = None,
 ) -> dict:
     """The asking-price shape of any scope, from the whole market down to a
     single model year, plus the city and model-year facets that go with it.
@@ -774,6 +1185,20 @@ def price_distribution(
     The histogram spans p10-p90 rather than min-max for the same reason the peer
     bar does: one 5.8-trillion-toman typo listing would put every real car in
     the first bucket. What falls outside is counted, not hidden.
+
+    ``condition`` and ``mileage_bucket`` answer the question the scope filters
+    alone cannot: what does *this* car cost. Without them one histogram averages
+    a 300,000 km repainted example with a 20,000 km clean one and reports their
+    combined spread as "what this model costs", which describes neither car.
+
+    Two modes, because filtering alone is not enough. Where the slice itself has
+    ``MIN_DISTRIBUTION_ADS`` the answer is **filtered** — real listings, nothing
+    modelled. Below that (which is most trims once both conditions are applied)
+    it is **adjusted**: the unconditioned distribution shifted by the pooled
+    haircuts ``pricing`` already measures across the whole catalogue. The two
+    are not equivalent and the payload says which one produced it, because a
+    reader is entitled to know whether they are looking at cars or at an
+    estimate of cars.
     """
     qs = without_cohort_outliers(verified(Ad.objects)).filter(
         status=Ad.Status.ACTIVE, current_price__gt=0,
@@ -798,8 +1223,59 @@ def price_distribution(
         qs = qs.filter(year_jalali=year_jalali)
 
     scope = {"brand": brand, "model_id": model_id,
-             "variant_id": variant_id, "year_jalali": year_jalali}
+             "variant_id": variant_id, "year_jalali": year_jalali,
+             "condition": condition, "mileage_bucket": mileage_bucket}
     prices = list(qs.values_list("current_price", flat=True))
+    basis = {"mode": "unconditioned", "condition": condition,
+             "mileage_bucket": mileage_bucket, "filtered_n": None}
+
+    if condition or mileage_bucket is not None:
+        narrowed = qs
+        if condition:
+            narrowed = narrowed.filter(condition_band_q(condition))
+        if mileage_bucket is not None:
+            narrowed = narrowed.filter(mileage__gte=mileage_bucket)
+            ceiling = next(
+                (e for e in pricing.MILEAGE_BUCKETS if e > mileage_bucket), None
+            )
+            if ceiling is not None:
+                narrowed = narrowed.filter(mileage__lt=ceiling)
+        narrowed_prices = list(narrowed.values_list("current_price", flat=True))
+        basis["filtered_n"] = len(narrowed_prices)
+
+        if len(narrowed_prices) >= MIN_DISTRIBUTION_ADS:
+            # `qs` moves with it, so the city facet below describes the same
+            # cars as the histogram rather than the wider scope they came from.
+            prices, qs, basis["mode"] = narrowed_prices, narrowed, "filtered"
+        elif prices:
+            # Shift, do not filter. The haircut is measured as a ratio to the
+            # cohort median across every cohort thick enough to have an opinion,
+            # so applying it to the scope's own prices lands the distribution
+            # where this condition trades — and it is signed by construction, so
+            # it cannot mark a damaged car up.
+            haircuts = pricing.condition_haircuts()
+            mile_haircuts = pricing.mileage_haircuts()
+            factor = 1.0
+            measured = False
+            if condition and condition in haircuts:
+                factor *= 1.0 - haircuts[condition]
+                measured = True
+            if mileage_bucket is not None and mileage_bucket in mile_haircuts:
+                factor *= 1.0 - mile_haircuts[mileage_bucket]
+                measured = True
+            if measured and factor > 0:
+                prices = [int(p * factor) for p in prices]
+                basis["mode"] = "adjusted"
+                basis["factor"] = round(factor, 4)
+            else:
+                # Too thin to filter AND no measured haircut to shift by. Say
+                # that rather than returning the unconditioned scope under an
+                # "adjusted" label — claiming an adjustment that multiplied by
+                # 1.0 is the kind of false precision this codebase spends most
+                # of its comments avoiding.
+                basis["mode"] = "unconditioned"
+                basis["reason"] = "no_measured_adjustment"
+
     if len(prices) < MIN_DISTRIBUTION_ADS:
         # `years` rides along on the refusal too. The picker's options come from
         # this response, and a year thin enough to refuse is one a reader can
@@ -808,7 +1284,7 @@ def price_distribution(
         # back except discarding the model as well.
         return {"available": False, "reason": "insufficient_listings",
                 "scope": scope, "n": len(prices), "required": MIN_DISTRIBUTION_ADS,
-                "years": year_options}
+                "basis": basis, "years": year_options}
 
     distribution = pricing.peer_distribution(prices)
     low, high = distribution["p10"], distribution["p90"]
@@ -844,6 +1320,10 @@ def price_distribution(
     return {
         "available": True,
         "scope": scope,
+        # Whether these are listings or an estimate of listings. Never omitted:
+        # a reader comparing an adjusted band against a filtered one is
+        # comparing two different kinds of claim.
+        "basis": basis,
         "distribution": distribution,
         # No `bucket_size`: every bar states its own from/to, and the last one is
         # wider than the rest wherever the band does not divide evenly.
@@ -860,6 +1340,157 @@ def price_distribution(
         "years": [
             {"year_jalali": row["year_jalali"], "n": row["n"]} for row in year_options
         ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# What a budget actually buys
+# ---------------------------------------------------------------------------
+#
+# Every other surface in this app starts from a car and ends at a price. This
+# one runs the other way, which is how most people actually arrive: they know
+# what they can spend and not what it buys. `/api/ads/?price_min=&price_max=`
+# was the closest thing available and it answers a different question — it
+# returns individual listings, so a reader learns that 47 cars match and nothing
+# about which *models* are within reach.
+
+# A cohort needs this many listings inside the budget before it is offered.
+# Lower than MIN_DISTRIBUTION_ADS: this is a count and a median, not a
+# histogram, and a shortlist that refuses everything is not a shortlist.
+MIN_AFFORDABLE_ADS = 4
+
+# Default give-or-take. A hard max would hide a car 2% over, which nobody
+# actually means when they say what they can spend.
+DEFAULT_TOLERANCE_PCT = 10.0
+MAX_TOLERANCE_PCT = 50.0
+
+
+def affordable(
+    budget: int,
+    *,
+    tolerance_pct: float = DEFAULT_TOLERANCE_PCT,
+    brand: str | None = None,
+    condition: str | None = None,
+    mileage_max: int | None = None,
+    limit: int = 40,
+) -> dict:
+    """Which cars a budget reaches, grouped by cohort rather than by listing.
+
+    The unit is the (model, trim, model year) cohort, because that is the thing
+    a reader is choosing between — "a 1398 Peugeot 207 automatic" is a decision,
+    "listing ad7f2" is not.
+
+    Ranked by how much of the cohort the budget clears rather than by how cheap
+    the cohort is. A budget that buys the best-kept 80% of a model is a better
+    suggestion than one that scrapes the bottom 5% of a more expensive one, and
+    sorting by price alone puts exactly the wrong cars first.
+
+    ``mileage_max`` and ``condition`` narrow before ranking, because a shortlist
+    that ignores them offers cars the reader has already ruled out.
+    """
+    tolerance_pct = max(0.0, min(float(tolerance_pct), MAX_TOLERANCE_PCT))
+    ceiling = int(budget * (1 + tolerance_pct / 100))
+
+    qs = without_cohort_outliers(pricing.scorable_rows()).filter(
+        current_price__lte=ceiling,
+        model_id__isnull=False,
+        year_jalali__isnull=False,
+    )
+    if brand:
+        qs = qs.filter(brand__slug=brand)
+    if condition:
+        qs = qs.filter(condition_band_q(condition))
+    if mileage_max is not None:
+        qs = qs.filter(mileage__lte=mileage_max)
+
+    rows = qs.values_list(
+        "model_id", "variant_id", "year_jalali", "current_price", "mileage",
+        "model__name_fa", "model__brand__name_fa", "model__brand__slug",
+        "variant__name_fa",
+    )
+
+    grouped: dict[tuple, dict] = defaultdict(
+        lambda: {"prices": [], "mileages": [], "within": 0}
+    )
+    meta: dict[tuple, tuple] = {}
+    for (model_id, variant_id, year, price, mileage,
+         model_name, brand_name, brand_slug, variant_name) in rows.iterator():
+        key = (model_id, variant_id, year)
+        entry = grouped[key]
+        entry["prices"].append(price)
+        if mileage is not None:
+            entry["mileages"].append(mileage)
+        # Inside the budget proper, as opposed to inside the tolerance. Both are
+        # reported: "3 of these are actually at or under what you said" is a
+        # different fact from "17 are within 10% of it".
+        if price <= budget:
+            entry["within"] += 1
+        meta.setdefault(key, (model_name, brand_name, brand_slug, variant_name))
+
+    # Cohort sizes for every candidate in one grouped query. Called per cohort
+    # this was an N+1 — one scan of the ad table for each of the hundreds of
+    # cohorts a broad budget matches — and it would have been the slowest
+    # endpoint in the app by an order of magnitude.
+    candidates = [k for k, e in grouped.items() if len(e["prices"]) >= MIN_AFFORDABLE_ADS]
+    cohort_totals: dict[tuple, int] = {}
+    if candidates:
+        totals_qs = without_cohort_outliers(pricing.scorable_rows()).filter(
+            model_id__in={k[0] for k in candidates},
+            year_jalali__in={k[2] for k in candidates},
+        )
+        for model_id, variant_id, year, n in (
+            totals_qs.values_list("model_id", "variant_id", "year_jalali")
+            .annotate(n=Count("code")).values_list("model_id", "variant_id",
+                                                   "year_jalali", "n")
+        ):
+            cohort_totals[(model_id, variant_id, year)] = n
+
+    options = []
+    for key in candidates:
+        entry = grouped[key]
+        prices = entry["prices"]
+        model_id, variant_id, year = key
+        model_name, brand_name, brand_slug, variant_name = meta[key]
+        # How much of this cohort the budget reaches, measured against the
+        # cohort's *whole* live population rather than the slice already under
+        # the ceiling — otherwise every cohort reports 100% by construction.
+        total_n = cohort_totals.get(key) or len(prices)
+        reach_pct = round(min(100.0, len(prices) / total_n * 100), 1)
+        options.append({
+            "model_id": model_id,
+            "variant_id": variant_id,
+            "year_jalali": year,
+            "name": model_name,
+            "brand_name": brand_name,
+            "brand_slug": brand_slug,
+            "variant_name": variant_name or "",
+            "n": len(prices),
+            "within_budget": entry["within"],
+            "cohort_size": total_n,
+            "reach_pct": reach_pct,
+            "median_price": int(statistics.median(prices)),
+            "cheapest": min(prices),
+            "median_mileage": (
+                int(statistics.median(entry["mileages"])) if entry["mileages"] else None
+            ),
+        })
+
+    if not options:
+        return {"available": False, "reason": "nothing_in_range",
+                "budget": budget, "tolerance_pct": tolerance_pct,
+                "ceiling": ceiling, "required": MIN_AFFORDABLE_ADS}
+
+    # Reach first, then how many are genuinely inside the budget. A cohort the
+    # budget clears outright beats one it only just reaches into.
+    options.sort(key=lambda r: (r["reach_pct"], r["within_budget"]), reverse=True)
+    return {
+        "available": True,
+        "budget": budget,
+        "tolerance_pct": tolerance_pct,
+        "ceiling": ceiling,
+        "cohorts_matched": len(options),
+        "listings_matched": sum(o["n"] for o in options),
+        "options": options[:limit],
     }
 
 

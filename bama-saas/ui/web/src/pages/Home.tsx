@@ -80,11 +80,22 @@ interface Mover {
   scope_id: string;
   name: string;
   brand_name: string | null;
+  /** Ratio of the last day to the first — what changed over the window. */
   change_pct: number;
+  /** Robust slope over every point — what is happening *now*. A scope can have
+   *  a large change and a flat slope; those are different facts and the board
+   *  used to show only the first while implying the second. */
+  slope_pct: number;
+  recent_slope_pct: number;
+  direction: "up" | "down" | "flat";
+  turning: boolean;
+  turning_up: boolean;
   latest_index: number;
   days: number;
   ad_count: number;
   cohort_count: number;
+  /** Only on the segment axes: the numeric range the key stands for. */
+  bounds?: string;
   series: number[];
 }
 
@@ -93,6 +104,53 @@ interface Movers extends Partial<Envelope> {
   scopes_ranked: number;
   risers: Mover[];
   fallers: Mover[];
+  turning: Mover[];
+}
+
+/**
+ * The axes the board can be sliced by.
+ *
+ * Brand and model answer "which nameplate moved". The three below answer "which
+ * *part of the market* moved" — the question someone deciding whether to wait a
+ * month is actually asking, and one the index could not be asked at all before.
+ */
+const MOVER_SCOPES = [
+  { id: "model", label: "مدل" },
+  { id: "brand", label: "برند" },
+  { id: "price_band", label: "بازه قیمت" },
+  { id: "year_band", label: "سن خودرو" },
+  { id: "body_type", label: "نوع بدنه" },
+] as const;
+
+type MoverScope = (typeof MOVER_SCOPES)[number]["id"];
+
+const PRICE_BAND_LABEL: Record<string, string> = {
+  p0: "زیر ۵۰۰ میلیون",
+  p1: "۵۰۰ میلیون تا ۱ میلیارد",
+  p2: "۱ تا ۲ میلیارد",
+  p3: "۲ تا ۵ میلیارد",
+  p4: "بالای ۵ میلیارد",
+};
+
+const YEAR_BAND_LABEL: Record<string, string> = {
+  y0: "تا ۳ سال",
+  y1: "۳ تا ۷ سال",
+  y2: "۸ تا ۱۵ سال",
+  y3: "بیش از ۱۵ سال",
+};
+
+/**
+ * A segment key rendered in Persian.
+ *
+ * The API returns machine keys (`p2`, `y1`) and the numeric bounds beside them,
+ * following the same rule as `reason` codes and cohort flags: prose is composed
+ * in the UI, never in the serializer. A body type is already Bama's own word,
+ * so it passes straight through.
+ */
+function scopeLabel(scope: MoverScope, row: Mover): string {
+  if (scope === "price_band") return PRICE_BAND_LABEL[row.scope_id] ?? row.name;
+  if (scope === "year_band") return YEAR_BAND_LABEL[row.scope_id] ?? row.name;
+  return row.name;
 }
 
 interface TurnoverRow {
@@ -136,6 +194,120 @@ function toneOf(change: number | null | undefined) {
   return change >= 0 ? ("up" as const) : ("down" as const);
 }
 
+interface MarketRead extends Partial<Envelope> {
+  position: "sellers_market" | "buyers_market" | "stable" | "mixed";
+  price_direction: "up" | "down" | "flat";
+  price_trend: { slope_pct: number; recent_slope_pct: number; turning: boolean };
+  flow: "tightening" | "building" | "balanced" | "unknown";
+  absorption: number | null;
+  arrived: number;
+  departed: number;
+  window_days: number;
+}
+
+/**
+ * The one sentence the front page was missing.
+ *
+ * The index, arrivals and turnover panels below have always been here and have
+ * always been correct; what they never did was combine. A rising index with
+ * stock clearing and a rising index with inventory piling up are opposite
+ * markets, and a reader was left to work that out from three separate cards.
+ *
+ * Deliberately not a score and not a forecast. It names what the market is
+ * doing now and prints both inputs underneath, so a reader who disagrees can
+ * see exactly which half they disagree with.
+ */
+const POSITION: Record<string, { title: string; advice: string }> = {
+  sellers_market: {
+    title: "بازار به سود فروشنده",
+    advice: "قیمت‌ها بالا می‌روند و آگهی‌ها سریع‌تر از ورودشان از بازار خارج می‌شوند. اگر خریدارید، منتظر ماندن احتمالاً گران‌تر تمام می‌شود.",
+  },
+  buyers_market: {
+    title: "بازار به سود خریدار",
+    advice: "قیمت‌ها پایین می‌آیند و موجودی در حال انباشت است. اگر عجله ندارید، صبر کردن به نفع شماست.",
+  },
+  stable: {
+    title: "بازار آرام",
+    advice: "نه قیمت جهت مشخصی دارد و نه ورود و خروج آگهی‌ها نامتوازن است. زمان خرید را وضعیت خودِ آگهی تعیین می‌کند، نه بازار.",
+  },
+  mixed: {
+    title: "نشانه‌ها هم‌جهت نیستند",
+    advice: "قیمت و جریان عرضه یک چیز نمی‌گویند، پس یک توصیه واحد از این داده در نمی‌آید. دو عدد زیر را جدا بخوانید.",
+  },
+};
+
+const DIRECTION_LABEL: Record<string, string> = {
+  up: "رو به بالا", down: "رو به پایین", flat: "بدون جهت مشخص",
+};
+
+const FLOW_LABEL: Record<string, string> = {
+  tightening: "خروج سریع‌تر از ورود",
+  building: "انباشت موجودی",
+  balanced: "ورود و خروج متوازن",
+  unknown: "برای اظهار نظر کافی نیست",
+};
+
+function MarketReadPanel({ days }: { days: number }) {
+  const read = useQuery({
+    queryKey: ["market-read", days],
+    queryFn: ({ signal }) =>
+      api.get<MarketRead>(`/api/analytics/market-read/${qs({ days })}`, signal),
+  });
+
+  return (
+    <Card title="بازار الان کجاست؟">
+      <Async query={read} shape="table">
+        {(data) => {
+          const position = POSITION[data.position] ?? POSITION.mixed;
+          return (
+            <>
+              <p style={{ margin: "0 0 4px", fontSize: 18, fontWeight: 700 }}>
+                {position.title}
+              </p>
+              <p className="stat-sub" style={{ marginTop: 0 }}>{position.advice}</p>
+
+              {/* The two inputs, never hidden behind the conclusion. A reader
+                  who disagrees needs to see which half they disagree with. */}
+              <div className="grid cols-2" style={{ marginTop: 10 }}>
+                <Stat
+                  label="جهت قیمت"
+                  value={DIRECTION_LABEL[data.price_direction] ?? "—"}
+                  tone={data.price_direction === "flat" ? undefined
+                        : data.price_direction === "up" ? "up" : "down"}
+                  sub={`شیب شاخص در ${fa(data.window_days)} روز`}
+                />
+                <Stat
+                  label="عرضه و تقاضا"
+                  value={FLOW_LABEL[data.flow] ?? "—"}
+                  sub={
+                    data.absorption != null
+                      ? `${data.departed.toLocaleString("en-US")} خروج در برابر ${data.arrived.toLocaleString("en-US")} ورود`
+                      : "تعداد آگهی‌های ثبت و حذف‌شده کم است"
+                  }
+                />
+              </div>
+
+              {data.price_trend?.turning && (
+                <p className="badge warn" style={{ display: "block", lineHeight: 1.7 }}>
+                  <AlertTriangle size={11} /> روند هفته گذشته خلاف جهت بلندمدت است —
+                  ممکن است بازار در حال چرخش باشد.
+                </p>
+              )}
+
+              <p className="empty-hint">
+                «جهت قیمت» از شیب شاخص هم‌ترکیب می‌آید، نه از اختلاف دو روز؛ و
+                «عرضه و تقاضا» نسبت آگهی‌های خارج‌شده به آگهی‌های تازه در همین
+                بازه است. هیچ‌کدام پیش‌بینی نیستند — وضعیت امروزند.
+              </p>
+              <Provenance envelope={data} compact />
+            </>
+          );
+        }}
+      </Async>
+    </Card>
+  );
+}
+
 /**
  * One side of a movers board.
  *
@@ -144,40 +316,65 @@ function toneOf(change: number | null | undefined) {
  * the percentage is one where the thinnest scope wins.
  */
 function MoversTable({
-  rows, direction, scope,
+  rows, direction, scope, empty,
 }: {
   rows: Mover[];
   direction: "up" | "down";
   /** Which kind of thing these ids are. Passed, not inferred from whether the
    *  row happens to carry a brand name — a brand with no name recorded would
    *  otherwise be linked to as if its id were a model's. */
-  scope: "model" | "brand";
+  scope: MoverScope;
+  empty?: string;
 }) {
   const navigate = useNavigate();
+  // Only brand and model are scopes the analysis page can be pointed at; a
+  // price band is not a car. Linking them anyway would land the reader on an
+  // empty analysis of a scope that does not exist.
+  const drillable = scope === "model" || scope === "brand";
+
   if (!rows.length) {
     return (
       <p className="empty-hint">
-        {direction === "up"
-          ? "در این بازه هیچ دسته‌ای گران‌تر نشده است."
-          : "در این بازه هیچ دسته‌ای ارزان‌تر نشده است."}
+        {empty ??
+          (direction === "up"
+            ? "در این بازه هیچ دسته‌ای گران‌تر نشده است."
+            : "در این بازه هیچ دسته‌ای ارزان‌تر نشده است.")}
       </p>
     );
   }
   return (
-    <Table head={["خودرو", "تغییر", "روند", "آگهی", "دسته"]}>
+    <Table head={["خودرو", "تغییر", "روند فعلی", "نمودار", "آگهی", "دسته"]}>
       {rows.map((row) => (
         <tr
           key={row.scope_id}
-          style={{ cursor: "pointer" }}
-          onClick={() => navigate(`/analyse?${scope}=${row.scope_id}`)}
+          style={drillable ? { cursor: "pointer" } : undefined}
+          onClick={
+            drillable
+              ? () => navigate(`/analyse?${scope}=${row.scope_id}`)
+              : undefined
+          }
         >
           <td>
-            <Fa>{row.name}</Fa>
+            <Fa>{scopeLabel(scope, row)}</Fa>
             {row.brand_name && (
               <div className="stat-sub"><Fa>{row.brand_name}</Fa></div>
             )}
           </td>
           <td className={`num ${direction}`}>{pct(row.change_pct)}</td>
+          {/* The distinction the old board could not draw. "Changed 12% over
+              the month" and "is currently rising" are different claims, and a
+              scope can satisfy the first while flatly contradicting the
+              second. */}
+          <td>
+            <span className={`badge${row.direction === "flat" ? "" : ` ${row.direction}`}`}>
+              {DIRECTION_LABEL[row.direction]}
+            </span>
+            {row.turning && (
+              <div className="badge warn" style={{ marginTop: 4 }}>
+                در حال چرخش
+              </div>
+            )}
+          </td>
           <td>
             <Sparkline values={row.series} direction={direction} />
           </td>
@@ -191,7 +388,9 @@ function MoversTable({
 
 function MoversPanel({ days }: { days: number }) {
   const filters = useFilters();
-  const scope = filters.get("movers") === "brand" ? "brand" : "model";
+  const raw = filters.get("movers");
+  const scope: MoverScope =
+    (MOVER_SCOPES.find((s) => s.id === raw)?.id as MoverScope) ?? "model";
 
   const movers = useQuery({
     queryKey: ["movers", scope, days],
@@ -206,8 +405,9 @@ function MoversPanel({ days }: { days: number }) {
         onValueChange={(next) => filters.set({ movers: next === "model" ? null : next })}
       >
         <TabsList className="mb-3">
-          <TabsTrigger value="model">بر پایه مدل</TabsTrigger>
-          <TabsTrigger value="brand">بر پایه برند</TabsTrigger>
+          {MOVER_SCOPES.map((s) => (
+            <TabsTrigger key={s.id} value={s.id}>{s.label}</TabsTrigger>
+          ))}
         </TabsList>
         <TabsContent value={scope}>
           <Async query={movers} shape="table">
@@ -227,11 +427,34 @@ function MoversPanel({ days }: { days: number }) {
                     <MoversTable rows={data.fallers} direction="down" scope={scope} />
                   </div>
                 </div>
+
+                {/* Its own section, because a scope that has just reversed sits
+                    nowhere near either end of a change ranking — which is
+                    exactly why a two-column board could never surface the thing
+                    a buyer most wants to know. */}
+                {data.turning?.length > 0 && (
+                  <div style={{ marginTop: 14 }}>
+                    <div className="card-title">
+                      <AlertTriangle size={12} /> در حال چرخش
+                    </div>
+                    <p className="stat-sub" style={{ marginTop: 0 }}>
+                      روند هفته گذشته این دسته‌ها خلاف جهت بلندمدتشان است.
+                    </p>
+                    <MoversTable
+                      rows={data.turning}
+                      direction="up"
+                      scope={scope}
+                      empty="هیچ دسته‌ای در حال چرخش نیست."
+                    />
+                  </div>
+                )}
+
                 <p className="empty-hint">
                   از میان {data.scopes_ranked.toLocaleString("en-US")} دسته‌ای که
-                  سابقه کافی داشتند. «تغییر» حرکت شاخص هم‌ترکیب است، نه اختلاف
-                  میانه — تغییر در ترکیب آگهی‌ها روی آن اثر ندارد. ستون‌های آگهی و
-                  دسته می‌گویند این عدد بر چه پایه‌ای ساخته شده است.
+                  سابقه کافی داشتند. «تغییر» حرکت شاخص هم‌ترکیب بین ابتدا و انتهای
+                  بازه است و «روند فعلی» شیب همه روزها — یک دسته می‌تواند در کل
+                  بازه بالا رفته باشد ولی همین حالا رو به پایین باشد. ستون‌های
+                  آگهی و دسته می‌گویند این اعداد بر چه پایه‌ای ساخته شده‌اند.
                 </p>
                 <Provenance envelope={data} compact />
               </>
@@ -508,6 +731,10 @@ export function Home() {
         </Async>
       </Card>
 
+      {/* Directly under the index, because it is the reading *of* the index
+          plus the two flow panels below — and a reader who takes only one
+          thing from this page should take this. */}
+      <MarketReadPanel days={days} />
       <MoversPanel days={days} />
       <SupplyAndDemand days={days} />
       <BestBuys />

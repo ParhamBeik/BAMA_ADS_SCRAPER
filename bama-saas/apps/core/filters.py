@@ -86,39 +86,18 @@ class AdFilter(django_filters.FilterSet):
         return queryset.filter(combined_q)
 
     def filter_condition(self, queryset, name, value):
-        """Four-band body condition, matching ``quality.condition_band``."""
-        if value == "structural":
-            return queryset.filter(body_status__regex=r"تعویض|تصادفی|سوخته|اوراقی|اتاق")
-        if value == "painted":
-            return queryset.filter(
-                body_status__regex=(
-                    r"چند.?لکه|دو.?لکه|سه.?لکه|چهار.?لکه|دور.?رنگ|کامل.?رنگ|تمام.?رنگ"
-                    r"|درب.?رنگ|گلگیر.?رنگ|کاپوت.?رنگ|سقف.?رنگ|رنگ"
-                )
-            ).exclude(body_status__regex=r"تعویض|تصادفی|سوخته|اوراقی|اتاق|بدون.?رنگ")
-        if value == "cosmetic":
-            return (
-                queryset.filter(
-                    body_status__regex=r"یک.?لکه|لکه|صافکاری|خط.?و.?خش|لیسه|قلم.?گیری"
-                )
-                .exclude(
-                    body_status__regex=(
-                        r"چند.?لکه|دو.?لکه|سه.?لکه|چهار.?لکه|تعویض|تصادفی|سوخته|اوراقی|اتاق"
-                    )
-                )
-                .exclude(
-                    body_status__regex=(
-                        r"دور.?رنگ|کامل.?رنگ|تمام.?رنگ|درب.?رنگ|گلگیر.?رنگ|کاپوت.?رنگ|سقف.?رنگ"
-                    )
-                )
-            )
-        if value == "clean":
-            return queryset.filter(body_status__regex=r"بدون.?رنگ").exclude(
-                body_status__regex=(
-                    r"صافکاری|یک.?لکه|لکه|خط.?و.?خش|لیسه|قلم.?گیری|تعویض|تصادفی|سوخته|اوراقی|اتاق"
-                )
-            )
-        return queryset
+        """Four-band body condition, matching ``quality.condition_band``.
+
+        This used to be a hand-written include/exclude pair per band — a second
+        copy of ``quality._BAND_RULES`` expressed backwards, which is a copy that
+        drifts the first time a rule is added. ``condition_band_q`` derives the
+        predicate from those rules directly, so there is one definition again.
+        """
+        from apps.core.quality import condition_band_q
+
+        if not value:
+            return queryset
+        return queryset.filter(condition_band_q(value))
 
     class Meta:
         model = Ad

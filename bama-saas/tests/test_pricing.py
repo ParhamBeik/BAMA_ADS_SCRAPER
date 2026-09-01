@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from django.utils import timezone as djtz
 
 from apps.core import notify as N
 from apps.core import pricing as FP
@@ -92,6 +93,68 @@ def test_condition_is_flagged_but_never_excluded(text):
     """
     assert condition_discounted(description=text)
     assert not price_basis_unclear(description=text)
+
+
+# --- the condition band, in Python and in SQL --------------------------------
+#
+# `condition_band` decides a band in Python; `condition_band_q` decides the same
+# band in SQL for the filter, the distribution and the budget shortlist. Two
+# implementations of one rule is exactly the shape that drifts, and it drifts
+# silently: a mismatch does not raise, it quietly returns a different set of cars
+# than the label on the screen claims. These 19 strings are every `body_status`
+# value present in production, so the agreement is checked on real data.
+
+ALL_BODY_STATUSES = (
+    "بدون رنگ", "یک لکه رنگ", "چند لکه رنگ", "دو لکه رنگ", "صافکاری بدون رنگ",
+    "خط و خش جزئی", "دور رنگ", "گلگیر رنگ", "کامل رنگ", "یک درب رنگ",
+    "کاپوت رنگ", "دو درب رنگ", "کاپوت تعویض", "گلگیر تعویض", "درب تعویض",
+    "اتاق تعویض", "تصادفی", "سوخته", "اوراقی",
+    # Two Bama has not shipped yet, and one it never will.
+    "سه لکه رنگ", "سپر تعویض", "نامشخص",
+)
+
+
+@pytest.mark.django_db
+def test_the_sql_condition_filter_agrees_with_the_python_one():
+    """Every production body_status lands in the same band both ways.
+
+    The ordering inside `_BAND_RULES` is load-bearing and non-obvious —
+    "صافکاری بدون رنگ" contains "بدون رنگ", "بدون رنگ" contains "رنگ", and
+    PAINTED appears twice because the last rule is a catch-all. A hand-written
+    SQL translation of that gets one of those backwards sooner or later, which
+    is why `condition_band_q` is derived from the rules rather than restated.
+    """
+    from apps.core.quality import CONDITION_BANDS, condition_band, condition_band_q
+
+    brand = Brand.objects.create(slug="cb", name_fa="برند")
+    model = Model.objects.create(brand=brand, name_fa="مدل")
+    for i, status in enumerate(ALL_BODY_STATUSES):
+        Ad.objects.create(code=f"cb{i}", brand=brand, model=model,
+                          body_status=status, current_price=1_000_000_000,
+                          publish_at=NOW, year_jalali=1399)
+
+    for band in CONDITION_BANDS:
+        in_sql = set(
+            Ad.objects.filter(condition_band_q(band)).values_list("body_status", flat=True)
+        )
+        in_python = {s for s in ALL_BODY_STATUSES if condition_band(s) == band}
+        assert in_sql == in_python, f"{band}: SQL {in_sql} != Python {in_python}"
+
+
+@pytest.mark.django_db
+def test_an_unknown_condition_band_selects_nothing_not_everything():
+    """An empty Q() passed to filter() is a no-op.
+
+    Which would return the whole scope under a label saying it had been narrowed
+    to one band — the failure that is worse than an error, because it looks like
+    an answer.
+    """
+    from apps.core.quality import condition_band_q
+
+    brand = Brand.objects.create(slug="cbu", name_fa="برند")
+    Ad.objects.create(code="cbu1", brand=brand, body_status="بدون رنگ",
+                      current_price=1_000_000_000, publish_at=NOW)
+    assert Ad.objects.filter(condition_band_q("nonsense")).count() == 0
 
 
 # --- the exclusion ------------------------------------------------------------
@@ -395,13 +458,24 @@ def catalog(db):
 
 
 def make_ad(catalog, code, *, price=1_000_000_000, mileage=100_000, year=1400,
-            city=None, status=Ad.Status.ACTIVE, first_seen=None):
+            city=None, status=Ad.Status.ACTIVE, first_seen=None, last_seen=None):
+    """An ACTIVE listing the crawler has just seen.
+
+    `last_seen_at` is relative to the real clock, not to the module's fixed
+    `NOW`. An ACTIVE ad last seen at a hardcoded date is a state the crawler
+    cannot produce — by the time `NOW` was three days old, `mark_inactive`
+    would have moved these to UNVERIFIED — and once confidence began reading
+    cohort freshness, that fiction started changing the answers: every fixture
+    cohort in the suite aged into "stale" and every confidence badge dropped a
+    tier. Tests that want a stale cohort now ask for one explicitly.
+    """
     return Ad.objects.create(
         code=code, brand=catalog["brand"], model=catalog["model"],
         variant=catalog["variant"], city=city or catalog["city"],
         year_jalali=year, mileage=mileage, current_price=price, status=status,
         first_seen_at=first_seen or NOW - timedelta(days=30),
-        last_seen_at=NOW, publish_at=first_seen or NOW - timedelta(days=30),
+        last_seen_at=last_seen or djtz.now(),
+        publish_at=first_seen or NOW - timedelta(days=30),
     )
 
 

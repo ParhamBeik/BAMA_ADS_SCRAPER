@@ -28,6 +28,12 @@ const Control = lazy(() =>
 const Analyse = lazy(() =>
   import("./pages/Analyse").then((m) => ({ default: m.Analyse })),
 );
+const Budget = lazy(() =>
+  import("./pages/Budget").then((m) => ({ default: m.Budget })),
+);
+const Alerts = lazy(() =>
+  import("./pages/Alerts").then((m) => ({ default: m.Alerts })),
+);
 
 export function App() {
   const { user, loading } = useAuth();
@@ -125,6 +131,8 @@ function AppShell() {
           <Route path="/deals" element={<Deals />} />
           <Route path="/explore" element={<Explorer />} />
           <Route path="/analyse" element={<Lazy><Analyse /></Lazy>} />
+          <Route path="/budget" element={<Lazy><Budget /></Lazy>} />
+          <Route path="/alerts" element={<Lazy><Alerts /></Lazy>} />
           <Route path="/saved" element={<Saved />} />
           <Route path="/listing/:code" element={<ListingDetail />} />
           <Route

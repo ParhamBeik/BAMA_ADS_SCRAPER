@@ -17,6 +17,8 @@ from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APIClient
 
+from apps.core import pricing as FP
+from apps.core import research as R
 from apps.core.models import (
     Ad,
     Brand,
@@ -798,3 +800,363 @@ def test_year_options_survive_a_year_too_thin_to_draw(cohorts):
     assert thin["reason"] == "insufficient_listings"
     # Both years still on offer, so 1399 is one click away.
     assert [y["year_jalali"] for y in thin["years"]] == [1399, 1401]
+
+
+# ---------------------------------------------------------------------------
+# Trend and turn detection
+# ---------------------------------------------------------------------------
+#
+# `change_pct` is the ratio of two arbitrary days and cannot answer "is this
+# *starting* to move" — the question a buyer deciding whether to wait actually
+# asks. These cover the slope that replaced it as the direction signal, and the
+# reversal detector that reads the two legs against each other.
+
+def test_theil_sen_ignores_a_single_spike():
+    """One bad point must not set the trend.
+
+    The reason this is a median of pairwise slopes and not a least-squares fit:
+    the series it runs on carries thin days whose level is simply carried
+    forward, and OLS moves for every one of them.
+    """
+    flat = [100.0] * 10
+    spiked = flat.copy()
+    spiked[5] = 400.0
+
+    assert R.theil_sen(flat)[0] == 0.0
+    assert R.theil_sen(spiked)[0] == 0.0
+
+
+def test_slope_agreement_separates_a_trend_from_noise():
+    steady, _ = R.theil_sen([100.0 + i for i in range(10)])
+    _, noise_agreement = R.theil_sen([100, 101, 99, 102, 98, 103, 97, 104])
+    _, steady_agreement = R.theil_sen([100.0 + i for i in range(10)])
+
+    assert steady > 0
+    assert steady_agreement == 1.0
+    # A zig-zag has as many pairs going one way as the other.
+    assert noise_agreement < R.MIN_SLOPE_AGREEMENT
+
+
+def test_a_scope_that_rose_then_reversed_is_reported_as_turning():
+    """The case a two-point chord cannot see.
+
+    Twenty days up then seven days down: the chord is still positive, so the
+    old board filed this under "risers" with nothing saying it had turned.
+    """
+    values = [100.0 + i for i in range(20)] + [119.0 - 2 * i for i in range(1, 8)]
+    trend = R._trend(values)
+
+    assert trend["turning"] is True
+    assert trend["turning_up"] is False
+    assert trend["slope_pct"] > 0 > trend["recent_slope_pct"]
+
+
+def test_a_steadily_rising_scope_is_not_called_turning():
+    trend = R._trend([100.0 + i for i in range(30)])
+    assert trend["turning"] is False
+    assert trend["direction"] == "up"
+
+
+def test_a_flat_scope_has_no_direction():
+    """Below the slope floor there is no direction to report.
+
+    Without this every quiet scope on the board reports a micro-trend and the
+    signal means nothing.
+    """
+    assert R._trend([100.0] * 20)["direction"] == "flat"
+
+
+@pytest.mark.django_db
+def test_movers_reports_turning_scopes_in_their_own_list(db):
+    """A turning scope sits nowhere near either end of a change ranking.
+
+    Which is exactly why it needs its own list: it is invisible on a board that
+    only shows the biggest risers and the biggest fallers.
+    """
+    today = timezone.now().date()
+    # Rises for 20 days, then falls for 7. Ends well above where it started, so
+    # it ranks as a riser by change and as a reversal by trend.
+    values = [100.0 + i for i in range(20)] + [119.0 - 2 * i for i in range(1, 8)]
+    for offset, value in enumerate(values):
+        _index_row(MarketIndex.Scope.MODEL, "1",
+                   today - timedelta(days=len(values) - 1 - offset), value)
+
+    board = movers(MarketIndex.Scope.MODEL, days=60)
+
+    assert board["available"] is True
+    assert [r["scope_id"] for r in board["turning"]] == ["1"]
+    # Still a riser over the window — both statements are true and both are shown.
+    assert [r["scope_id"] for r in board["risers"]] == ["1"]
+    assert board["risers"][0]["change_pct"] > 0
+    assert board["risers"][0]["recent_slope_pct"] < 0
+
+
+# ---------------------------------------------------------------------------
+# Segment axes
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_a_cohort_keeps_its_price_band_as_its_price_moves(cohorts):
+    """Membership is fixed by the latest snapshot, not re-derived per day.
+
+    A band assigned from each day's own median would move a cohort out of the
+    band as its price rose, and the band's index would then be measuring
+    reclassification rather than prices — the exact failure the matched-cohort
+    design exists to prevent.
+    """
+    model, cheap = cohorts["model"], cohorts["cheap"]
+    # Starts under 500M (band p0), ends over it (band p1).
+    _snap(model, cheap, D0, price=400_000_000, count=10)
+    _snap(model, cheap, D1, price=600_000_000, count=10)
+
+    segments = R.cohort_segments()
+    key = (model.pk, cheap.pk, 1399)
+    # Latest snapshot is 600M, so the whole history is in that band.
+    assert segments[key][MarketIndex.Scope.PRICE_BAND] == "p1"
+
+    series = cohort_series(MarketIndex.Scope.PRICE_BAND, "p1", segments=segments)
+    # Both days present, so the 50% move is measured inside one band rather
+    # than vanishing as the cohort "left" it.
+    assert sorted(series) == [D0, D1]
+    assert cohort_series(MarketIndex.Scope.PRICE_BAND, "p0", segments=segments) == {}
+
+
+@pytest.mark.django_db
+def test_a_cohort_missing_from_the_latest_snapshot_joins_no_segment(cohorts):
+    """A cohort nobody is selling any more must not drive a segment's index."""
+    model, cheap, dear = cohorts["model"], cohorts["cheap"], cohorts["dear"]
+    _snap(model, cheap, D0, price=400_000_000, count=10)
+    _snap(model, dear, D0, price=400_000_000, count=10)
+    # Only `dear` survives to the latest day.
+    _snap(model, dear, D1, price=400_000_000, count=10)
+
+    segments = R.cohort_segments()
+    assert (model.pk, dear.pk, 1399) in segments
+    assert (model.pk, cheap.pk, 1399) not in segments
+
+
+@pytest.mark.django_db
+def test_year_bands_are_measured_against_the_newest_year_present(cohorts):
+    """Not against the calendar.
+
+    The Jalali year rolls over in March, and a fixed "current year" would age
+    every car in the catalogue by one overnight.
+    """
+    model, cheap, dear = cohorts["model"], cohorts["cheap"], cohorts["dear"]
+    _snap(model, cheap, D0, price=400_000_000, count=10, year=1403)
+    _snap(model, dear, D0, price=400_000_000, count=10, year=1390)
+
+    segments = R.cohort_segments()
+    # 1403 is the newest present, so it is age 0 and lands in the first band.
+    assert segments[(model.pk, cheap.pk, 1403)][MarketIndex.Scope.YEAR_BAND] == "y0"
+    # 13 years older -> the 8-15 band.
+    assert segments[(model.pk, dear.pk, 1390)][MarketIndex.Scope.YEAR_BAND] == "y2"
+
+
+# ---------------------------------------------------------------------------
+# Buy or wait
+# ---------------------------------------------------------------------------
+
+def _flow(model, *, arrived, departed, now):
+    """Episodes that started (and some that ended) inside the window."""
+    ads = []
+    for i in range(arrived):
+        ad = Ad.objects.create(
+            code=f"flow{i:04d}", model=model, brand=model.brand,
+            current_price=1_000_000_000, publish_at=now - timedelta(days=3),
+            last_seen_at=now, first_seen_at=now - timedelta(days=3),
+        )
+        ListingEpisode.objects.create(
+            ad=ad, started_at=now - timedelta(days=3),
+            ended_at=now - timedelta(days=1) if i < departed else None,
+            first_price=ad.current_price, last_price=ad.current_price,
+        )
+        ads.append(ad)
+    return ads
+
+
+@pytest.mark.django_db
+def test_market_read_calls_a_rising_tightening_market_a_sellers_market(cohorts):
+    model = cohorts["model"]
+    today = timezone.now().date()
+    for offset in range(10):
+        _index_row(MarketIndex.Scope.MARKET, None,
+                   today - timedelta(days=9 - offset), 100.0 + offset * 2)
+    _flow(model, arrived=60, departed=60, now=timezone.now())
+
+    read = R.market_read(days=30)
+
+    assert read["available"] is True
+    assert read["price_direction"] == "up"
+    assert read["flow"] == "balanced"
+    # Rising prices with flow merely balanced is not a sellers' market: the
+    # position needs both, and saying so is the point of not blending them.
+    assert read["position"] == "mixed"
+
+
+@pytest.mark.django_db
+def test_market_read_withholds_a_flow_reading_on_too_few_episodes(cohorts):
+    """Two small counts dividing into a large opinion."""
+    today = timezone.now().date()
+    for offset in range(10):
+        _index_row(MarketIndex.Scope.MARKET, None,
+                   today - timedelta(days=9 - offset), 100.0)
+    _flow(cohorts["model"], arrived=5, departed=2, now=timezone.now())
+
+    read = R.market_read(days=30)
+    assert read["flow"] == "unknown"
+    assert read["absorption"] is None
+
+
+@pytest.mark.django_db
+def test_market_read_refuses_without_enough_index_history():
+    assert R.market_read(days=30)["available"] is False
+
+
+# ---------------------------------------------------------------------------
+# What a budget buys
+# ---------------------------------------------------------------------------
+
+def _priced(brand, model, variant, prices, *, year=1399, mileage=100_000):
+    now = timezone.now()
+    return Ad.objects.bulk_create([
+        Ad(code=f"aff{variant.pk}y{year}n{i}", brand=brand, model=model,
+           variant=variant, year_jalali=year, mileage=mileage, current_price=p,
+           status=Ad.Status.ACTIVE, publish_at=now - timedelta(days=1),
+           first_seen_at=now - timedelta(days=1), last_seen_at=now)
+        for i, p in enumerate(prices)
+    ])
+
+
+@pytest.mark.django_db
+def test_affordable_ranks_by_reach_not_by_cheapness(cohorts):
+    """A budget that clears most of a cohort beats one that scrapes the bottom.
+
+    Sorting by price alone puts exactly the wrong cars first: the cheapest
+    cohort a budget touches is usually the one it can barely afford a single
+    example of.
+    """
+    brand, model = cohorts["brand"], cohorts["model"]
+    cheap, dear = cohorts["cheap"], cohorts["dear"]
+    # Fully within a 1B budget.
+    _priced(brand, model, cheap, [700_000_000] * 8, year=1399)
+    # Only the bottom of this one is reachable.
+    _priced(brand, model, dear, [900_000_000] * 4 + [3_000_000_000] * 20, year=1400)
+
+    result = R.affordable(1_000_000_000, tolerance_pct=0)
+
+    assert result["available"] is True
+    assert result["options"][0]["variant_id"] == cheap.pk
+    assert result["options"][0]["reach_pct"] == 100.0
+    assert result["options"][1]["reach_pct"] < 50.0
+
+
+@pytest.mark.django_db
+def test_affordable_separates_inside_the_budget_from_inside_the_tolerance(cohorts):
+    """"Within 10% of what you said" is a different fact from "at or under it"."""
+    brand, model, cheap = cohorts["brand"], cohorts["model"], cohorts["cheap"]
+    _priced(brand, model, cheap,
+            [900_000_000] * 4 + [1_050_000_000] * 4, year=1399)
+
+    result = R.affordable(1_000_000_000, tolerance_pct=10)
+
+    row = result["options"][0]
+    assert row["n"] == 8            # everything under the 1.1B ceiling
+    assert row["within_budget"] == 4  # ...but only half at or under 1B
+    assert result["ceiling"] == 1_100_000_000
+
+
+@pytest.mark.django_db
+def test_affordable_refuses_rather_than_returning_a_cohort_of_two(cohorts):
+    brand, model, cheap = cohorts["brand"], cohorts["model"], cohorts["cheap"]
+    _priced(brand, model, cheap, [500_000_000, 600_000_000], year=1399)
+
+    result = R.affordable(1_000_000_000)
+    assert result["available"] is False
+    assert result["reason"] == "nothing_in_range"
+
+
+# ---------------------------------------------------------------------------
+# Conditioning the distribution on the car the reader means
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_a_thick_condition_slice_is_filtered_not_modelled(cohorts):
+    """Real listings whenever there are enough of them."""
+    brand, model = cohorts["brand"], cohorts["model"]
+    now = timezone.now()
+    Ad.objects.bulk_create([
+        Ad(code=f"cond{i}", brand=brand, model=model, year_jalali=1399,
+           current_price=1_000_000_000 + i * 1_000_000,
+           body_status="بدون رنگ" if i % 2 else "کامل رنگ",
+           status=Ad.Status.ACTIVE, publish_at=now, last_seen_at=now)
+        for i in range(MIN_DISTRIBUTION_ADS * 4)
+    ])
+
+    result = price_distribution(model_id=model.pk, condition="clean")
+
+    assert result["available"] is True
+    assert result["basis"]["mode"] == "filtered"
+    assert result["basis"]["filtered_n"] >= MIN_DISTRIBUTION_ADS
+
+
+@pytest.mark.django_db
+def test_a_thin_condition_slice_is_adjusted_by_the_measured_haircut(cohorts):
+    """Below the minimum the shape is modelled, and the payload admits it.
+
+    Filtering alone would refuse most trims once a condition is applied, which
+    is the reason this endpoint could not answer the question at all before.
+    The shift is the haircut `pricing` measures catalogue-wide, so it is signed
+    by construction and cannot mark a damaged car up.
+    """
+    brand, model = cohorts["brand"], cohorts["model"]
+    now = timezone.now()
+    # Two cohorts thick enough in both bands for a haircut to be measurable:
+    # `condition_haircuts` needs MIN_PEERS in the band and in the cohort.
+    for year, variant in ((1399, cohorts["cheap"]), (1400, cohorts["dear"])):
+        Ad.objects.bulk_create([
+            Ad(code=f"hc{year}n{i}", brand=brand, model=model, variant=variant,
+               year_jalali=year,
+               current_price=1_000_000_000 if i < 10 else 800_000_000,
+               body_status="بدون رنگ" if i < 10 else "کامل رنگ",
+               status=Ad.Status.ACTIVE, publish_at=now, last_seen_at=now,
+               first_seen_at=now)
+            for i in range(20)
+        ])
+
+    haircuts = FP.condition_haircuts()
+    assert haircuts.get("painted", 0) > 0, "fixture must produce a measurable haircut"
+
+    unconditioned = price_distribution(model_id=model.pk, year_jalali=1399)
+    painted = price_distribution(model_id=model.pk, year_jalali=1399,
+                                 condition="painted")
+
+    assert painted["available"] is True
+    assert painted["basis"]["mode"] == "adjusted"
+    assert painted["basis"]["factor"] < 1.0
+    # A painted car must come out strictly cheaper, not merely not-dearer.
+    assert painted["distribution"]["median"] < unconditioned["distribution"]["median"]
+
+
+@pytest.mark.django_db
+def test_an_unmeasurable_condition_is_not_dressed_up_as_an_adjustment(cohorts):
+    """Multiplying by 1.0 and calling it "adjusted" is a false claim.
+
+    Too thin to filter and no haircut measured means the answer is simply the
+    unconditioned scope, and the payload has to say so — otherwise a reader
+    comparing two bands sees two identical distributions both labelled as having
+    been adjusted for the difference between them.
+    """
+    brand, model = cohorts["brand"], cohorts["model"]
+    now = timezone.now()
+    Ad.objects.bulk_create([
+        Ad(code=f"thin{i}", brand=brand, model=model, year_jalali=1399,
+           current_price=1_000_000_000 + i * 1_000_000, body_status="بدون رنگ",
+           status=Ad.Status.ACTIVE, publish_at=now, last_seen_at=now)
+        for i in range(MIN_DISTRIBUTION_ADS * 3)
+    ])
+
+    painted = price_distribution(model_id=model.pk, condition="painted")
+
+    assert painted["basis"]["mode"] == "unconditioned"
+    assert painted["basis"]["reason"] == "no_measured_adjustment"

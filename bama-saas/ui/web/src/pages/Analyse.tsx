@@ -19,6 +19,7 @@
 import { lazy, Suspense } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
+import { AlertTriangle } from "lucide-react";
 import { api } from "../api";
 import type { Envelope } from "../api";
 import { qs, useFilters } from "../filters";
@@ -29,6 +30,7 @@ import { ScopePicker, useScopeLabel } from "../components/ScopePicker";
 import { WindowPicker } from "../components/WindowPicker";
 import { useModelLabel } from "../components/ModelCombobox";
 import { DealCard, type Deal } from "../components/DealCard";
+import { FollowButton } from "../components/FollowButton";
 import { Button } from "../components/ui/button";
 
 const Chart = lazy(() => import("../Chart").then((m) => ({ default: m.Chart })));
@@ -62,7 +64,37 @@ interface Distribution extends Partial<Envelope> {
                buckets: Bucket[]; below: number; above: number };
   cities: { name: string; n: number }[];
   years: { year_jalali: number; n: number }[];
+  /** Whether these are listings or an estimate of listings. Never omitted:
+   *  comparing an adjusted band against a filtered one is comparing two
+   *  different kinds of claim, and the reader has to be able to tell. */
+  basis: {
+    mode: "unconditioned" | "filtered" | "adjusted";
+    condition: string | null;
+    mileage_bucket: number | null;
+    filtered_n: number | null;
+    factor?: number;
+    reason?: string;
+  };
 }
+
+const CONDITION_CHOICES = [
+  { value: "clean", label: "بدون رنگ" },
+  { value: "cosmetic", label: "لکه / خط و خش" },
+  { value: "painted", label: "رنگ‌شده" },
+  { value: "structural", label: "تعویض / تصادفی" },
+];
+
+/** The ladder `pricing.MILEAGE_BUCKETS` is calibrated on. The API refuses
+ *  anything off it, so these values must stay in step with that tuple. */
+const MILEAGE_CHOICES = [
+  { value: "0", label: "زیر ۲۰ هزار" },
+  { value: "20000", label: "۲۰ تا ۵۰ هزار" },
+  { value: "50000", label: "۵۰ تا ۱۰۰ هزار" },
+  { value: "100000", label: "۱۰۰ تا ۱۵۰ هزار" },
+  { value: "150000", label: "۱۵۰ تا ۲۰۰ هزار" },
+  { value: "200000", label: "۲۰۰ تا ۳۰۰ هزار" },
+  { value: "300000", label: "بالای ۳۰۰ هزار" },
+];
 
 interface Retention extends Partial<Envelope> {
   reference_year: number;
@@ -179,15 +211,110 @@ function TrendPanel({ url }: { url: string }) {
   );
 }
 
+/**
+ * The two controls that turn "what does this model cost" into "what does *my*
+ * car cost".
+ *
+ * Without them one histogram averages a 300,000 km repainted example with a
+ * 20,000 km clean one and reports their combined spread as the model's price,
+ * which describes neither car. They are chips rather than selects because the
+ * whole point is that they are quick to try and quick to drop.
+ */
+function ConditionControls() {
+  const filters = useFilters();
+  const condition = filters.get("condition");
+  const bucket = filters.get("mileage_bucket");
+
+  const chip = (active: boolean) => `preset${active ? " on" : ""}`;
+  return (
+    <div className="stack" style={{ gap: 8, marginBottom: 12 }}>
+      <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+        <span className="stat-sub" style={{ minWidth: 76 }}>وضعیت بدنه</span>
+        {CONDITION_CHOICES.map((c) => (
+          <button
+            key={c.value}
+            type="button"
+            className={chip(condition === c.value)}
+            aria-pressed={condition === c.value}
+            onClick={() =>
+              filters.set({ condition: condition === c.value ? null : c.value })
+            }
+          >
+            {c.label}
+          </button>
+        ))}
+      </div>
+      <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+        <span className="stat-sub" style={{ minWidth: 76 }}>کارکرد</span>
+        {MILEAGE_CHOICES.map((m) => (
+          <button
+            key={m.value}
+            type="button"
+            className={chip(bucket === m.value)}
+            aria-pressed={bucket === m.value}
+            onClick={() =>
+              filters.set({ mileage_bucket: bucket === m.value ? null : m.value })
+            }
+          >
+            {m.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Whether the reader is looking at cars or at an estimate of cars.
+ *
+ * Stated rather than implied. Filtering to a condition drops most trims below
+ * the minimum sample, so the useful answer is usually the unconditioned shape
+ * shifted by the haircut `pricing` measures catalogue-wide — which is a
+ * genuinely different kind of claim from "here are the listings", and a reader
+ * comparing two bands needs to know which one they have.
+ */
+function BasisNote({ basis }: { basis: Distribution["basis"] }) {
+  if (!basis || basis.mode === "unconditioned") {
+    if (basis?.reason === "no_measured_adjustment") {
+      return (
+        <p className="badge warn" style={{ display: "block", lineHeight: 1.7 }}>
+          <AlertTriangle size={11} /> برای این وضعیت آگهی کافی نبود و اختلاف
+          اندازه‌گیری‌شده‌ای هم در کاتالوگ وجود ندارد، پس همان توزیع کلی نشان داده
+          می‌شود — بدون تعدیل.
+        </p>
+      );
+    }
+    return null;
+  }
+  if (basis.mode === "filtered") {
+    return (
+      <p className="stat-sub">
+        بر پایه {basis.filtered_n?.toLocaleString("en-US")} آگهی واقعی با همین
+        وضعیت — بدون تخمین.
+      </p>
+    );
+  }
+  return (
+    <p className="badge warn" style={{ display: "block", lineHeight: 1.7 }}>
+      <AlertTriangle size={11} /> آگهی‌های این وضعیت کم بودند
+      {basis.filtered_n != null && ` (${basis.filtered_n})`}، پس توزیع کلی با
+      اختلاف اندازه‌گیری‌شده کل کاتالوگ تعدیل شده است. این یک تخمین است، نه
+      فهرست آگهی‌های واقعی.
+    </p>
+  );
+}
+
 function DistributionPanel({ query }: { query: ReturnType<typeof useQuery<Distribution>> }) {
   return (
     <Card title="توزیع قیمت">
+      <ConditionControls />
       <Async query={query} shape="chart">
         {(data) => {
           const d = data.distribution;
           const h = data.histogram;
           return (
             <>
+              <BasisNote basis={data.basis} />
               {/* Only numbers go in a Stat's value — it sets in the mono ledger
                   face, which has no Persian glyphs, so a word placed there gets
                   a fallback family and reads as broken text beside the digits. */}
@@ -435,11 +562,17 @@ export function Analyse() {
   // the scope picker, so the year list can only ever offer years that have data.
   // It carries the year list even when it refuses to draw a distribution, or
   // picking a thin year would disable the control that got you there.
+  const condition = filters.get("condition");
+  const mileageBucket = filters.get("mileage_bucket");
+
   const distribution = useQuery<Distribution>({
-    queryKey: ["distribution", brand, model, variant, year],
+    queryKey: ["distribution", brand, model, variant, year, condition, mileageBucket],
     queryFn: ({ signal }) =>
       api.get<Distribution>(
-        `/api/analytics/distribution/${qs({ brand, model, variant, year })}`, signal),
+        `/api/analytics/distribution/${qs({
+          brand, model, variant, year,
+          condition, mileage_bucket: mileageBucket,
+        })}`, signal),
   });
 
   const trendUrl = trendRequest({ brand, model, variant, year, days });
@@ -456,17 +589,25 @@ export function Analyse() {
       <Card
         title={`دامنه تحلیل — ${scopeLabel}`}
         action={
-          (brand || model) && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() =>
-                filters.set({ brand: null, model: null, variant: null, year: null })
-              }
-            >
-              بازگشت به کل بازار
-            </Button>
-          )
+          <div className="row">
+            {/* Follow the scope, not a listing. The listing you are looking at
+                will be gone in a fortnight; the car you want to buy will not. */}
+            <FollowButton scope={{ brand, model, variant, year }} />
+            {(brand || model) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() =>
+                  filters.set({
+                    brand: null, model: null, variant: null, year: null,
+                    condition: null, mileage_bucket: null,
+                  })
+                }
+              >
+                بازگشت به کل بازار
+              </Button>
+            )}
+          </div>
         }
       >
         <ScopePicker years={distribution.data?.years} />

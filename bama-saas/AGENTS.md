@@ -11,8 +11,13 @@ One module per concern, no `services/` packages, no per-command modules:
 - `apps/core/` — `models.py` (all 15 models, four commented sections),
   `views.py`, `serializers.py`, `filters.py`, plus the analytics:
   `pricing.py` (fair price + deal board + the board's dynamic window),
-  `quality.py` (the read-side filters), `research.py` (index, survival,
-  depreciation), `notify.py`, `images.py` (the Redis-cached photo proxy).
+  `quality.py` (the read-side filters *and* the one condition-band rule ladder),
+  `research.py` (index, segments, survival, depreciation, the market read, the
+  budget search), `notify.py` (the operator channel *and* per-user alerts),
+  `images.py` (the Redis-cached photo proxy).
+- `apps/accounts/` — user, session auth, and the per-user layer: `Favorite`,
+  `Watchlist`, `AlertRule`, `AlertDelivery`. The last three share the
+  `ScopedToACar` abstract base.
 - `apps/jobs/` — `parsing.py` (no Django import), `fetcher.py` (HTTP + crawl
   gate + coverage arithmetic), `ingest.py`, `verify.py`, `jobs.py` (one function
   per job, each returning a dict), `pipeline.py` (which jobs, in what order),
@@ -21,9 +26,12 @@ One module per concern, no `services/` packages, no per-command modules:
   the default is hardened, so a missing env var cannot fail open.
 - `ui/web/` — Tailwind v4 + shadcn/ui. Five destinations behind one floating
   header (`components/AppHeader`), no sidebar. `Home` is the market pulse,
-  `Analyse` is one page whose scope runs market → brand → model → trim → model
-  year in the URL, `Deals`, `Explorer`, `Saved`, plus staff-only `Control` in
-  the account menu.
+  `Budget` is the "what can this much money buy" path, `Analyse` is one page
+  whose scope runs market → brand → model → trim → model year in the URL,
+  `Deals`, `Explorer`, plus staff-only `Control` in the account menu. The two
+  *personal* surfaces — `Saved` and `Alerts` — are icons in the right cluster
+  rather than tabs: seven Persian labels clip mid-word in the phone tab row, and
+  the alert badge has to be visible from every screen anyway.
 
 ## The stylesheet
 
@@ -229,6 +237,78 @@ schema is independent of the Python layout. Do not remove those pins.
   return the cohort/ad/episode counts behind each figure and the UI prints them.
   A 4% move off three cohorts and one off forty are not the same claim, and a
   board that shows only the percentage is one the thinnest scope wins.
+- **"What changed" and "what is turning" are two questions, so they get two
+  metrics.** `movers` still *ranks* on `change_pct`, the two-point chord across
+  the window, because that is literally what the reader asked — and a test
+  (`test_movers_ignores_dates_outside_the_window`) pins it: a series that rose
+  for ten days and then sat flat for thirty still *changed* over the window.
+  What was missing is direction *now*, so every row also carries a Theil–Sen
+  slope (median of all pairwise slopes, so one bad day cannot set the rank),
+  `slope_agreement` (the share of pairs sharing the median's sign — a fitted line
+  through noise otherwise reads as a trend), a 7-day `recent_slope_pct`, and
+  `turning` when the two disagree in sign. The turns get their own list, sorted
+  by the recent slope. Do not collapse these back into one number.
+- **A segment index measures prices, not reclassification.** `MarketIndex.Scope`
+  now carries `PRICE_BAND`, `YEAR_BAND` and `BODY_TYPE` beside brand and model,
+  and `research.cohort_segments()` fixes each cohort's band membership **from the
+  latest snapshot** rather than recomputing it per day. Left to drift, a cohort
+  whose price crossed `PRICE_BAND_EDGES` would leave one band and join another,
+  and the two series would each print a move that was only a car changing
+  shelves. Same argument for `YEAR_BAND_EDGES` as cars age past 3/7/15 years.
+- **The market read is a composition, and it ships its inputs.**
+  `research.market_read()` crosses the index's price direction with flow
+  (absorption = departures ÷ arrivals) into one categorical position, and returns
+  all three so the reader can disagree with the synthesis. Two guards: a
+  `ABSORPTION_DEAD_BAND` of 5% around parity, because balanced flow is the normal
+  state and calling every 1% wobble a squeeze is noise; and `MIN_FLOW_EPISODES`,
+  below which flow is `unknown` rather than computed — the position then reads
+  from price alone and says so.
+- **The condition-band ladder has exactly one definition.** `_BAND_RULES` in
+  `quality.py` is ordered and first-match-wins, and that ordering is load-bearing
+  («صافکاری بدون رنگ» contains «بدون رنگ» contains «رنگ»). `condition_band()`
+  walks it in Python; `condition_band_q()` *derives* the SQL predicate from the
+  same list — for each position the band occupies, match that rule and exclude
+  every earlier one. `filters.py` used to carry a hand-written copy of the regex
+  ladder, which is how the two drift. An unknown band returns `Q(pk__in=[])`, so
+  a typo selects nothing rather than everything.
+- **A conditioned distribution says which of three things it did.**
+  `price_distribution(condition=, mileage_bucket=)` returns `basis.mode`:
+  `filtered` when the slice itself clears `MIN_DISTRIBUTION_ADS`, `adjusted` when
+  it does not and the pooled haircut is shifted onto the full scope, and
+  `unconditioned` with `reason: no_measured_adjustment` when there is no measured
+  haircut to shift by. The third case exists because the first draft claimed
+  `adjusted` while applying a factor of 1.0 — an honest label on an answer that
+  had not been adjusted at all. The `measured` flag is what separates them.
+- **Budget is a quantised cache axis.** A toman amount is unbounded and a free
+  axis is a fresh cache key per request behind an expensive scan (the same
+  argument as `views._model_year`). `views.BUDGET_CACHE_GRID` rounds to 10M
+  before keying and `MAX_BUDGET` caps it. `research.affordable()` groups
+  `scorable_rows()` by cohort in **one** grouped aggregate — the first version
+  called `cohort_peers` per cohort, which is the N+1 this codebase keeps
+  re-learning — and ranks by `reach_pct` (what percentile of that cohort the
+  budget buys) rather than by raw count.
+- **Alert dedup is per user, not per ad.** `NotifiedAd` stays as the *operator*
+  channel's once-ever guard; the per-user layer is `AlertDelivery`, unique on
+  `(user, ad)`, because two people following the same car must both hear about
+  it. It stores its own copy of `discount_pct` and `peer_median`: the feed has to
+  keep saying what it said at the time, and the deal cache is rebuilt every hot
+  tick. `MAX_PER_USER_PER_RUN` caps a run so one broad rule cannot bury an inbox.
+  `notify.matching_deals()` is the one matcher — the operator settings and a
+  user's `AlertRule` both go through it.
+- **A scope key is a derived column because Postgres NULLs are distinct.** A
+  unique constraint over `(user, brand_slug, model, variant, year_jalali)` does
+  not stop a user following «all of Peugeot» twice, since `NULL != NULL` in a
+  unique index. `ScopedToACar.save()` derives `scope_key` from whichever fields
+  are set, narrowest last (`brand:peugeot/model:12/year:1401`), and the
+  constraint is on that. The ordering also means a prefix match finds everything
+  under a brand, and the UI's `scopeKey()` mirrors it so the client can tell
+  whether a scope is already followed without a round trip.
+- **Stale peers are not confident peers.** `pricing.tier()` drops one confidence
+  tier when a cohort's newest `last_seen_at` is older than `COHORT_STALE_AFTER`
+  (2 days), and the payload carries `cohort_stale`. Forty peers last seen three
+  weeks ago used to read "high" exactly like forty fresh ones — the count was the
+  only thing measured, and a cohort the crawler has stopped seeing is a cohort
+  whose median describes a market that may have moved.
 - **User-facing prose is composed in the UI, not the API.** Serializers return
   machine keys and facts (`reason`, `cohort_flags`, a component's `facts` dict);
   `ui.tsx:humanReason`, `FLAG_LABEL` and `Explorer.componentDetail` turn them
@@ -325,8 +405,9 @@ schema is independent of the Python layout. Do not remove those pins.
 Steps are deliberately independent: a flaky fetch must not stop the cheap local
 steps from keeping analytics fresh. The exceptions are declared in `DEPENDS_ON`
 — `market_index` after `snapshot`, because a chained index extended over a
-missing snapshot reports the crawler's downtime as a market move. A step whose
-prerequisite failed is recorded `skipped`, which is distinct from both success
-and silence.
+missing snapshot reports the crawler's downtime as a market move; and `alerts`
+after `deal_scores`, because an alert run over an unrebuilt cache would mail out
+yesterday's discounts as today's news. A step whose prerequisite failed is
+recorded `skipped`, which is distinct from both success and silence.
 
 Every step records a `JobRun` either way. Only the network fetch is retried.

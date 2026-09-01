@@ -728,10 +728,20 @@ class MarketIndex(models.Model):
         MARKET = "market", "Whole market"
         BRAND = "brand", "Per brand"
         MODEL = "model", "Per model"
+        # Segment axes. Brand and model answer "which nameplate moved"; these
+        # answer "which *part of the market* moved", which is a different
+        # question and the one a buyer deciding whether to wait actually asks.
+        # A cohort's membership is fixed by its latest snapshot
+        # (`research.cohort_segments`) so the matched-cohort property survives:
+        # letting a cohort drift between price bands as its own price moved
+        # would make the band's index measure reclassification, not prices.
+        PRICE_BAND = "price_band", "Per price band"
+        YEAR_BAND = "year_band", "Per age band"
+        BODY_TYPE = "body_type", "Per body type"
 
     scope = models.CharField(max_length=16, choices=Scope.choices)
-    # Null for the market-wide series; Brand.slug or Model.pk as text otherwise,
-    # so one table serves all three levels without three nullable FKs.
+    # Null for the market-wide series; Brand.slug, Model.pk or a segment key as
+    # text otherwise, so one table serves every level without a nullable FK each.
     scope_id = models.CharField(max_length=160, null=True, blank=True)
     date = models.DateField()
 

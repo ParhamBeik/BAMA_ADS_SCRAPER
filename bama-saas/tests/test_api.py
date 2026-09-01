@@ -17,7 +17,7 @@ from django.urls import resolve
 from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.test import APIClient
 
-from apps.accounts.models import User
+from apps.accounts.models import AlertDelivery, AlertRule, User, Watchlist
 from apps.core import images, pricing
 from apps.core.models import (
     Ad,
@@ -1416,6 +1416,12 @@ CACHED_ENDPOINTS = (
     "/api/analytics/arrivals/?days=30",
     "/api/analytics/distribution/",
     "/api/analytics/movement/?model=1",
+    # Every endpoint added to `cached_answer` belongs here. The gate is a
+    # property of the caching approach, not of any one view, so a new cached
+    # endpoint that is not in this list is untested for the one failure mode
+    # caching introduces.
+    "/api/analytics/market-read/?days=30",
+    "/api/analytics/affordable/?budget=1000000000",
 )
 
 
@@ -1594,3 +1600,265 @@ def test_coverage_shares_the_vintage_of_the_answer_it_qualifies(api_client):
     with patch("apps.core.views._coverage", return_value=swept):
         second = api_client.get("/api/analytics/arrivals/?days=30").json()
     assert second["coverage"] == holed, "a stale answer wore fresh provenance"
+
+
+# ---------------------------------------------------------------------------
+# The per-user layer
+# ---------------------------------------------------------------------------
+#
+# Every one of these viewsets is scoped to request.user in get_queryset and
+# assigns the owner in perform_create. Both halves are load-bearing and neither
+# fails loudly when it is missing: without the first, an id in the URL reads
+# somebody else's rows; without the second, a client posts a `user` field and
+# writes into another account. The tests below are what makes those two
+# omissions visible.
+
+@pytest.fixture
+def member(db):
+    client = APIClient()
+    user = User.objects.create_user(email="member@example.com", password="StrongPass1!")
+    client.force_authenticate(user)
+    return client, user
+
+
+@pytest.fixture
+def other_member(db):
+    client = APIClient()
+    user = User.objects.create_user(email="other@example.com", password="StrongPass1!")
+    client.force_authenticate(user)
+    return client, user
+
+
+@pytest.mark.django_db
+def test_the_watch_and_alert_endpoints_require_a_session(api_client):
+    for url in ("/api/watchlists/", "/api/alert-rules/", "/api/alerts/"):
+        assert api_client.get(url).status_code in (401, 403), url
+
+
+@pytest.mark.django_db
+def test_following_the_same_car_twice_is_idempotent(member, catalog):
+    client, user = member
+    first = client.post("/api/watchlists/", {"model": catalog["model"].pk}, format="json")
+    second = client.post("/api/watchlists/", {"model": catalog["model"].pk}, format="json")
+
+    assert first.status_code == 201
+    # Not a 400: asking to follow something you already follow is not an error,
+    # and a failing request would make the button's state a lie.
+    assert second.status_code == 200
+    assert Watchlist.objects.filter(user=user).count() == 1
+
+
+@pytest.mark.django_db
+def test_a_scope_key_makes_the_same_car_the_same_row(member, catalog):
+    """Postgres treats NULLs as distinct in a unique constraint.
+
+    So `{model: 1}` and `{model: 1, variant: null}` are different tuples over
+    four nullable columns and would both be stored — one user following one car
+    twice. The derived key is what closes that.
+    """
+    client, user = member
+    client.post("/api/watchlists/", {"model": catalog["model"].pk}, format="json")
+    client.post("/api/watchlists/",
+                {"model": catalog["model"].pk, "variant": None}, format="json")
+
+    assert Watchlist.objects.filter(user=user).count() == 1
+    assert Watchlist.objects.get(user=user).scope_key == f"model:{catalog['model'].pk}"
+
+
+@pytest.mark.django_db
+def test_a_watchlist_is_invisible_to_another_account(member, other_member, catalog):
+    client, _ = member
+    other_client, _ = other_member
+    created = client.post("/api/watchlists/", {"model": catalog["model"].pk},
+                          format="json").json()
+
+    assert other_client.get("/api/watchlists/").json()["results"] == []
+    # And not reachable by id either, which get_queryset scoping is what
+    # prevents — a permission class alone would not.
+    assert other_client.delete(f"/api/watchlists/{created['id']}/").status_code == 404
+
+
+@pytest.mark.django_db
+def test_a_client_cannot_write_a_rule_into_another_account(member, other_member):
+    """`perform_create` assigns the owner; the posted `user` must be ignored."""
+    client, user = member
+    _, victim = other_member
+
+    client.post("/api/alert-rules/",
+                {"min_discount_pct": 12, "min_peers": 8, "user": str(victim.pk)},
+                format="json")
+
+    assert AlertRule.objects.filter(user=victim).count() == 0
+    assert AlertRule.objects.filter(user=user).count() == 1
+
+
+@pytest.mark.django_db
+def test_an_alert_rule_cannot_go_below_the_fair_price_peer_minimum(member):
+    """The same floor the operator singleton enforces.
+
+    Below `MIN_PEERS` the median being compared against is not one this app will
+    quote, let alone wake somebody up for.
+    """
+    client, _ = member
+    response = client.post("/api/alert-rules/",
+                           {"min_discount_pct": 12, "min_peers": 3}, format="json")
+
+    assert response.status_code == 400
+    assert "min_peers" in response.json()
+
+
+@pytest.mark.django_db
+def test_alerts_are_delivered_per_user_and_only_once(member, other_member, catalog):
+    """`AlertDelivery` is unique per (user, ad), not globally.
+
+    `core.NotifiedAd` is global, so once one recipient had seen a listing it was
+    silently swallowed for everybody. A per-user feed cannot work that way.
+    """
+    from apps.core.notify import deliver_alerts
+
+    client, user = member
+    _, other = other_member
+    for u in (user, other):
+        AlertRule.objects.create(user=u, min_discount_pct=5.0, min_peers=8)
+
+    compute_deal_scores()
+    scored = DealScoreCache.objects.count()
+    assert scored, "fixture must produce at least one scored listing"
+
+    first = deliver_alerts()
+    assert first["delivered"] > 0
+    # Both users get their own copy of the same car.
+    assert AlertDelivery.objects.filter(user=user).count() > 0
+    assert AlertDelivery.objects.filter(user=other).count() > 0
+
+    # A second tick delivers nothing new.
+    assert deliver_alerts()["delivered"] == 0
+
+
+@pytest.mark.django_db
+def test_two_of_one_users_rules_matching_one_car_deliver_it_once(member, catalog):
+    """Overlapping rules are normal; the same car arriving twice is not."""
+    from apps.core.notify import deliver_alerts
+
+    client, user = member
+    AlertRule.objects.create(user=user, min_discount_pct=5.0, min_peers=8)
+    AlertRule.objects.create(user=user, min_discount_pct=6.0, min_peers=8,
+                             model=catalog["model"])
+
+    compute_deal_scores()
+    deliver_alerts()
+
+    codes = list(AlertDelivery.objects.filter(user=user).values_list("ad_id", flat=True))
+    assert len(codes) == len(set(codes))
+
+
+@pytest.mark.django_db
+def test_an_alert_keeps_what_was_true_when_it_fired(member, catalog):
+    """The board is dropped and rebuilt on a schedule.
+
+    A feed that joined to `DealScoreCache` would blank out an alert the moment
+    the listing stopped qualifying — which is the one moment the reader most
+    needs to see what it said.
+    """
+    from apps.core.notify import deliver_alerts
+
+    _, user = member
+    AlertRule.objects.create(user=user, min_discount_pct=5.0, min_peers=8)
+    compute_deal_scores()
+    deliver_alerts()
+
+    delivery = AlertDelivery.objects.filter(user=user).first()
+    assert delivery.discount_pct is not None
+    assert delivery.peer_median is not None
+
+    DealScoreCache.objects.all().delete()
+    assert delivery.discount_pct is not None
+
+
+@pytest.mark.django_db
+def test_marking_the_feed_read_clears_the_badge(member, catalog):
+    from apps.core.notify import deliver_alerts
+
+    client, user = member
+    AlertRule.objects.create(user=user, min_discount_pct=5.0, min_peers=8)
+    compute_deal_scores()
+    deliver_alerts()
+
+    assert client.get("/api/alerts/unread-count/").json()["unread"] > 0
+    client.post("/api/alerts/mark-read/", {}, format="json")
+    assert client.get("/api/alerts/unread-count/").json()["unread"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Budget-first discovery and the market read
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_affordable_refuses_a_missing_or_absurd_budget(staff_client):
+    assert staff_client.get("/api/analytics/affordable/").status_code == 400
+    assert staff_client.get("/api/analytics/affordable/?budget=0").status_code == 400
+    assert staff_client.get(
+        "/api/analytics/affordable/?budget=999999999999999"
+    ).status_code == 400
+
+
+@pytest.mark.django_db
+def test_affordable_answers_with_what_the_budget_reaches(staff_client, catalog):
+    body = staff_client.get("/api/analytics/affordable/?budget=1200000000").json()
+    assert body["available"] is True
+    assert body["options"]
+    assert body["options"][0]["model_id"] == catalog["model"].pk
+
+
+@pytest.mark.django_db
+def test_a_budget_is_snapped_before_it_reaches_the_cache_key(staff_client, catalog):
+    """An unbounded axis is an unbounded number of cache keys.
+
+    Every distinct rial anybody types would otherwise be a fresh key that misses
+    and re-runs the scan behind it — the same rule `_model_year` applies to
+    years, for the same reason.
+    """
+    first = staff_client.get("/api/analytics/affordable/?budget=1200000000").json()
+    # Inside the same 10M grid cell, so it must be the identical cached answer.
+    second = staff_client.get("/api/analytics/affordable/?budget=1203000000").json()
+    assert first["budget"] == second["budget"] == 1_200_000_000
+
+
+@pytest.mark.django_db
+def test_the_distribution_refuses_a_condition_outside_the_four_bands(staff_client):
+    response = staff_client.get("/api/analytics/distribution/?condition=shiny")
+    assert response.status_code == 400
+    assert "condition" in response.json()["detail"]
+
+
+@pytest.mark.django_db
+def test_the_distribution_refuses_a_mileage_bucket_off_the_ladder(staff_client):
+    """The bucket *is* a ladder edge.
+
+    Accepting an arbitrary integer would both unbound the cache key and silently
+    answer a different question than the ladder is calibrated on.
+    """
+    assert staff_client.get(
+        "/api/analytics/distribution/?mileage_bucket=37000"
+    ).status_code == 400
+    assert staff_client.get(
+        "/api/analytics/distribution/?mileage_bucket=50000"
+    ).status_code == 200
+
+
+@pytest.mark.django_db
+def test_the_movers_board_accepts_the_segment_axes(staff_client):
+    for scope in ("brand", "model", "price_band", "year_band", "body_type"):
+        assert staff_client.get(
+            f"/api/analytics/movers/?scope={scope}"
+        ).status_code == 200, scope
+    assert staff_client.get("/api/analytics/movers/?scope=nonsense").status_code == 400
+    # The market series is one row and has nothing to be ranked against.
+    assert staff_client.get("/api/analytics/movers/?scope=market").status_code == 400
+
+
+@pytest.mark.django_db
+def test_the_market_read_is_a_refusal_not_an_error_when_thin(staff_client):
+    body = staff_client.get("/api/analytics/market-read/").json()
+    assert body["available"] is False
+    assert body["reason"]
