@@ -6,6 +6,7 @@ Cadences (see ``CADENCES``):
     coverage    ~10 min   one bounded chunk of whatever the feed has not shown lately
     warm        ~30 min   episodes + daily snapshot + market index
     maintenance   ~6 h    full deal rebuild + prune + health report
+    train        ~daily   refit the learned models, gate them, rescore the board
     full                  every hot/warm step, with a full deal-score rebuild
 
 Steps are independent by design: a flaky live fetch must not stop the cheap
@@ -47,6 +48,8 @@ JOBS: dict[str, Callable[..., dict]] = {
     "probe_sold": jobs.probe_sold,
     "notify": jobs.notify,
     "alerts": jobs.alerts,
+    "ml_train": jobs.ml_train,
+    "ml_score": jobs.ml_score,
     "coverage": jobs.coverage,
     "backfill_images": jobs.backfill_images,
     "prune": jobs.prune,
@@ -61,19 +64,32 @@ JOBS: dict[str, Callable[..., dict]] = {
 # link_reposts sits between removal marking and episodes: it needs the
 # delisted set to be current, and episodes reads the links it writes.
 STEP_ORDER = ("fetch", "mark_inactive", "link_reposts", "episodes", "snapshot",
-              "market_index", "deal_scores", "probe_sold", "notify", "alerts",
-              "coverage", "backfill_images", "prune", "health")
+              "market_index", "deal_scores", "ml_score", "probe_sold", "notify",
+              "alerts", "coverage", "backfill_images", "prune", "health",
+              "ml_train")
 
 CADENCES = {
-    "hot": ("fetch", "mark_inactive", "deal_scores", "probe_sold", "notify", "alerts"),
+    "hot": ("fetch", "mark_inactive", "deal_scores", "ml_score", "probe_sold",
+            "notify", "alerts"),
     "warm": ("link_reposts", "episodes", "snapshot", "market_index"),
     "coverage": ("coverage",),
+    # Training is its own cadence and its own container. It is the one step here
+    # that is CPU-bound for minutes rather than seconds, and running it inside
+    # the worker loop would have a LightGBM fit competing with the fetch tick
+    # for the same cores on a small VPS. `ml_score` follows so a newly promoted
+    # model reaches the board without waiting for the next hot tick.
+    "train": ("ml_train", "ml_score"),
     # backfill_images is local and idempotent: it sweeps up rows whose photos
     # were never extracted, so a listing does not have to be re-observed before
     # the board can show it.
     "maintenance": ("deal_scores", "backfill_images", "prune", "health"),
+    # `ml_train` is deliberately not in `full`: everything else here is seconds
+    # of local arithmetic and a full refit is minutes of CPU, so folding it in
+    # would turn the one command an operator runs to catch up into something
+    # they stop running. `bama train` is one keystroke away.
     "full": ("fetch", "mark_inactive", "link_reposts", "episodes", "snapshot",
-             "market_index", "deal_scores", "probe_sold", "notify", "alerts"),
+             "market_index", "deal_scores", "ml_score", "probe_sold", "notify",
+             "alerts"),
 }
 
 # A failed *fetch* deliberately does not cascade: the local steps are idempotent
@@ -94,6 +110,10 @@ DEPENDS_ON = {
     # would have corrected — and an alert is the most acted-upon thing this app
     # emits, so it is the one place stale is not good enough.
     "alerts": ("deal_scores",),
+    # The prediction and the peer median are printed on one card. Scoring
+    # against a board the rebuild has since replaced makes the two disagree, and
+    # the reader has no way to tell which half is stale.
+    "ml_score": ("deal_scores",),
 }
 
 # ``health`` is a report, not a step: a red crawler must not make the

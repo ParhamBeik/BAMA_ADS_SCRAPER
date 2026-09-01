@@ -12,7 +12,11 @@ optional Telegram notifier. PostgreSQL only — SQLite is not supported.
 
 Django 5.2 + DRF, PostgreSQL 16, `psycopg[binary]`, django-filter,
 django-cors-headers, dj-database-url, jdatetime, requests, gunicorn.
-Python ≥ 3.11. UI: React 19 + Vite + TypeScript (Persian, RTL). Redis is a
+Python ≥ 3.11. The learned layer is an optional extra (`pip install -e '.[ml]'`)
+— scikit-learn, LightGBM, numpy, joblib — so a host that wants the web app
+without ~120MB of it can have one; `apps/ml` refuses rather than failing to
+import. No `shap`: LightGBM computes exact TreeSHAP itself. No `pandas`: the
+feature matrix goes straight from `values_list` into a numpy array. UI: React 19 + Vite + TypeScript (Persian, RTL). Redis is a
 *cache only* — proxied listing photos and the deal board's computed window,
 both pure derived data, evicted under an LRU cap. Still no Celery and no message
 broker: the scheduler is a shell loop plus `flock`.
@@ -27,14 +31,17 @@ bama-saas/
 │   │                        watchlists + alert rules + the alert inbox
 │   ├── core/                models, views, serializers + the analytics:
 │   │                        pricing.py quality.py research.py notify.py
-│   └── jobs/                the crawler side:
-│                            parsing.py fetcher.py ingest.py verify.py
-│                            jobs.py pipeline.py
+│   ├── jobs/                the crawler side:
+│   │                        parsing.py fetcher.py ingest.py verify.py
+│   │                        jobs.py pipeline.py
+│   └── ml/                  the learned layer:
+│                            features.py metrics.py train.py registry.py
+│                            inference.py monitoring.py
 ├── ui/web/                  React + Vite + TypeScript
-├── deploy/                  worker.sh (the scheduler), backup, VPS deploy
-├── tests/                   pytest-django, 9 files
-├── docker-compose.yml       local: postgres, redis, django, worker, vite
-└── docker-compose.prod.yml  VPS: postgres, redis, gunicorn, worker, nginx
+├── deploy/                  worker.sh + train.sh (the two loops), backup, deploy
+├── tests/                   pytest-django, 10 files
+├── docker-compose.yml       local: postgres, redis, django, worker, vite (+ ml)
+└── docker-compose.prod.yml  VPS: postgres, redis, gunicorn, worker, ml, nginx
 ```
 
 One file per concern. `apps/core` is what the API serves; `apps/jobs` is what
@@ -51,6 +58,7 @@ fills it. `parsing.py` is the only module with no Django import.
 | `/analyse` | One scope, market → brand → model → trim → year, in the URL |
 | `/listing/:code` | Listing detail + fair price + the deal verdict |
 | `/alerts` | Alert inbox and the rules behind it |
+| `/methodology` | Model cards — what produced each number, and how well it did |
 | `/saved` | Saved cars |
 | `/control` | Crawl health + job triggers (staff only) |
 
@@ -108,11 +116,12 @@ Cadences bundle jobs; a job name runs that job alone.
 | `coverage` | coverage | 10 min |
 | `warm` | link_reposts → episodes → snapshot → market_index | 30 min |
 | `maintenance` | deal_scores → backfill_images → prune → health | 6 h |
+| `train` | ml_train → ml_score | daily, own container |
 | `full` | every hot + warm step, full deal rebuild | on demand |
 
 Jobs: `fetch`, `mark_inactive`, `link_reposts`, `episodes`, `snapshot`,
-`market_index`, `deal_scores`, `probe_sold`, `notify`, `alerts`, `coverage`,
-`backfill_images`, `prune`, `health`, `reap_orphans`.
+`market_index`, `deal_scores`, `ml_score`, `probe_sold`, `notify`, `alerts`,
+`coverage`, `backfill_images`, `prune`, `health`, `reap_orphans`, `ml_train`.
 Every step writes a `JobRun` row, so "did last night's snapshot run?" is a
 query rather than a log excavation. A step whose declared prerequisite failed is
 recorded as `skipped`, never allowed to publish a number computed from stale
@@ -121,6 +130,13 @@ input.
 `deploy/worker.sh` is the scheduler: PID 1 of the compose `worker` service, or
 `worker.sh hot` from host cron. Never both — two fetchers double the request
 rate against bama.ir.
+
+`deploy/train.sh` is the second loop, in its own container. Training is the one
+job here that saturates a CPU for minutes rather than seconds, and running it
+inside the worker loop would make the crawl look slow for reasons nothing in the
+crawl logs would explain. Daily, not hourly: the promotion gate compares a
+challenger against a fresh holdout, and a holdout an hour wide would swap models
+on sampling noise.
 
 There is no full-feed sweep. Coverage accumulates from bounded chunks, because
 the old ~936-page sweep only completed 11 times in 28 attempts and removal
@@ -138,7 +154,9 @@ Everything under `/api/`. Health: `/api/health/`, `/api/db/health/`.
 - **Photos** — `/api/img/<code>/<n>/`, proxied and Redis-cached
 - **Market** — `/api/markets/`, `/api/ads/<code>/price-history/`,
   `/api/ads/<code>/fair-price/`
-- **Analytics** — `/api/analytics/deal-scores/?band=top|all|review`,
+- **Analytics** — `/api/analytics/deal-scores/?band=top|all|review|ml`
+  (`ml` is the learned board: listings the price model puts below its own
+  predicted p10, ranked by that gap rather than by the cohort discount),
   `/api/analytics/deal-scores/<code>/`,
   `/api/analytics/market-index/?scope=market|brand|model&id=&days=`,
   `/api/analytics/overview/`
@@ -163,6 +181,12 @@ Everything under `/api/`. Health: `/api/health/`, `/api/db/health/`.
   three persisted scopes, computed per request)
 - **Research** — `/api/research/{liquidity,depreciation}/<model_id>/`, both
   accepting `?variant=` and (liquidity) `?year=`
+- **The learned layer** — `/api/ml/models/` (every trained model with its
+  metrics and its promotion decision — this is what `/methodology` renders, and
+  it includes the models that were *not* promoted, with the reason),
+  `/api/ads/<code>/prediction/` (one listing's band plus the exact TreeSHAP
+  decomposition behind it), `/api/ml/monitoring/` and `/api/ml/review-queue/`
+  (staff only)
 - **Saved cars** — `/api/favorites/`, session-scoped to the user
 - **Follow and be told** — `/api/watchlists/` (a car, a trim or a whole brand;
   POST is idempotent and answers 200 on a repeat), `/api/alert-rules/` (the
@@ -276,13 +300,59 @@ review-band rows are cars whose gap the (model, variant, year, condition) key
 still cannot see (plates, provenance) — they stay in review, labelled, not
 recommended.
 
+## The learned layer
+
+Five models, and each one exists because the statistical method structurally
+cannot answer its question. The cohort key is (model, trim, year), so a median
+over it cannot use mileage, damage, city, seller type or photo count — eleven
+stored columns the old scorer never read.
+
+| Model | Answers | Judged on |
+| --- | --- | --- |
+| Quantile GBM (p10/p50/p90) | Where does this car's price actually sit, with a band | Interval coverage against 80%, then MAPE vs the peer median |
+| Calibrated classifier | Will this listing leave the feed within 14 days | Brier score and a reliability curve, never accuracy |
+| Isolation Forest | Is this cheap, or is the record broken | Lift over the base rate on realised delistings |
+| Char n-gram TF-IDF + SGD | Does the ad text agree with the catalogue | Macro-F1 and the top confusable pairs |
+| Per-variant KMeans | Which value tier is this car in | Silhouette, per variant, with a floor |
+
+Four rules the whole layer is built on, in decreasing order of how easy they are
+to get wrong:
+
+- **The learned number never replaces the statistical one.** The discount badge
+  is still measured against `peer_median` everywhere. The prediction sits beside
+  it with its own decomposition, so a reader gets two independent accounts and
+  can see where they disagree. `apps/core/pricing.py` records what happened the
+  one time a fitted model *was* the number here.
+- **Splits are by time, and by timestamp rather than row index.** A random split
+  lets a model see July while predicting June. An index cut puts a bulk upload's
+  duplicate rows on opposite sides.
+- **A model goes live by winning, not by being newest.** It has to beat both the
+  model it would replace *and* the plain statistical baseline, on the same
+  holdout. Losers stay in shadow with the comparison published on
+  `/methodology`.
+- **The published band is conformalised.** Raw fitted quantiles are
+  anti-conservative out of sample — measured here at 43% coverage on a p10–p90
+  band while MAPE looked excellent. Coverage more than 8 points off 80% vetoes
+  promotion outright, because no accuracy metric can see a dishonest interval.
+
+```bash
+python manage.py bama train --json          # fit all five, gate, rescore
+python manage.py bama ml_train --only price --json
+```
+
 ## Tests
 
 ```bash
 pytest
 ```
 
-Nine files, one per subject: `test_parsing` (pure Python, no DB), `test_verify`,
+Ten files, one per subject: `test_parsing` (pure Python, no DB), `test_verify`,
 `test_ingest`, `test_fetcher`, `test_jobs`, `test_pricing`, `test_research`,
-`test_api`, plus `test_logical_fixes` for regressions that span subjects. Shared
-fixtures are in `conftest.py`.
+`test_api`, `test_ml`, plus `test_logical_fixes` for regressions that span
+subjects. Shared fixtures are in `conftest.py`.
+
+Most of `test_ml` runs without fitting anything — the metrics, the feature
+builder, the time split and the promotion gate are pure functions, and that is
+where the interesting mistakes live. The tests that matter most are the ones
+asserting a model is *refused*: a suite that only checked the happy path would
+have passed on every version of this code that shipped a broken model.

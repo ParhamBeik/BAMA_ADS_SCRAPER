@@ -10,6 +10,7 @@ x-django-env: &django-env
   # fallback, and a per-process image cache in a multi-worker stack is
   # indistinguishable from no cache at all when you are testing one.
   REDIS_URL: redis://redis:6379/0
+  ML_ARTIFACT_DIR: /artifacts
 
 x-logging: &logging
   driver: json-file
@@ -58,7 +59,8 @@ services:
     logging: *logging
     env_file: [{ path: .env, required: false }]
     environment: *django-env
-    volumes: [.:/app]
+    # Read-only on the artifacts, as in production: only `ml` writes a model.
+    volumes: [.:/app, ml_artifacts:/artifacts:ro]
     ports: ["8001:8000"]
     depends_on:
       postgres: { condition: service_healthy }
@@ -98,13 +100,34 @@ services:
     logging: *logging
     env_file: [{ path: .env, required: false }]
     environment: *django-env
-    volumes: [.:/app]
+    volumes: [.:/app, ml_artifacts:/artifacts:ro]
     depends_on:
       # Waits for django, not postgres: django owns `migrate`, and the worker
       # must not fetch against a half-migrated schema.
       django: { condition: service_healthy }
     command: sh deploy/worker.sh
 
+  # The trainer. Same image, different command, and the only writable mount on
+  # the artifact volume. `profiles` keeps it out of a plain `docker compose up`:
+  # a fit needs a few thousand ads to be worth running and a fresh dev database
+  # has none, so it would loop refusing. Start it deliberately:
+  #
+  #     docker compose --profile ml up ml
+  #     docker compose run --rm ml sh deploy/train.sh once
+  ml:
+    build: .
+    container_name: bama-ml
+    profiles: [ml]
+    restart: unless-stopped
+    logging: *logging
+    env_file: [{ path: .env, required: false }]
+    environment: *django-env
+    volumes: [.:/app, ml_artifacts:/artifacts]
+    depends_on:
+      django: { condition: service_healthy }
+    command: sh deploy/train.sh
+
 volumes:
   postgres_data:
   frontend_node_modules:
+  ml_artifacts:

@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     "apps.accounts",
     "apps.core",
     "apps.jobs",
+    "apps.ml",
 ]
 
 MIDDLEWARE = [
@@ -268,6 +269,12 @@ BAMA_COVERAGE_CHUNK_PAGES = int(os.environ.get("BAMA_COVERAGE_CHUNK_PAGES", "120
 # Episodes that started before this date have untrustworthy end dates and are
 # excluded from survival analysis. Set it to the date rolling coverage went live.
 BAMA_EPISODE_CLEAN_START = os.environ.get("BAMA_EPISODE_CLEAN_START", "2026-08-14")
+
+# Where trained model artifacts are written and read. The `ml` service mounts
+# this volume read-write and every other service mounts it read-only: exactly one
+# process may write a model, and a web worker that could overwrite an artifact
+# is a web worker that can change what every reader is told without a deploy.
+ML_ARTIFACT_DIR = Path(os.environ.get("ML_ARTIFACT_DIR", BASE_DIR / "data" / "ml"))
 
 # Telegram bot token for the deal notifier. The chat id lives in NotifierSettings
 # (editable from the deal board); the token is a secret and stays in the env.

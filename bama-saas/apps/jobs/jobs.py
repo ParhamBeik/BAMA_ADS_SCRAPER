@@ -551,6 +551,36 @@ def alerts(*, dry_run: bool = False) -> dict:
     return deliver_alerts(dry_run=dry_run)
 
 
+def ml_train(*, only: str | None = None) -> dict:
+    """Refit the learned models and let the promotion gate decide what goes live.
+
+    A job like every other one, so "did last night's retrain run, and what did
+    it score?" is a ``JobRun`` query rather than a container-log excavation —
+    the provenance mechanism already exists and this costs nothing to reuse.
+
+    Imported inside the function on purpose: ``apps.ml.train`` reaches for
+    LightGBM and scikit-learn, which live in their own optional extra, and the
+    worker must still start on a host that has not installed them. It refuses
+    with a reason instead.
+    """
+    from apps.ml.train import train_all
+
+    return train_all(only=only)
+
+
+def ml_score(*, limit: int | None = None) -> dict:
+    """Rescore the live catalogue with whatever models are ACTIVE.
+
+    Must follow ``deal_scores`` for the same reason ``alerts`` does — the two
+    tables are read side by side on one card, and a prediction written against
+    a board the rebuild has since replaced is a disagreement the reader gets
+    blamed for noticing.
+    """
+    from apps.ml.inference import score_all
+
+    return score_all(limit=limit)
+
+
 SOLD_PROBE_BATCH = int(os.environ.get("BAMA_SOLD_PROBE_ADS", "20"))
 SOLD_PROBE_TTL = 6 * 60 * 60
 SOLD_PROBE_KEY = "sold_probe:{code}"

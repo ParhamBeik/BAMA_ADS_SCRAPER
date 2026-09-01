@@ -31,5 +31,8 @@ urlpatterns = [
     # The raw payload that used to ride along on every public ad response.
     path("api/admin/ads/<str:code>/provenance/", jobs_views.ad_provenance,
          name="ad-provenance"),
+    # Before `core`, which registers a DefaultRouter at `api/ads/` whose
+    # catch-all detail route would otherwise swallow `api/ads/<code>/prediction/`.
+    path("api/", include("apps.ml.urls")),
     path("api/", include("apps.core.urls")),
 ]

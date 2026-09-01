@@ -34,6 +34,11 @@ const Budget = lazy(() =>
 const Alerts = lazy(() =>
   import("./pages/Alerts").then((m) => ({ default: m.Alerts })),
 );
+// Lazy like the rest: it is a page a reader opens once to understand the
+// numbers, not one they live on, and it carries a page of Persian prose.
+const Methodology = lazy(() =>
+  import("./pages/Methodology").then((m) => ({ default: m.Methodology })),
+);
 
 export function App() {
   const { user, loading } = useAuth();
@@ -133,6 +138,7 @@ function AppShell() {
           <Route path="/analyse" element={<Lazy><Analyse /></Lazy>} />
           <Route path="/budget" element={<Lazy><Budget /></Lazy>} />
           <Route path="/alerts" element={<Lazy><Alerts /></Lazy>} />
+          <Route path="/methodology" element={<Lazy><Methodology /></Lazy>} />
           <Route path="/saved" element={<Saved />} />
           <Route path="/listing/:code" element={<ListingDetail />} />
           <Route

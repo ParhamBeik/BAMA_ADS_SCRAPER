@@ -32,6 +32,9 @@ x-django-env: &django-env
   BAMA_COOKIE: ${BAMA_COOKIE:-}
   BAMA_TELEGRAM_TOKEN: ${BAMA_TELEGRAM_TOKEN:-}
   REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+  # Where trained model artifacts live. Every service agrees on the path; they
+  # disagree on whether the mount is writable — see the `ml` service below.
+  ML_ARTIFACT_DIR: /artifacts
 
 services:
   postgres:
@@ -78,7 +81,13 @@ services:
     restart: unless-stopped
     logging: *logging
     environment: *django-env
-    volumes: [staticfiles:/app/staticfiles]
+    # `:ro` on the artifacts, and it is load-bearing rather than tidiness. A web
+    # worker that can overwrite a model file can change what every reader is
+    # told without a deploy, a migration or a registry row — and the registry is
+    # the only record of which model produced which number.
+    volumes:
+      - staticfiles:/app/staticfiles
+      - ml_artifacts:/artifacts:ro
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -117,14 +126,44 @@ services:
     restart: unless-stopped
     logging: *logging
     environment: *django-env
+    # Read-only too: the worker *scores* with the models (`ml_score` on the hot
+    # tick) but never fits one. Only `ml` writes here.
+    volumes: [ml_artifacts:/artifacts:ro]
     depends_on:
       django: { condition: service_healthy }
     command: sh deploy/worker.sh
     networks: [internal]
 
+  # Training. Same image tag as django and worker — one build to verify, one set
+  # of dependencies — with a different command and the only writable mount on
+  # the artifact volume.
+  #
+  # Separate from `worker` because this is the one job here that saturates a CPU
+  # for minutes rather than seconds, and on a VPS running three stacks that
+  # would otherwise show up as the crawl mysteriously slowing down. `cpus`
+  # caps it so a fit cannot starve gunicorn even so.
+  ml:
+    build: .
+    container_name: bama-ml
+    restart: unless-stopped
+    logging: *logging
+    environment: *django-env
+    volumes: [ml_artifacts:/artifacts]
+    depends_on:
+      django: { condition: service_healthy }
+    command: sh deploy/train.sh
+    deploy:
+      resources:
+        limits: { cpus: "${ML_CPUS:-1.5}", memory: "${ML_MEMORY:-1500m}" }
+    networks: [internal]
+
 volumes:
   postgres_data:
   staticfiles:
+  # Trained models. Not backed up and it does not need to be: every artifact is
+  # reproducible from the database by one `bama train`, and a missing file makes
+  # inference refuse rather than fail — see `registry.load`.
+  ml_artifacts:
 
 networks:
   internal:

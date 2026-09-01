@@ -42,7 +42,12 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - run: pip install -e ".[test]"
+      # `ml` as well as `test`: the learned models have a promotion gate, a
+      # calibration check and a refusal threshold, and none of that is worth
+      # having if CI cannot run it. The two extras are named explicitly rather
+      # than `test` depending on `ml`, because the Dockerfile reads these lists
+      # with tomllib and a self-referential extra would send it to PyPI.
+      - run: pip install -e ".[test,ml]"
 
       # A model change without a migration passes every test and then breaks the
       # deploy, because the container runs `migrate` against a schema that no

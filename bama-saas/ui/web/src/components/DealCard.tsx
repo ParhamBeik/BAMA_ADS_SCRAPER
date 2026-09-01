@@ -13,7 +13,7 @@
  * bargain, and the colour has to carry that before any label is read.
  */
 import { Link } from "react-router-dom";
-import { AlertTriangle, Timer } from "lucide-react";
+import { AlertTriangle, Sparkles, Timer } from "lucide-react";
 import {
   BamaLink, ConfidenceDots, Fa, Thumb, km, pct, toman,
 } from "@/ui";
@@ -47,6 +47,13 @@ export interface Deal {
     n: number;
     window_days: number;
   } | null;
+  /** What the learned models said, or null when nothing has scored this ad. */
+  ml?: {
+    price_p50: number | null;
+    residual_pct: number | null;
+    anomaly_kind: string | null;
+    sell_fast_prob: number | null;
+  } | null;
 }
 
 /**
@@ -64,6 +71,25 @@ export function liquidityNote(deal: Pick<Deal, "liquidity">): string | null {
   const l = deal.liquidity;
   if (!l) return null;
   return `${Math.round(l.left_pct)}٪ از این مدل ظرف ${l.window_days} روز از باما برداشته می‌شوند (از ${l.n} آگهی)`;
+}
+
+/**
+ * The model's own reading, shown only when it has actually picked this car out.
+ *
+ * The ribbon is the gap to the peer median and it means that on every board —
+ * changing what it means per tab is exactly the drift this codebase keeps
+ * fixing. But on the `ml` tab that produced a card ribboned "0%" sitting in a
+ * list of listings the model called underpriced, which reads as a bug. So the
+ * second reading gets its own line rather than overwriting the first, and it
+ * appears only on the rows the model flagged: 20 of 1,895 on the last scoring
+ * run, so it is a signal and not another number on every card.
+ */
+export function modelNote(deal: Pick<Deal, "ml">): string | null {
+  const ml = deal.ml;
+  if (!ml || ml.anomaly_kind !== "underpriced_candidate" || ml.residual_pct == null) {
+    return null;
+  }
+  return `${Math.round(ml.residual_pct)}٪ زیر برآورد مدل یادگیرنده`;
 }
 
 /** "۰ روز در بازار" is technically right and reads like a bug. */
@@ -152,6 +178,14 @@ export function DealCard({ deal, suspect }: { deal: Deal; suspect: boolean }) {
             <span className="stat-sub" title={liquidityNote(deal) ?? undefined}>
               <Timer size={11} /> {Math.round(deal.liquidity.left_pct)}٪ ظرف{" "}
               {deal.liquidity.window_days} روز از بازار خارج می‌شوند
+            </span>
+          </div>
+        )}
+        {modelNote(deal) && (
+          <div className="row">
+            <span className="stat-sub"
+                  title="برآورد مدل یادگیرنده — کارکرد، وضعیت بدنه، شهر و نوع فروشنده را هم می‌بیند، برخلاف میانه‌ی آگهی‌های مشابه که فقط مدل، تیپ و سال را می‌شناسد.">
+              <Sparkles size={11} /> {modelNote(deal)}
             </span>
           </div>
         )}

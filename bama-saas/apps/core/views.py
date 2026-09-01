@@ -68,6 +68,7 @@ from apps.jobs.fetcher import (
 )
 from apps.jobs.parsing import absolute_ad_url
 from apps.jobs.verify import MAX_JALALI_YEAR, MIN_JALALI_YEAR
+from apps.ml.models import AdPrediction
 
 # Bumped whenever a formula changes, so a screenshotted answer can be traced to
 # the logic that produced it.
@@ -611,7 +612,35 @@ def _deal_score_row(obj, *, now=None):
         # Null when there is not enough clean history — never zero, which would
         # read as "nothing sells".
         "liquidity": components.get("liquidity"),
+        # What the learned models said about this car, or nothing at all. It
+        # rides beside the peer median and never replaces it: the discount badge
+        # is still measured against `peer_median`, and this is a second,
+        # independent account the reader can hold up against it. Absent whenever
+        # no model is ACTIVE — a missing estimate must not render as a zero one.
+        "ml": _ml_row(getattr(obj.ad, "ml", None)),
         "components": components,
+    }
+
+
+def _ml_row(prediction) -> dict | None:
+    """The learned columns for one ad, or ``None`` if it was never scored.
+
+    Deliberately a narrow selection rather than the whole row: the SHAP
+    decomposition is six entries per car and the board renders 50 at a time, so
+    it is fetched on the detail endpoint where it is actually drawn.
+    """
+    if prediction is None or prediction.price_p50 is None:
+        return None
+    return {
+        "price_p10": prediction.price_p10,
+        "price_p50": prediction.price_p50,
+        "price_p90": prediction.price_p90,
+        "residual_pct": prediction.residual_pct,
+        "anomaly_kind": prediction.anomaly_kind or None,
+        "sell_fast_prob": prediction.sell_fast_prob,
+        "sell_fast_horizon_days": prediction.sell_fast_horizon_days,
+        "value_tier": prediction.value_tier or None,
+        "value_tier_rank": prediction.value_tier_rank,
     }
 
 
@@ -634,7 +663,10 @@ def _deal_score_qs(*, now=None, by_freshness: bool = True):
     # so between an ad going bad and the next rebuild its stale score is still
     # served — and a deal score is the most acted-upon number on the site.
     qs = (
-        verified_by_ad(DealScoreCache.objects.select_related("ad", "ad__city"))
+        # `ad__ml` in the same select_related: without it, rendering 50 rows
+        # each reaching for its prediction is 50 extra queries — the N+1 this
+        # board already pays `ad__city` to avoid.
+        verified_by_ad(DealScoreCache.objects.select_related("ad", "ad__city", "ad__ml"))
         .annotate(model_name=F("ad__model__name_fa"), brand_name=F("ad__brand__name_fa"))
     )
     # Tie-break on ad_id in both orders: hundreds of rows share a score to one
@@ -648,7 +680,7 @@ def _deal_score_qs(*, now=None, by_freshness: bool = True):
     )
 
 
-BANDS = ("top", "all", "review")
+BANDS = ("top", "all", "review", "ml")
 
 
 @api_view(["GET"])
@@ -702,15 +734,29 @@ def deal_scores(request):
 
     now = timezone.now()
     window = pricing.deal_window(now=now)
-    qs = _deal_score_qs(now=now, by_freshness=band != "review")
+    qs = _deal_score_qs(now=now, by_freshness=band not in ("review", "ml"))
     cutoff = now - timedelta(days=window["window_days"])
 
     # "The gap has a cause this score cannot see" — once as a threshold on the
     # discount, once as the seller's own declaration. Built as one predicate so
-    # the three bands cannot drift into overlapping or leaving a row homeless.
+    # the bands cannot drift into overlapping or leaving a row homeless.
     needs_review = Q(discount_pct__gt=window["ceiling_pct"]) | Q(needs_review=True)
     if band == "review":
         qs = qs.filter(needs_review)
+    elif band == "ml":
+        # The learned board. Two things make it a different question from `top`
+        # rather than a re-sort of it: the population is chosen by the model
+        # (below its own predicted p10, and *not* a feature-space outlier), and
+        # the ordering is the model's residual rather than the cohort discount.
+        #
+        # The review exclusion still applies. A car whose cheapness the seller
+        # already explained is not a find, however far under a prediction it
+        # sits — and the model has the condition band as an input, so a
+        # structural-damage listing it still calls underpriced is the case most
+        # likely to be an attribute nothing in the feature set can see.
+        qs = qs.exclude(needs_review).filter(
+            ad__ml__anomaly_kind=AdPrediction.Anomaly.UNDERPRICED,
+        ).order_by("-ad__ml__residual_pct", "ad_id")
     else:
         qs = qs.exclude(needs_review)
         if band == "top":

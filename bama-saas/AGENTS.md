@@ -18,6 +18,11 @@ One module per concern, no `services/` packages, no per-command modules:
 - `apps/accounts/` — user, session auth, and the per-user layer: `Favorite`,
   `Watchlist`, `AlertRule`, `AlertDelivery`. The last three share the
   `ScopedToACar` abstract base.
+- `apps/ml/` — the learned layer, one module per concern: `features.py` (the
+  design matrix, shared by training and inference), `metrics.py` (pure judgement
+  functions), `train.py` (five fits), `registry.py` (artifacts + the promotion
+  gate), `inference.py` (batch scoring), `monitoring.py` (drift), `views.py`.
+  Everything in it degrades to a refusal when the `ml` extra is not installed.
 - `apps/jobs/` — `parsing.py` (no Django import), `fetcher.py` (HTTP + crawl
   gate + coverage arithmetic), `ingest.py`, `verify.py`, `jobs.py` (one function
   per job, each returning a dict), `pipeline.py` (which jobs, in what order),
@@ -315,6 +320,54 @@ schema is independent of the Python layout. Do not remove those pins.
   into Persian. `fair_price` used to build its component `detail` as an English
   sentence, which shipped "median of 13 peers" into a Persian table on the one
   panel whose job is to make the number checkable.
+- **A learned number never replaces a statistical one.** `peer_median` is still
+  what the discount badge is measured against, on every board, including the
+  `band=ml` one. `AdPrediction` sits *beside* it with its own decomposition
+  attached, so a reader gets two independent accounts of the same car and can
+  see where they disagree. `apps/core/pricing.py` opens with the record of what
+  happened the last time a fitted model became the number on the card here
+  (median r² 0.185, negative fair values, 148% "discounts"); that is the reason
+  for the arrangement, not a general suspicion of models.
+- **A model goes live by winning, not by being newest.** `registry.gate` refuses
+  unless the challenger beats **both** the incumbent *and* the statistical
+  baseline on the same time-split holdout, by `PROMOTION_MARGIN`. Beating only
+  the incumbent is how a line of models drifts away from something simpler that
+  was always better. The decision — challenger, incumbent, baseline, verdict —
+  is written to `MLModel.metrics["promotion"]` either way and rendered on
+  `/methodology`, so a model held in shadow is a published result rather than a
+  silence. Rollback is one UPDATE, against a partial unique index that makes
+  "which model is live" have exactly one answer per role.
+- **Splits are by time, never at random.** A random split lets a model see July
+  while predicting June, and the metric it then reports measures memory. The cut
+  is on a *timestamp* rather than a row index, because dealer bulk uploads and
+  reposts put the same car twice in one instant and an index cut would land the
+  pair on opposite sides. Categorical vocabularies are fitted on the training
+  half only — that leak is the one people miss.
+- **A quantile model's band is conformalised before it is published.** Fitted
+  quantiles are estimates of the training distribution's conditional quantiles
+  and carry no allowance for the model's own out-of-sample error, so they are
+  systematically too narrow: measured here at 43% coverage on a p10–p90 band
+  while MAPE looked excellent. `train._conformal_delta` widens by the empirical
+  quantile of the conformity score on a validation split, which buys a
+  finite-sample marginal coverage guarantee with no distributional assumption.
+  `inference` applies the same delta — serving the raw booster output would
+  serve a band that is not the one whose coverage was measured. Coverage more
+  than `COVERAGE_TOLERANCE_PP` off 80% **vetoes** promotion outright: accuracy
+  cannot see a dishonest interval, so it cannot be the only gate.
+- **The text classifier populates a queue; it never edits the catalogue.**
+  `ingest._model` calls `get_or_create` on whatever string Bama sends, so there
+  is no unmapped bucket to fill. The real problem it addresses is
+  *fragmentation* — one car arriving under two spellings mints two `Model` rows
+  and halves a cohort — which is what `ingest.BRAND_PARENT` fixes by hand at the
+  brand level. Remapping a cohort key changes every price on the site, so it
+  stays a staff review queue.
+- **Drift is measured against the scoring population, not against "rows since
+  training".** Ads published after the boundary are all young by construction,
+  so `days_listed` spans a fortnight on that side against two months on the
+  other and PSI read 8.0 on a feature that had not moved — pinning the verdict
+  at "unstable" permanently, which is how a monitor gets ignored. Each side's
+  features are also built against its own clock, or the passage of time itself
+  reads as drift.
 - **Append-only provenance.** `AdVersion` dedups on the *semantic* hash
   (volatile payload paths excluded), `AdObservation` is one row per run per ad,
   `PriceObservation` is one row per actual price change, not per sighting.
@@ -407,7 +460,22 @@ steps from keeping analytics fresh. The exceptions are declared in `DEPENDS_ON`
 — `market_index` after `snapshot`, because a chained index extended over a
 missing snapshot reports the crawler's downtime as a market move; and `alerts`
 after `deal_scores`, because an alert run over an unrebuilt cache would mail out
-yesterday's discounts as today's news. A step whose prerequisite failed is
-recorded `skipped`, which is distinct from both success and silence.
+yesterday's discounts as today's news; and `ml_score` after `deal_scores`, because
+the prediction and the peer median are printed on one card and a reader has no
+way to tell which half is stale. A step whose prerequisite failed is recorded
+`skipped`, which is distinct from both success and silence.
 
 Every step records a `JobRun` either way. Only the network fetch is retried.
+
+`ml_train` is the exception to the "one worker runs everything" rule. It is the
+only step that saturates a CPU for minutes rather than seconds, so it has its
+own cadence (`train`), its own container (`ml` in compose, same image tag,
+different command) and its own loop (`deploy/train.sh`) — inside `worker.sh` a
+LightGBM fit would compete with the fetch tick for cores and show up as the
+crawl mysteriously slowing down. It is deliberately absent from `full` for the
+same reason: that is the command an operator runs to catch up, and it should not
+take minutes.
+
+The artifact volume is mounted **read-write by `ml` alone** and read-only
+everywhere else. A web worker that can overwrite a model file can change what
+every reader is told without a deploy, a migration, or a registry row.

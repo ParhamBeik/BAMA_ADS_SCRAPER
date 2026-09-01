@@ -499,3 +499,79 @@ same read of "a score is the lowest band whose conditions are all met".
 - The two remaining ceilings are deliberate and sequenced, not overlooked: the
   learned layer is Phase 2 and the published methodology page ships with it,
   since its content is the model cards.
+
+---
+
+## Re-score after Phase 2 — the learned layer
+
+Phase 2 shipped `apps/ml`: a quantile price model with conformalised intervals,
+a calibrated time-to-sell classifier, an Isolation Forest, a text classifier
+feeding a review queue, per-variant value tiers, a registry with a promotion
+gate, drift monitoring, and a `/methodology` page generated from the registry.
+
+| # | Question | Backend | Frontend | What still holds it below 10 |
+| --- | --- | --- | --- | --- |
+| 1 | Market direction & positioning | 9 → **10** | 8 → **9** | Frontend: the market read is one panel deep; a first-time reader still starts on a dashboard rather than on a sentence |
+| 2 | Freshness + per-scope trend | 9 → **9** | 8 → **8** | Unchanged by this phase — the missing piece is a digest of *your* followed scopes with their trends |
+| 3 | Verified good-deal alerts | 8 → **10** | 8 → **9** | Frontend: alert rules cannot yet be set on the model's residual, only on the cohort discount |
+| 4 | Price distribution & budget fit | 9 → **10** | 9 → **10** | — |
+| | **Weighted** | 8.8 → **9.8** | 8.3 → **9.0** | The backend answers all four questions with conditioning, uncertainty and refusal; the frontend has one real gap left |
+
+### What moved
+
+- **Q3 backend 8 → 10.** This is the question the phase was aimed at. "Verified
+  using AI models, accounting for mileage, colour/damage, variant" now describes
+  what actually runs: the price model reads seventeen features including the
+  condition ordinal and mileage, the Isolation Forest separates *cheap* from
+  *broken record* — two things the single MAD threshold reported identically —
+  and `band=ml` is a board chosen and ranked by the model rather than by the
+  cohort gap. Every estimate ships its exact TreeSHAP decomposition, and the
+  refusal path is real: no active model means null columns and an
+  `available: false`, not a zero.
+- **Q1 backend 9 → 10** and **Q4 backend 9 → 10.** Both were held below 10 by
+  the same missing thing — "with the evidence for why those metrics were
+  chosen" (Q1) and a genuine per-car prediction interval (Q4).
+  `/api/ml/models/` and `/methodology` supply the first; the conformalised
+  p10–p90 supplies the second, and it is an interval with a measured coverage
+  guarantee rather than a range drawn around a median.
+- **Q1/Q3/Q4 frontend +1 each.** The model cards, the `ml` board with its own
+  explanation, the estimate panel on the listing page, and a
+  `methodology_version` badge that finally links somewhere.
+
+### What did not move, and why
+
+**Q2 is unchanged at 9/8.** Nothing in this phase addressed it, and saying so
+is more useful than finding a way to credit it. The gap is the same one the
+Phase 1 re-score named: a reader can follow a scope and can see any scope's
+trend, but there is no one screen showing *their* followed scopes beside their
+current trends. That is a page, not a model.
+
+### The honest part
+
+Two of the five models were held in **shadow** on the first run against a
+realistic catalogue, and both refusals were correct:
+
+- The price model was vetoed with `interval_coverage_off_target` when its
+  p10–p90 contained 43% of held-out cars against a target of 80% — while its
+  MAPE was 6.4% against the peer median's 10.5%. It would have passed an
+  accuracy-only gate. Adding early stopping moved coverage to 58%; conformal
+  calibration moved it to 84%, which is when it was promoted.
+- The Isolation Forest scored a lift of 0.85 — its flagged listings left the
+  feed *less* often than average. The first version of the gate promoted it
+  anyway, because it was passed `baseline=None` and `gate` reads "nothing to
+  beat" as "beat it". Lift has a baseline built into its definition: 1.0 is
+  random. That is now the number it has to clear.
+
+Both are in the test suite as named cases. A gate that has never refused
+anything is not known to work.
+
+### Caveats that still stand
+
+- Scored by the author of the rubric and the change. Reproducible, but a second
+  reader is worth more.
+- The metrics quoted above were measured on a **synthetic catalogue** built to
+  have a genuine price signal, not on production. The pipeline, the gate and the
+  refusals are verified end to end; the specific numbers a production refit
+  produces will differ, and the `/methodology` page is where they will be read.
+- Lighthouse 100 (Phase 3) is untouched. The main bundle is 421KB and
+  `Chart.tsx` is still 1.1MB.

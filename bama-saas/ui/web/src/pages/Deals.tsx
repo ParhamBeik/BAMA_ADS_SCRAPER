@@ -295,11 +295,25 @@ function BandedGrid({ rows, ceiling }: { rows: Deal[]; ceiling: number }) {
 // `review` are excluded from it by design. The label used to say «همه آگهی‌ها»,
 // which promised a superset the tab never returned — 26 listings were missing
 // from it with nothing on screen to account for them.
+//
+// `ml` is a different question, not a re-sort of `top`. The other three rank on
+// the gap to the cohort median — a key of (model, trim, year) that cannot see
+// mileage, damage, city or who is selling. This one holds only listings the
+// price model puts below its own predicted p10, ordered by that gap. The two
+// disagree often, and where they disagree is the interesting part, so the
+// board keeps both rather than replacing one with the other.
 const TABS: { id: string; label: string }[] = [
   { id: "top", label: "پیشنهادهای برتر" },
   { id: "all", label: "بقیه معامله‌ها" },
+  { id: "ml", label: "به تشخیص مدل" },
   { id: "review", label: "نیازمند بررسی" },
 ];
+
+/** What the `ml` tab is, in one line, because the label cannot carry it. */
+const ML_TAB_NOTE =
+  "آگهی‌هایی که مدل یادگیرنده قیمتشان را پایین‌تر از پیش‌بینی خودش می‌داند. " +
+  "برخلاف بقیه‌ی زبانه‌ها، این تخمین کارکرد، وضعیت بدنه، شهر و نوع فروشنده را " +
+  "هم در نظر می‌گیرد. مبنای درصد تخفیف روی کارت‌ها همچنان میانه‌ی آگهی‌های مشابه است.";
 
 export function Deals() {
   const filters = useFilters();
@@ -375,6 +389,7 @@ export function Deals() {
             میزان تخفیف تنها ترتیب درون هر گروه را تعیین می‌کند.
           </>
         )}
+        {band === "ml" && <>{ML_TAB_NOTE}</>}
         {band === "review" && (
           <>
             دو دسته آگهی که ارزانی‌شان دلیلی دارد بیرون از این محاسبه. نخست
@@ -421,12 +436,16 @@ export function Deals() {
             return (
               <>
                 {view === "cards" ? (
-                  band === "review" ? (
-                    // The review tab is ranked by discount, not by freshness,
-                    // so banding it would draw groups the order does not follow.
+                  band === "review" || band === "ml" ? (
+                    // Neither of these is ranked by freshness — `review` by
+                    // discount and `ml` by the model's residual — so banding
+                    // them would draw groups the order does not follow, and
+                    // the server sends no freshness rank for either, which
+                    // would silently pile every row under "over two weeks".
                     <div className="card-grid">
                       {rows.map((d) => (
-                        <DealCard key={d.code} deal={d} suspect />
+                        <DealCard key={d.code} deal={d}
+                                  suspect={band === "review"} />
                       ))}
                     </div>
                   ) : (

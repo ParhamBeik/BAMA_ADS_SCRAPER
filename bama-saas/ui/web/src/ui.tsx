@@ -14,6 +14,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Database, ExternalLink, Heart, X } from "lucide-react";
+import { Link } from "react-router-dom";
 import { ApiError, api, type Envelope, type Paginated } from "./api";
 
 /**
@@ -207,7 +208,7 @@ export function Provenance({
     return (
       <div className="provenance">
         {as_of && <span>تا {new Date(as_of).toLocaleString("fa-IR")}</span>}
-        {methodology_version != null && <span>· روش محاسبه نسخه {methodology_version}</span>}
+        {methodology_version != null && <MethodologyLink version={methodology_version} />}
       </div>
     );
   }
@@ -247,8 +248,27 @@ export function Provenance({
         </span>
       )}
       {as_of && <span>· تا {new Date(as_of).toLocaleString("fa-IR")}</span>}
-      {methodology_version != null && <span>· روش محاسبه نسخه {methodology_version}</span>}
+      {methodology_version != null && <MethodologyLink version={methodology_version} />}
     </div>
+  );
+}
+
+/**
+ * The version badge, as a link to the page that explains what it is a version of.
+ *
+ * This string has been printed on every research answer on the site since the
+ * envelope shipped, and until the model cards existed it pointed at nothing —
+ * a version number with no document behind it, which is a claim of rigour
+ * rather than evidence of it. Now it goes somewhere.
+ */
+function MethodologyLink({ version }: { version: number }) {
+  return (
+    <span>
+      ·{" "}
+      <Link to="/methodology" title="روش محاسبه اعداد این صفحه">
+        روش محاسبه نسخه {version}
+      </Link>
+    </span>
   );
 }
 
@@ -440,6 +460,19 @@ function humanReason(reason?: string): string {
       return "این آگهی ناشناخته است یا از بررسی صحت داده عبور نکرده است.";
     case "no_price_baseline":
       return "مبنای قیمتی قابل استفاده‌ای برای این دسته وجود ندارد.";
+    // The learned layer refuses in three distinguishable ways, and the
+    // difference matters to whoever is reading: one is a deployment state, one
+    // is a decision the promotion gate made, and one is just "not yet".
+    case "ml_unavailable":
+      return "لایه‌ی یادگیرنده روی این نصب فعال نیست.";
+    case "no_active_model":
+      return "هنوز هیچ مدلی از دروازه‌ی ارزیابی عبور نکرده — تا وقتی مدلی از روش آماری فعلی بهتر نباشد، چیزی نمایش داده نمی‌شود.";
+    case "no_models_trained":
+      return "هنوز مدلی آموزش ندیده است.";
+    case "not_scored":
+      return "این آگهی هنوز با مدل‌های فعال امتیازدهی نشده است.";
+    case "insufficient_rows":
+      return "تعداد آگهی‌ها برای آموزش یک مدل قابل اتکا کافی نیست.";
     default:
       return reason ?? "این دسته برای گزارش‌دهی کوچک است.";
   }

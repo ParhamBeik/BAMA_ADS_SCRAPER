@@ -1,14 +1,16 @@
 """``manage.py bama <what>`` — the one entry point for every scheduled job.
 
-``<what>`` is either a cadence (hot / warm / coverage / maintenance / full) or a
-single job name (fetch, snapshot, prune, health, …). Exits non-zero if anything
-failed, so cron and the worker loop can gate on it.
+``<what>`` is either a cadence (hot / warm / coverage / maintenance / train /
+full) or a single job name (fetch, snapshot, prune, health, …). Exits non-zero
+if anything failed, so cron and the worker loop can gate on it.
 
     manage.py bama hot
     manage.py bama coverage --since-hours 24
     manage.py bama fetch --mode full --max-ads 50000
     manage.py bama health --json
     manage.py bama probe_depth      # where does bama.ir actually stop?
+    manage.py bama train --json     # refit every model, gate, rescore
+    manage.py bama ml_train --only price --json
 """
 
 from __future__ import annotations
@@ -51,6 +53,9 @@ class Command(BaseCommand):
         parser.add_argument("--days", type=int, default=None,
                             help="prune: retention in days. mark_inactive: wall-clock override.")
         parser.add_argument("--limit", type=int, default=None)
+        parser.add_argument("--only", default=None,
+                            help="ml_train: fit one model "
+                                 "(price/sell_fast/anomaly/model_text/value_tier).")
 
     def handle(self, *args, **options):
         what = options["what"]
@@ -69,6 +74,8 @@ class Command(BaseCommand):
                 "episodes": ("limit",),
                 "notify": ("dry_run",),
                 "alerts": ("dry_run",),
+                "ml_train": ("only",),
+                "ml_score": ("limit",),
             }.get(job, ())
             picked = {k: given[k] for k in wanted if k in given and given[k] is not False}
             if job == "fetch":

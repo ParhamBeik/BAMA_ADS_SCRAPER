@@ -25,6 +25,26 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# The learned layer. Kept as its own extra so the dependency weight is a
+# deliberate choice rather than something the web app grew by accident, and so
+# `apps/ml` can be imported (and refuse) on a host that does not have it.
+#
+# No `shap`: LightGBM computes exact TreeSHAP itself via
+# `predict(..., pred_contrib=True)`, which is the same algorithm and the same
+# numbers without pulling numba in behind it. No `pandas` either — the feature
+# matrix is built straight out of `values_list` into a numpy array, and a
+# DataFrame in between would be 50MB of dependency doing a transpose.
+ml = [
+    "numpy>=1.26",
+    "scikit-learn>=1.5",
+    "lightgbm>=4.5",
+    "joblib>=1.4",
+]
+#
+# Not folded into `test` as a self-referential `bama-saas[ml]`: the Dockerfile
+# reads these lists with tomllib and pip-installs the strings verbatim, so a
+# self-reference would send it to PyPI for a package that only exists here.
+# CI and the image both name the two extras explicitly instead.
 test = ["pytest>=8.2", "pytest-django>=4.8"]
 dev = ["pytest>=8.2", "pytest-django>=4.8", "ruff>=0.6"]
 

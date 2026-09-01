@@ -338,7 +338,31 @@ table { width: 100%; border-collapse: collapse; }
 th, td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--border); }
 th { color: var(--muted); font-weight: 600; font-size: 12px; white-space: nowrap; }
 tbody tr:hover { background: var(--panel-2); }
-td.num, th.num { text-align: end; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+/* `direction: ltr`, not the inherited RTL, and it is a correctness fix rather
+   than a stylistic one: the page direction puts a leading minus sign at the
+   *visual end* of the run, so -4.5% renders as "4.5%-". A reader scanning a
+   column of gains and losses sees the sign after the magnitude, or misses it.
+   `text-align: left` reproduces exactly what `text-align: end` resolved to
+   under RTL, so nothing moves — only the sign lands where it belongs. Applied
+   to `.num` alone: these cells hold one number and no Persian text, so there
+   is no bidi run for the override to disturb. */
+td.num, th.num {
+  direction: ltr;
+  text-align: left;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A two-column label/number table inside a card — model cards on the
+   methodology page, and the prediction breakdown on a listing. Not the main
+   `table`: that one is a data grid with a header row and hover rows, and these
+   are four facts stacked in a corner of a card, where a hover highlight and
+   12px header treatment read as a control the reader can click. */
+.mini-table { font-size: 12.5px; }
+.mini-table td { padding: 4px 8px; border-bottom: 1px solid var(--border); }
+.mini-table tbody tr:last-child td { border-bottom: none; }
+.mini-table tbody tr:hover { background: none; }
+.mini-table td:first-child { color: var(--muted); }
 
 /* --- states --------------------------------------------------------------- */
 
@@ -421,6 +445,9 @@ td.num, th.num { text-align: end; font-family: var(--font-mono); font-variant-nu
 .spec-list { display: grid; grid-template-columns: 1fr 1fr; gap: 0.35rem; padding: 0; list-style: none; }
 .price { font-family: var(--font-mono); font-size: 1.4rem; font-weight: 700; }
 .stack { display: grid; gap: 1rem; }
+/* The same thing at the density of one section inside a card, where a full
+   1rem gutter between a heading and its own table reads as two panels. */
+.stack-sm { display: grid; gap: 0.4rem; }
 .row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
 /* Used by the JSX since the rebuild but never defined, so `row between` pushed
    nothing apart and `ghost` de-emphasised nothing. Same failure as var(--card). */

@@ -271,6 +271,11 @@ export function ListingDetail() {
           renders nothing rather than an error. */}
       <DealVerdict code={code} />
 
+      {/* The learned estimate, deliberately *below* the statistical one and
+          never in place of it. Two independent accounts of the same car, and
+          the reader gets to see where they disagree. */}
+      <ModelEstimate code={code} />
+
       <div className="card">
         <h2>تاریخچه قیمت</h2>
         <Async query={history}>
@@ -347,6 +352,146 @@ function DealVerdict({ code }: { code: string }) {
         )}
       </ul>
       <Link className="btn" to="/deals">همه معامله‌ها</Link>
+    </div>
+  );
+}
+
+/** What the learned models say about this car — the band, and what moved it. */
+interface Prediction {
+  available: boolean;
+  reason?: string;
+  price_p10: number;
+  price_p50: number;
+  price_p90: number;
+  residual_pct: number | null;
+  contributions: { feature: string; effect_pct: number | null; base_price?: number }[];
+  anomaly_kind: string | null;
+  sell_fast_prob: number | null;
+  sell_fast_horizon_days: number | null;
+  value_tier: string | null;
+  value_tier_rank: number | null;
+}
+
+/**
+ * Feature names, in the language of the car rather than of the column.
+ *
+ * The API returns machine keys — that is the house rule and it is the right one
+ * — so the mapping to Persian lives here, on the screen that draws it.
+ */
+const FEATURE_LABEL: Record<string, string> = {
+  mileage: "کارکرد",
+  log_mileage: "کارکرد",
+  year_jalali: "سال ساخت",
+  age_years: "سن خودرو",
+  condition_ordinal: "وضعیت بدنه",
+  days_listed: "مدت حضور آگهی",
+  image_count: "تعداد عکس",
+  description_length: "طول توضیحات",
+  seller_authenticated: "احراز هویت فروشنده",
+  is_dealer: "فروشنده نمایشگاهی",
+  brand_id: "برند",
+  model_id: "مدل",
+  variant_id: "تیپ",
+  city_id: "شهر",
+  body_type: "نوع بدنه",
+  fuel: "سوخت",
+  transmission: "گیربکس",
+};
+
+/** Tier 1 of 4 is the cheap, high-mileage end; the last is the clean end. */
+function tierLabel(tier: string | null, rank: number | null): string | null {
+  if (!tier || rank == null) return null;
+  const total = Number(tier.split("_of_")[1] ?? 0);
+  if (!total) return null;
+  if (rank === 0) return "ارزان‌ترین لایه‌ی این تیپ";
+  if (rank === total - 1) return "گران‌ترین و معمولاً تمیزترین لایه‌ی این تیپ";
+  return `لایه‌ی ${rank + 1} از ${total} در این تیپ`;
+}
+
+function ModelEstimate({ code }: { code: string }) {
+  const prediction = useQuery({
+    queryKey: ["ml-prediction", code],
+    enabled: !!code,
+    // An unscored listing is the ordinary case on a fresh database or right
+    // after a rollback, not an error worth retrying.
+    retry: false,
+    queryFn: ({ signal }) =>
+      api.get<Prediction>(`/api/ads/${code}/prediction/`, signal),
+  });
+
+  const p = prediction.data;
+  if (!p?.available) return null;
+  const base = p.contributions.find((c) => c.feature === "_base");
+  const drivers = p.contributions.filter((c) => c.effect_pct != null);
+  const tier = tierLabel(p.value_tier, p.value_tier_rank);
+
+  return (
+    <div className="card">
+      <h2>برآورد مدل یادگیرنده</h2>
+      <p className="stat-sub" style={{ marginTop: 0 }}>
+        این برآورد جای میانه‌ی آگهی‌های مشابه را نمی‌گیرد — کنارش می‌نشیند.
+        تفاوتش این است که کارکرد، وضعیت بدنه، شهر و نوع فروشنده را هم می‌بیند،
+        چیزهایی که کلید «مدل، تیپ، سال» درباره‌شان چیزی نمی‌داند.
+      </p>
+
+      <ul className="spec-list">
+        <li>برآورد میانی: {toman(p.price_p50)}</li>
+        <li>
+          بازه‌ی محتمل: {toman(p.price_p10)} تا {toman(p.price_p90)}
+        </li>
+        {p.residual_pct != null && (
+          <li className={p.residual_pct > 0 ? "up" : undefined}>
+            فاصله‌ی قیمت آگهی تا برآورد: {pct(p.residual_pct)}
+          </li>
+        )}
+        {p.sell_fast_prob != null && p.sell_fast_horizon_days != null && (
+          <li>
+            احتمال برداشته‌شدن ظرف {p.sell_fast_horizon_days} روز:{" "}
+            {pct(p.sell_fast_prob * 100, 0)}
+          </li>
+        )}
+        {tier && <li>{tier}</li>}
+      </ul>
+
+      {p.anomaly_kind === "data_anomaly" && (
+        <p className="badge warn" style={{ marginTop: 8 }}>
+          این آگهی در فضای ویژگی‌ها غیرعادی است — پیش از هر نتیجه‌گیری، خود
+          اطلاعات آگهی را بررسی کنید.
+        </p>
+      )}
+
+      {drivers.length > 0 && (
+        <>
+          <h3 className="card-title" style={{ marginTop: 12 }}>
+            چه چیزی این برآورد را ساخت
+          </h3>
+          <table className="mini-table">
+            <tbody>
+              {base?.base_price != null && (
+                <tr>
+                  <td>نقطه‌ی شروع (میانگین بازار)</td>
+                  <td className="num">{toman(base.base_price)}</td>
+                </tr>
+              )}
+              {drivers.map((c) => (
+                <tr key={c.feature}>
+                  <td>{FEATURE_LABEL[c.feature] ?? c.feature}</td>
+                  <td className={`num ${(c.effect_pct ?? 0) > 0 ? "up" : "down"}`}>
+                    {pct(c.effect_pct, 1)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {/* Said out loud because the arithmetic on screen would not otherwise
+              reconcile, and an unreconcilable table is the failure this
+              codebase rebuilt the discount badge to avoid. */}
+          <p className="muted text-[11px]">
+            سهم‌ها ضرب‌شونده‌اند، نه جمع‌شونده — جمعشان عمداً برابر اختلاف
+            نهایی نمی‌شود. <Link to="/methodology">روش محاسبه</Link>
+          </p>
+        </>
+      )}
     </div>
   );
 }

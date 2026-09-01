@@ -159,9 +159,17 @@ def test_hot_cadence_skips_warm_steps(stub_jobs):
     # `alerts` follows `notify` and precedes nothing: the operator's single
     # Telegram chat and every user's in-app feed read the same board, and
     # neither may be able to fail the other.
+    #
+    # `ml_score` sits directly after `deal_scores` and before everything that
+    # reads the board. The prediction and the peer median are printed on one
+    # card, so scoring against a board the rebuild has since replaced makes the
+    # two disagree with no way for a reader to tell which half is stale.
+    # `ml_train` is deliberately absent: it is minutes of CPU in its own
+    # container, on its own `train` cadence.
     assert [s.name for s in report.steps] == [
-        "mark_inactive", "deal_scores", "probe_sold", "notify", "alerts",
+        "mark_inactive", "deal_scores", "ml_score", "probe_sold", "notify", "alerts",
     ]
+    assert "ml_train" not in seen
 
 
 @pytest.mark.django_db

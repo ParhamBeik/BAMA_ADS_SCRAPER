@@ -428,6 +428,133 @@ export function Control() {
           )}
         </Async>
       </Card>
+
+      <MlHealth />
     </div>
+  );
+}
+
+/**
+ * The learned layer, beside the crawl health rather than on its own screen.
+ *
+ * The three readings fail differently and that is why there are three. Input
+ * drift needs no outcomes at all and is the earliest warning; prediction drift
+ * catches an output distribution moving while the inputs look unchanged; live
+ * error is the ground truth and the slowest. None of them fires anything
+ * automatically — "retrain now" is a judgement about whether the new data is
+ * better, and a threshold that retrains on a drift number alone will happily
+ * refit on a week when the crawler was broken.
+ */
+interface MlReport {
+  available: boolean;
+  reason?: string | null;
+  active: Record<string, number>;
+  shadow: string[];
+  scored_ads: number;
+  models: {
+    name: string; version: number; status: string; training_rows: number;
+    trained_at: string;
+  }[];
+  input_drift: {
+    available: boolean; reason?: string; verdict?: string | null;
+    train_rows?: number; live_rows?: number;
+    features?: { feature: string; psi: number | null; band: string | null }[];
+  };
+  prediction_drift: {
+    available: boolean; reason?: string; scored_rows?: number;
+    live_median_abs_residual_pct?: number; holdout_mape?: number;
+    ratio?: number | null; signed_median_pct?: number;
+  };
+}
+
+const PSI_TONE: Record<string, string> = {
+  stable: "ok", watch: "warn", unstable: "fail",
+};
+
+function MlHealth() {
+  const ml = useQuery({
+    queryKey: ["ml-monitoring"],
+    queryFn: ({ signal }) => api.get<MlReport>("/api/ml/monitoring/", signal),
+    refetchInterval: 60_000,
+  });
+
+  return (
+    <Card title="ml">
+      <Async query={ml}>
+        {(data) => {
+          if (!data.available) {
+            return <p className="muted">{data.reason ?? "ml layer unavailable"}</p>;
+          }
+          const drift = data.input_drift;
+          const pred = data.prediction_drift;
+          return (
+            <div className="grid cols-2">
+              <div className="table-wrap">
+                <table className="table inspect-table">
+                  <tbody>
+                    <tr><th>scored_ads</th><td>{n(data.scored_ads)}</td></tr>
+                    <tr>
+                      <th>active</th>
+                      <td>
+                        {Object.entries(data.active).length
+                          ? Object.entries(data.active)
+                              .map(([k, v]) => `${k} v${v}`).join(", ")
+                          : "—"}
+                      </td>
+                    </tr>
+                    {/* Held in shadow is a result, not a gap. A challenger that
+                        lost to the peer median is the outcome the gate exists
+                        to produce, and it belongs on screen. */}
+                    <tr>
+                      <th>shadow</th>
+                      <td>{data.shadow.length ? data.shadow.join(", ") : "—"}</td>
+                    </tr>
+                    <tr>
+                      <th>live_median_abs_residual</th>
+                      <td>
+                        {pred.available
+                          ? `${pred.live_median_abs_residual_pct}% vs holdout ${pred.holdout_mape}% (x${pred.ratio})`
+                          : pred.reason}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div className="table-wrap">
+                <table className="table inspect-table">
+                  <thead>
+                    <tr>
+                      <th>input drift (PSI)</th>
+                      <th>
+                        {drift.available ? (
+                          <span className={`badge ${PSI_TONE[drift.verdict ?? ""] ?? ""}`}>
+                            {drift.verdict}
+                          </span>
+                        ) : drift.reason}
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(drift.features ?? []).map((f) => (
+                      <tr key={f.feature}>
+                        <td><code>{f.feature}</code></td>
+                        <td>
+                          {f.psi == null ? "—" : f.psi}{" "}
+                          {f.band && (
+                            <span className={`badge ${PSI_TONE[f.band] ?? ""}`}>
+                              {f.band}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        }}
+      </Async>
+    </Card>
   );
 }
