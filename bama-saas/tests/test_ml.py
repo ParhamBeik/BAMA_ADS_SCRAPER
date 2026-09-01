@@ -669,3 +669,96 @@ def test_a_deal_row_carries_no_ml_block_when_the_ad_was_never_scored(catalog, st
                                   peer_median=1_100_000_000, components={})
     body = staff_client.get("/api/analytics/deal-scores/?band=all").json()
     assert body["results"][0]["ml"] is None
+
+
+# ===========================================================================
+# Target leakage in the model/text classifier
+#
+# Both of these are regression tests for defects found on production data, not
+# hypotheticals. The first cost the classifier its entire purpose; the second
+# filled the staff review queue with 1,537 ads and zero findings.
+# ===========================================================================
+
+
+def test_the_label_is_stripped_from_the_text_the_classifier_reads():
+    """Bama titles are «brand، model» and the catalogue row is minted from that
+    same model string, so the raw title contains the answer. Left in, the model
+    scores 1.0 by reading it back."""
+    row = {"title": "پژو، 206", "trim": "تیپ 2"}
+    assert "206" in features.text_of(row)
+    assert "206" not in features.text_of(row, exclude="206")
+    assert "تیپ" in features.text_of(row, exclude="206")
+
+
+def test_stripping_the_label_survives_persian_digits_and_spacing():
+    """«۲۰۶» and «206» are one car. If normalisation ran only on one side of the
+    replace, the leak would survive the removal that was supposed to stop it."""
+    row = {"title": "پژو، ۲۰۶", "trim": "تیپ ۵"}
+    assert "206" not in features.text_of(row, exclude="206")
+    assert "۲۰۶" not in features.text_of(row, exclude="206")
+
+
+def test_an_ad_the_classifier_never_learned_is_not_flagged_as_misfiled():
+    """The trainer drops classes below MIN_CLASS_ADS, so a long-tail car is not
+    in `classes_` and the model *cannot* agree with its filing. Every confident
+    guess on one is a false positive, which is how a review queue reached 1,537
+    entries that were all artefacts."""
+    from apps.ml import inference
+
+    class _Pipeline:
+        classes_ = [1, 2]
+
+        def predict_proba(self, texts):
+            import numpy as np
+
+            return np.array([[0.0, 1.0] for _ in texts])
+
+    rows = [{"code": "rare", "model_id": 99, "title": "هیوندای، جنسیس کوپه",
+             "trim": "2.5", "model__name_fa": "جنسیس کوپه"}]
+    predictions = {"rare": AdPrediction(ad_id="rare")}
+    inference._apply_model_text(
+        rows, predictions, {"payload": {"pipeline": _Pipeline(), "threshold": 0.85}})
+    assert predictions["rare"].suspected_model_id is None
+
+
+def test_an_ad_inside_the_vocabulary_is_still_flagged_when_the_text_disagrees():
+    """The guard above must not silence the model on the population it was
+    actually trained to judge."""
+    from apps.ml import inference
+
+    class _Pipeline:
+        classes_ = [1, 2]
+
+        def predict_proba(self, texts):
+            import numpy as np
+
+            return np.array([[0.0, 1.0] for _ in texts])
+
+    rows = [{"code": "known", "model_id": 1, "title": "پژو، 206",
+             "trim": "تیپ 2", "model__name_fa": "206"}]
+    predictions = {"known": AdPrediction(ad_id="known")}
+    inference._apply_model_text(
+        rows, predictions, {"payload": {"pipeline": _Pipeline(), "threshold": 0.85}})
+    assert predictions["known"].suspected_model_id == 2
+    assert predictions["known"].suspected_model_prob == 1.0
+
+
+@pytest.mark.django_db
+def test_an_incumbent_that_measured_a_different_task_is_not_treated_as_a_rival():
+    """Changing what goes into the model changes what the metric means. The
+    leaky classifier scored macro-F1 1.0 by reading the label off the title; no
+    honest successor can beat that, so the gate must decline the comparison
+    rather than hold the fixed model in shadow forever."""
+    MLModel.objects.create(
+        name=MLModel.Name.MODEL_TEXT, version=1, algorithm="tfidf+sgd",
+        status=MLModel.Status.ACTIVE, trained_at=djtz.now(), training_rows=1000,
+        feature_spec={"text": "normalized title + trim"}, metrics={"macro_f1": 1.0},
+        artifact_path="x")
+    same = registry.incumbent_metric(
+        MLModel.Name.MODEL_TEXT, "macro_f1",
+        feature_spec={"text": "normalized title + trim"})
+    changed = registry.incumbent_metric(
+        MLModel.Name.MODEL_TEXT, "macro_f1",
+        feature_spec={"text": "normalized title + trim, filed model name removed"})
+    assert same == 1.0
+    assert changed is None

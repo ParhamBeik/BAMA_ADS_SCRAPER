@@ -350,7 +350,8 @@ def train_price() -> dict:
                   or abs(coverage - 80.0) > COVERAGE_TOLERANCE_PP)
     promoted = registry.promote(record, decision=registry.gate(
         challenger=model_mape,
-        incumbent=registry.incumbent_metric(MLModel.Name.PRICE, "mape"),
+        incumbent=registry.incumbent_metric(MLModel.Name.PRICE, "mape",
+                                             feature_spec=spec.to_json()),
         baseline=mape_b,
         lower_is_better=True, margin=PROMOTION_MARGIN,
         veto=(off_target, "interval_coverage_off_target"),
@@ -527,7 +528,8 @@ def train_sell_fast(*, horizon_days: int = SELL_HORIZON_DAYS) -> dict:
     )
     promoted = registry.promote(record, decision=registry.gate(
         challenger=measured["brier"],
-        incumbent=registry.incumbent_metric(MLModel.Name.SELL_FAST, "brier"),
+        incumbent=registry.incumbent_metric(MLModel.Name.SELL_FAST, "brier",
+                                             feature_spec=spec.to_json()),
         baseline=measured["brier_baseline"],
         lower_is_better=True, margin=PROMOTION_MARGIN,
     ))
@@ -617,7 +619,8 @@ def train_anomaly() -> dict:
     lift = (measured["precision_at_k"] or {}).get("lift")
     promoted = registry.promote(record, decision=registry.gate(
         challenger=lift,
-        incumbent=registry.incumbent_metric(MLModel.Name.ANOMALY, "lift"),
+        incumbent=registry.incumbent_metric(MLModel.Name.ANOMALY, "lift",
+                                             feature_spec=spec.to_json()),
         baseline=RANDOM_LIFT,
         lower_is_better=False, margin=PROMOTION_MARGIN,
     ) if lift else {"promote": False, "reason": "no_measurable_lift",
@@ -654,6 +657,11 @@ MIN_CLASS_ADS = 60
 # a queue nobody trusts is a queue nobody opens.
 SUSPECT_THRESHOLD = 0.85
 
+# Named rather than inlined because the gate compares against it: a stored model
+# whose spec differs from this one measured a different task and is not a score
+# this trainer can be ranked against. See `registry.incumbent_metric`.
+TEXT_FEATURE_SPEC = {"text": "normalized title + trim, filed model name removed"}
+
 
 def train_model_text() -> dict:
     """Character n-grams of the ad title, predicting the catalogue model.
@@ -673,6 +681,15 @@ def train_model_text() -> dict:
     queue, because an automatic remap of a cohort key is exactly the kind of
     change that must be somebody's decision.
 
+    The first version of this got that intent right and the method wrong. It
+    read the raw title, and because ``_model`` mints the catalogue row from the
+    model segment *of that same title*, the label was a substring of the feature
+    in every single live ad. It scored macro-F1 1.0 and produced a review queue
+    of 1,537 ads that were all false positives. A perfect score on a real corpus
+    is not a result, it is a symptom; see ``features.text_of``. The label is now
+    stripped before vectorising, so the model predicts from brand plus trim and
+    has something left to be wrong about.
+
     Character n-grams rather than words: Persian compounds, the ZWNJ and
     inconsistent spacing mean «پژو ۲۰۶» and «پژو۲۰۶» are one car and two word
     tokens. ``normalization.normalize_text`` folds the characters;
@@ -686,7 +703,8 @@ def train_model_text() -> dict:
     from sklearn.metrics import f1_score
     from sklearn.pipeline import make_pipeline
 
-    rows = _rows(_population().exclude(model__isnull=True), extra_fields=("title", "trim"))
+    rows = _rows(_population().exclude(model__isnull=True),
+                 extra_fields=("title", "trim", "model__name_fa"))
     counts = Counter(r["model_id"] for r in rows)
     keep = {mid for mid, n in counts.items() if n >= MIN_CLASS_ADS}
     rows = [r for r in rows if r["model_id"] in keep]
@@ -696,8 +714,13 @@ def train_model_text() -> dict:
                         train_rows=len(train), holdout_rows=len(holdout),
                         classes=len(keep), min_class_ads=MIN_CLASS_ADS)
 
-    x_train = [features.text_of(r) for r in train]
-    x_hold = [features.text_of(r) for r in holdout]
+    # Measured, not assumed: how often the label is literally inside the text.
+    # Recorded on the model card because a future reader looking at the macro-F1
+    # below deserves to know the number that made the previous one meaningless.
+    leaked = sum(1 for r in rows
+                 if features.text_of(r) != features.text_of(r, exclude=r["model__name_fa"]))
+    x_train = [features.text_of(r, exclude=r["model__name_fa"]) for r in train]
+    x_hold = [features.text_of(r, exclude=r["model__name_fa"]) for r in holdout]
     y_train = [r["model_id"] for r in train]
     y_hold = [r["model_id"] for r in holdout]
     # A class present only in the holdout cannot be predicted and would drag
@@ -714,7 +737,11 @@ def train_model_text() -> dict:
         # modified_huber rather than hinge: it is the one SGD loss that gives a
         # usable `predict_proba`, and a threshold on a confidence is the whole
         # mechanism by which this stays a review queue instead of an edit.
-        SGDClassifier(loss="modified_huber", alpha=1e-5, max_iter=25,
+        # max_iter=25 with no tolerance stopped short of convergence, which cost
+        # a point of macro-F1 and — because an under-fit model is badly
+        # calibrated — more than doubled the confident-but-wrong flags reaching
+        # the review queue. It converges before 100; 400 scores identically.
+        SGDClassifier(loss="modified_huber", alpha=1e-5, max_iter=100, tol=1e-4,
                       class_weight="balanced", random_state=0),
     )
     pipeline.fit(x_train, y_train)
@@ -734,6 +761,9 @@ def train_model_text() -> dict:
         "min_class_ads": MIN_CLASS_ADS,
         "macro_f1": round(macro_f1, 4),
         "accuracy": round(float(np.mean(np.array(predicted) == np.array(y_hold))), 4),
+        # Why this model is scored on brand+trim rather than the whole title.
+        "label_leakage_rate": round(leaked / len(rows), 4) if rows else 0.0,
+        "leak_removed": True,
         # The interesting output, not a diagnostic: a pair that is confused in
         # both directions is very often two catalogue rows for one car.
         "top_confusions": [
@@ -746,13 +776,15 @@ def train_model_text() -> dict:
         name=MLModel.Name.MODEL_TEXT,
         algorithm="TfidfVectorizer(char_wb 2-4) + SGDClassifier(modified_huber)",
         payload={"pipeline": pipeline, "threshold": SUSPECT_THRESHOLD},
-        metrics=measured, feature_spec={"text": "normalized title + trim"},
+        metrics=measured,
+        feature_spec=TEXT_FEATURE_SPEC,
         training_rows=len(train), trained_through=train[-1]["publish_at"],
         notes="Flags disagreement with the catalogue into a review queue; never rewrites it.",
     )
     promoted = registry.promote(record, decision=registry.gate(
         challenger=macro_f1,
-        incumbent=registry.incumbent_metric(MLModel.Name.MODEL_TEXT, "macro_f1"),
+        incumbent=registry.incumbent_metric(MLModel.Name.MODEL_TEXT, "macro_f1",
+                                             feature_spec=TEXT_FEATURE_SPEC),
         # The rule-based catalogue is right by construction on the labels it
         # produced — it *is* the label — so there is no independent baseline to
         # beat here, and pretending otherwise would be a comparison of a thing

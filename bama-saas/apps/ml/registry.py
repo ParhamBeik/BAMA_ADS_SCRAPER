@@ -127,10 +127,24 @@ def active(name: str) -> MLModel | None:
     return MLModel.objects.filter(name=name, status=MLModel.Status.ACTIVE).first()
 
 
-def incumbent_metric(name: str, key: str) -> float | None:
-    """The live model's score on one metric, for the gate to beat."""
+def incumbent_metric(name: str, key: str, *, feature_spec: dict | None = None) -> float | None:
+    """The live model's score on one metric, for the gate to beat.
+
+    ``feature_spec`` makes the comparison refuse itself when the challenger no
+    longer reads the same inputs. Two macro-F1 numbers are only rankable if they
+    measure the same task, and changing what goes into the vectoriser changes
+    the task — the model/text classifier scored 1.0 while the ad title still
+    contained the label it was predicting, and no honest successor reading brand
+    and trim alone can ever beat that. Returning ``None`` here makes the gate
+    treat the incumbent as "nothing to beat" and judge the challenger on the
+    baseline and its own merits, which is the only sound thing to do when the
+    two numbers are not the same quantity.
+    """
     current = active(name)
     if current is None:
+        return None
+    if feature_spec is not None and (current.feature_spec or {}) != feature_spec:
+        logger.info("ml.incumbent_incomparable name=%s reason=feature_spec_changed", name)
         return None
     value = (current.metrics or {}).get(key)
     return float(value) if isinstance(value, (int, float)) else None

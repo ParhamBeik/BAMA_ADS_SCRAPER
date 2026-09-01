@@ -89,7 +89,7 @@ def score_all(*, limit: int | None = None) -> dict:
     qs = scorable().order_by("code")
     if limit:
         qs = qs[:limit]
-    rows = list(qs.values(*features.QUERY_FIELDS, "title", "trim"))
+    rows = list(qs.values(*features.QUERY_FIELDS, "title", "trim", "model__name_fa"))
     if not rows:
         return {"scored": 0, "reason": "no_rows"}
 
@@ -270,18 +270,38 @@ def _apply_value_tier(rows, predictions, art) -> None:
 
 
 def _apply_model_text(rows, predictions, art) -> None:
-    """Populate the review queue: text says one model, the catalogue says another."""
+    """Populate the review queue: text says one model, the catalogue says another.
+
+    Two guards, both of which this originally lacked and both of which it needed.
+
+    The label is stripped from the text before the model reads it, exactly as in
+    training — otherwise the classifier simply reads the filed model back off the
+    title and can never disagree with it.
+
+    And an ad filed under a model the classifier never learned is skipped. The
+    trainer keeps only classes with ``MIN_CLASS_ADS`` ads, so a car in the long
+    tail is not in ``classes_`` at all; the model is then *unable* to name it,
+    must pick some sibling, and does so at p=1.000. Without this check every one
+    of those becomes a "suspect" by construction — which is precisely what
+    happened: 1,537 flagged ads in production, 1,537 of them filed under a model
+    outside the vocabulary, 0 real. Disagreement only carries information when
+    agreement was available.
+    """
     if not art:
         return
     import numpy as np
 
     pipeline = art["payload"]["pipeline"]
     threshold = float(art["payload"].get("threshold", 0.85))
-    texts = [features.text_of(r) for r in rows]
+    known = {int(c) for c in pipeline.classes_}
+    scored = [r for r in rows if r["model_id"] in known]
+    if not scored:
+        return
+    texts = [features.text_of(r, exclude=r.get("model__name_fa")) for r in scored]
     probs = pipeline.predict_proba(texts)
     classes = pipeline.classes_
     best = np.argmax(probs, axis=1)
-    for i, r in enumerate(rows):
+    for i, r in enumerate(scored):
         confidence = float(probs[i, best[i]])
         predicted_model = int(classes[best[i]])
         if confidence < threshold or predicted_model == r["model_id"]:

@@ -238,8 +238,8 @@ def build(rows: list[dict], spec: FeatureSpec, *, now: datetime | None = None):
     return matrix, [r["code"] for r in rows]
 
 
-def text_of(row: dict) -> str:
-    """The text the classifier reads for one ad.
+def text_of(row: dict, *, exclude: str | None = None) -> str:
+    """The text the classifier reads for one ad, with the label removed.
 
     Title plus trim, not the description: the description is where sellers write
     prose about tyres and service history, and a classifier trained on it learns
@@ -247,9 +247,27 @@ def text_of(row: dict) -> str:
     normalised through `apps.core.normalization`, which already handles the ZWNJ
     and Arabic/Persian character folding that would otherwise make «پژو» and
     «پژو» two different tokens.
+
+    ``exclude`` is the reason this signature is not just ``(row)``. Bama builds
+    a title as «brand، model» and ``jobs.ingest._model`` mints the catalogue row
+    by ``get_or_create`` on that same model string — so the label is a substring
+    of the title in 100.00% of live ads, and a classifier over the raw title is
+    reading the answer off the page. That is target leakage, and it scored
+    exactly what leakage always scores: macro-F1 1.0, accuracy 1.0, zero
+    confusions across 219 classes and 11,051 holdout rows.
+
+    Passing the filed model name here strips it, leaving brand plus trim — «رنو
+    1.6 لیتر», «لندرور P250» — and turns a lookup back into a prediction. Both
+    sides are normalised before the strip so that digit folding and spacing
+    cannot let «۲۰۶» survive a removal of «206».
     """
     from apps.core.normalization import normalize_text
 
-    return normalize_text(" ".join(
+    text = normalize_text(" ".join(
         part for part in (row.get("title"), row.get("trim")) if part
     ))
+    if exclude:
+        leak = normalize_text(exclude)
+        if leak:
+            text = text.replace(leak, " ")
+    return " ".join(text.split())
