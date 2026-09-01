@@ -762,3 +762,26 @@ def test_an_incumbent_that_measured_a_different_task_is_not_treated_as_a_rival()
         feature_spec={"text": "normalized title + trim, filed model name removed"})
     assert same == 1.0
     assert changed is None
+
+
+@pytest.mark.django_db
+def test_a_growing_category_vocabulary_is_not_a_change_of_task():
+    """`FeatureSpec.to_json` pins the fitted vocabularies and the Jalali year,
+    and both move every night. If those counted as a spec change, every retrain
+    would look incomparable and the incumbent half of the gate would silently
+    stop applying — which is what happened to four of five models the first time
+    this check shipped."""
+    spec = features.fit_spec([], now=djtz.now()).to_json()
+    MLModel.objects.create(
+        name=MLModel.Name.SELL_FAST, version=1, algorithm="lgbm",
+        status=MLModel.Status.ACTIVE, trained_at=djtz.now(), training_rows=1000,
+        feature_spec=spec, metrics={"brier": 0.1}, artifact_path="x")
+
+    grown = {**spec, "vocabularies": {"brand_id": {"7": 0, "8": 1}},
+             "jalali_year": spec["jalali_year"] + 1}
+    assert registry.incumbent_metric(
+        MLModel.Name.SELL_FAST, "brier", feature_spec=grown) == 0.1
+
+    fewer = {**spec, "columns": spec["columns"][:-1]}
+    assert registry.incumbent_metric(
+        MLModel.Name.SELL_FAST, "brier", feature_spec=fewer) is None

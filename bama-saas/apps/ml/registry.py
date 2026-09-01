@@ -127,6 +127,21 @@ def active(name: str) -> MLModel | None:
     return MLModel.objects.filter(name=name, status=MLModel.Status.ACTIVE).first()
 
 
+# Parts of a stored feature spec that describe *this fit* rather than *the
+# task*. `FeatureSpec.to_json` pins the fitted category vocabularies and the
+# Jalali year it was built against, and both move every night as new brands and
+# cities arrive. Comparing them would make every retrain look like a different
+# task and quietly switch off the incumbent half of the promotion gate — which
+# is exactly what the first version of this check did to four of the five
+# models. What defines the task is which columns go in, not what was in them.
+FITTED_SPEC_KEYS = ("vocabularies", "jalali_year")
+
+
+def task_signature(spec: dict | None) -> dict:
+    """The part of a feature spec that says what problem is being solved."""
+    return {k: v for k, v in (spec or {}).items() if k not in FITTED_SPEC_KEYS}
+
+
 def incumbent_metric(name: str, key: str, *, feature_spec: dict | None = None) -> float | None:
     """The live model's score on one metric, for the gate to beat.
 
@@ -143,7 +158,8 @@ def incumbent_metric(name: str, key: str, *, feature_spec: dict | None = None) -
     current = active(name)
     if current is None:
         return None
-    if feature_spec is not None and (current.feature_spec or {}) != feature_spec:
+    if (feature_spec is not None
+            and task_signature(current.feature_spec) != task_signature(feature_spec)):
         logger.info("ml.incumbent_incomparable name=%s reason=feature_spec_changed", name)
         return None
     value = (current.metrics or {}).get(key)
