@@ -238,6 +238,12 @@ class Ad(models.Model):
     # Verification rules this row failed (apps/jobs/verify.py); empty == clean.
     # Recomputed from the payload on every observation.
     quality_flags = models.JSONField(default=list, blank=True)
+    # Set by a human on the review queue, never by a job. A listing whose record
+    # is broken beyond what any rule catches — a joke price, a dealer's template
+    # ad, a duplicate — poisons every median it sits in, and there was no way to
+    # say so short of deleting it. Excluded rows stay visible and keep their
+    # history; they simply stop voting.
+    excluded_from_analytics = models.BooleanField(default=False, db_index=True)
     # Verdicts from the cohort pass, kept apart from quality_flags precisely
     # because those are recomputed every tick and would erase these. Also a
     # different kind of statement: quality_flags judges the row, this judges the

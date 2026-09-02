@@ -25,6 +25,7 @@ sit beside it.
 
 from __future__ import annotations
 
+from django.conf import settings
 from django.db import models
 
 from apps.core.models import Ad
@@ -178,3 +179,50 @@ class AdPrediction(models.Model):
 
     def __str__(self) -> str:
         return f"{self.ad_id} p50={self.price_p50}"
+
+
+class ReviewDecision(models.Model):
+    """A human's verdict on something a model flagged.
+
+    Two jobs, and they are deliberately the same row. It records the outcome so
+    a queue does not re-present a case somebody already settled, and it is the
+    only source of *labelled* data this project has — every other label here is
+    either the catalogue's own value or a rule's output, so a reviewer saying
+    "no, that one is fine" is genuinely new information.
+
+    The flag is identified by ``kind`` rather than by a foreign key to a
+    prediction: ``AdPrediction`` rows are deleted and rebuilt wholesale on every
+    scoring tick, and a decision that vanished when the scorer next ran would be
+    worse than not recording it. An ad code survives rescoring.
+    """
+
+    class Kind(models.TextChoices):
+        SUSPECT_MODEL = "suspect_model", "Filed under the wrong model"
+        DATA_ANOMALY = "data_anomaly", "The record itself looks broken"
+
+    class Verdict(models.TextChoices):
+        CONFIRMED = "confirmed", "The model was right"
+        REJECTED = "rejected", "The model was wrong"
+
+    ad = models.ForeignKey("core.Ad", on_delete=models.CASCADE,
+                           related_name="review_decisions")
+    kind = models.CharField(max_length=32, choices=Kind.choices)
+    verdict = models.CharField(max_length=16, choices=Verdict.choices)
+    # What the model claimed at the time. Kept as a snapshot because the next
+    # retrain may change its mind, and a decision has to stay interpretable
+    # against what was actually on screen when somebody made it.
+    claim = models.JSONField(default=dict, blank=True)
+    note = models.TextField(blank=True)
+    reviewer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+                                 blank=True, related_name="ml_review_decisions")
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = "ml_reviewdecision"
+        constraints = [
+            # One standing decision per (ad, kind). Re-reviewing overwrites.
+            models.UniqueConstraint(fields=("ad", "kind"), name="one_decision_per_flag"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.ad_id} {self.kind}={self.verdict}"

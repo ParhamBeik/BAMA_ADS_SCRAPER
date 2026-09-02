@@ -430,6 +430,7 @@ export function Control() {
       </Card>
 
       <MlHealth />
+      <ReviewQueue />
     </div>
   );
 }
@@ -552,6 +553,129 @@ function MlHealth() {
                 </table>
               </div>
             </div>
+          );
+        }}
+      </Async>
+    </Card>
+  );
+}
+
+
+type ReviewRow = {
+  code: string;
+  title: string;
+  filed_under: { id: number | null; name: string | null; brand: string | null };
+  suspected: { id: number; name: string; brand: string };
+  confidence: number | null;
+  excluded_from_analytics?: boolean;
+};
+
+/**
+ * The one screen where a human answers back.
+ *
+ * Every other number in this app is produced by a rule or a model. This is the
+ * only place a person contributes a label, which makes it the only source of
+ * genuinely new supervision the project has — so the verdict is recorded even
+ * when it is "the model was wrong", because that is the more informative half.
+ *
+ * Confirming a misfiling does *not* move the ad. Reassigning a catalogue model
+ * changes the cohort key every price on the site is computed from, and that is
+ * a bigger action than this queue should offer; the verdict is the record that
+ * somebody looked, and the label the next retrain can learn from.
+ */
+function ReviewQueue() {
+  const qc = useQueryClient();
+  const queue = useQuery({
+    queryKey: ["ml-review-queue"],
+    queryFn: ({ signal }) =>
+      api.get<{ available: boolean; count: number; settled?: number; results: ReviewRow[] }>(
+        "/api/ml/review-queue/", signal),
+  });
+  const decide = useMutation({
+    mutationFn: (v: { code: string; verdict?: string; exclude?: boolean }) =>
+      api.post(`/api/ml/review-queue/${v.code}/`, {
+        kind: "suspect_model", verdict: v.verdict, exclude: v.exclude,
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["ml-review-queue"] }),
+  });
+
+  return (
+    <Card title="review queue">
+      <Async query={queue}>
+        {(data) => {
+          if (!data.results?.length) {
+            return (
+              <p className="muted">
+                nothing pending{data.settled ? ` — ${n(data.settled)} settled` : ""}
+              </p>
+            );
+          }
+          return (
+            <>
+              <p className="muted">
+                {n(data.count)} pending{data.settled ? `, ${n(data.settled)} settled` : ""}
+                {" — "}the classifier reads brand and trim with the filed model name
+                removed, so a disagreement means the rest of the ad points elsewhere.
+              </p>
+              <div className="table-wrap">
+                <table className="table inspect-table">
+                  <thead>
+                    <tr>
+                      <th>ad</th><th>filed under</th><th>text says</th>
+                      <th>conf</th><th>verdict</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.results.slice(0, 25).map((r) => (
+                      <tr key={r.code}>
+                        <td>
+                          <a href={`/listing/${r.code}`} target="_blank" rel="noreferrer">
+                            {r.title || r.code}
+                          </a>
+                        </td>
+                        <td>{r.filed_under.name ?? "—"}</td>
+                        <td>{r.suspected.name}</td>
+                        <td className="num">
+                          {r.confidence == null ? "—" : r.confidence.toFixed(2)}
+                        </td>
+                        <td>
+                          <div className="row">
+                            <button
+                              className="btn sm"
+                              disabled={decide.isPending}
+                              onClick={() =>
+                                decide.mutate({ code: r.code, verdict: "confirmed" })}
+                            >
+                              right
+                            </button>
+                            <button
+                              className="btn sm"
+                              disabled={decide.isPending}
+                              onClick={() =>
+                                decide.mutate({ code: r.code, verdict: "rejected" })}
+                            >
+                              wrong
+                            </button>
+                            {/* Separate from the verdict on purpose: a flag can
+                                be wrong about the model and the listing still
+                                be junk that poisons every median it sits in. */}
+                            <button
+                              className="btn sm warn"
+                              disabled={decide.isPending}
+                              title="stop this ad counting toward any median"
+                              onClick={() =>
+                                decide.mutate({ code: r.code, exclude: true })}
+                            >
+                              exclude
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           );
         }}
       </Async>

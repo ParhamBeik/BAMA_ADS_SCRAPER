@@ -15,5 +15,6 @@ urlpatterns = [
     path("ml/models/", views.models_view, name="models"),
     path("ml/monitoring/", views.monitoring_view, name="monitoring"),
     path("ml/review-queue/", views.review_queue_view, name="review-queue"),
+    path("ml/review-queue/<str:code>/", views.review_decide_view, name="review-decide"),
     path("ads/<str:code>/prediction/", views.prediction_view, name="ad-prediction"),
 ]

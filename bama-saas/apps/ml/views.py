@@ -23,12 +23,16 @@ returns, and it is what the UI renders when no model has been promoted.
 
 from __future__ import annotations
 
+from django.shortcuts import get_object_or_404
+from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAdminUser
+from rest_framework.response import Response
 
+from apps.core.models import Ad
 from apps.core.views import envelope
 from apps.ml import inference, monitoring, registry
-from apps.ml.models import AdPrediction, MLModel
+from apps.ml.models import AdPrediction, MLModel, ReviewDecision
 
 # How many rows the review queue hands over at once. It is a human's worklist,
 # not a dataset — a thousand suspected misfilings is the same signal as fifty
@@ -109,16 +113,23 @@ def review_queue_view(request):
     evidence in front of them. Ordered by the classifier's confidence, so the
     clearest cases are the ones a human sees first.
     """
+    # Already-settled cases drop out. A queue that re-presents a case somebody
+    # decided last week is a queue people stop opening.
+    settled = ReviewDecision.objects.filter(
+        kind=ReviewDecision.Kind.SUSPECT_MODEL).values_list("ad_id", flat=True)
+    pending = (AdPrediction.objects
+               .filter(suspected_model__isnull=False)
+               .exclude(ad_id__in=settled))
     rows = (
-        AdPrediction.objects
-        .filter(suspected_model__isnull=False)
+        pending
         .select_related("ad", "ad__model", "ad__model__brand", "suspected_model",
                         "suspected_model__brand")
         .order_by("-suspected_model_prob")[:REVIEW_LIMIT]
     )
     return envelope({
         "available": True,
-        "count": AdPrediction.objects.filter(suspected_model__isnull=False).count(),
+        "count": pending.count(),
+        "settled": settled.count(),
         "limit": REVIEW_LIMIT,
         "results": [{
             "code": r.ad_id,
@@ -134,6 +145,7 @@ def review_queue_view(request):
                 "brand": r.suspected_model.brand.name_fa,
             },
             "confidence": r.suspected_model_prob,
+            "excluded_from_analytics": r.ad.excluded_from_analytics,
         } for r in rows],
     })
 
@@ -143,3 +155,72 @@ def review_queue_view(request):
 def monitoring_view(request):
     """Input drift, prediction drift, and the registry — for the Control page."""
     return envelope(monitoring.report())
+
+
+@api_view(["POST"])
+@permission_classes([IsAdminUser])
+def review_decide_view(request, code: str):
+    """Record a human's verdict on a flag, and optionally exclude the ad.
+
+    Two things happen here and they are deliberately separable. The verdict is
+    *about the model* — it says whether this flag was right, and it is the only
+    labelled data this project produces, because every other label is either the
+    catalogue's own value or a rule's output. Excluding the ad is *about the
+    data* — a broken listing poisons every median it sits in, and until now
+    there was no way to say so short of deleting the row.
+
+    A reviewer can do either without the other. Rejecting a flag on a listing
+    that is nonetheless junk is a real combination, and so is confirming a
+    misfiling on a listing whose price is perfectly good.
+    """
+    kind = (request.data.get("kind") or "").strip()
+    verdict = (request.data.get("verdict") or "").strip()
+    exclude = request.data.get("exclude")
+
+    if kind not in ReviewDecision.Kind.values:
+        return Response({"detail": f"kind must be one of "
+                                   f"{', '.join(ReviewDecision.Kind.values)}"},
+                        status=status.HTTP_400_BAD_REQUEST)
+    if verdict and verdict not in ReviewDecision.Verdict.values:
+        return Response({"detail": f"verdict must be one of "
+                                   f"{', '.join(ReviewDecision.Verdict.values)}"},
+                        status=status.HTTP_400_BAD_REQUEST)
+    if not verdict and exclude is None:
+        return Response({"detail": "nothing to do: send a verdict, an exclude, or both"},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    ad = get_object_or_404(Ad.objects, code=code)
+    decision = None
+    if verdict:
+        # The model's claim at this moment, snapshotted: the next retrain may
+        # change its mind, and a decision has to stay interpretable against what
+        # was actually on screen when somebody made it.
+        pred = AdPrediction.objects.filter(ad_id=code).first()
+        claim: dict = {}
+        if pred and kind == ReviewDecision.Kind.SUSPECT_MODEL:
+            claim = {"suspected_model_id": pred.suspected_model_id,
+                     "confidence": pred.suspected_model_prob,
+                     "filed_model_id": ad.model_id}
+        elif pred:
+            claim = {"anomaly_score": pred.anomaly_score,
+                     "anomaly_kind": pred.anomaly_kind}
+        decision, _ = ReviewDecision.objects.update_or_create(
+            ad=ad, kind=kind,
+            defaults={"verdict": verdict, "claim": claim,
+                      "note": (request.data.get("note") or "")[:2000],
+                      "reviewer": request.user if request.user.is_authenticated else None},
+        )
+    if exclude is not None and bool(exclude) != ad.excluded_from_analytics:
+        ad.excluded_from_analytics = bool(exclude)
+        ad.save(update_fields=["excluded_from_analytics"])
+
+    return Response({
+        "code": code,
+        "kind": kind,
+        "verdict": decision.verdict if decision else None,
+        "excluded_from_analytics": ad.excluded_from_analytics,
+        # The caller needs to know the numbers it is looking at are now stale:
+        # an exclusion changes every median this ad was part of, and nothing is
+        # recomputed until the next `deal_scores` tick.
+        "recompute_pending": exclude is not None,
+    })

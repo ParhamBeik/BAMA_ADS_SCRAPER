@@ -31,13 +31,20 @@ COHORT_FLAGS = frozenset({FLAG_OUTLIER_HIGH, FLAG_OUTLIER_LOW})
 
 
 def verified(qs):
-    """Ads that failed no *hard* verification rule.
+    """Ads that failed no *hard* verification rule, and that a human has not
+    excluded.
 
     Soft flags stay in the data and only serve monitoring, so one unparseable
     publish phrase never removes an otherwise perfect price from the statistics.
     Uses jsonb containment, which the ``ad_quality_gin`` index serves.
+
+    ``excluded_from_analytics`` is the manual override, set only from the review
+    queue. It belongs here rather than at each call site for the same reason
+    everything else in this module does: this function is the single definition
+    of "an ad the numbers may be built from", and a rule enforced in four places
+    is a rule enforced in three.
     """
-    disqualifying = Q()
+    disqualifying = Q(excluded_from_analytics=True)
     for rule_id in sorted(HARD_RULE_IDS):
         disqualifying |= Q(quality_flags__contains=[rule_id])
     return qs.exclude(disqualifying)

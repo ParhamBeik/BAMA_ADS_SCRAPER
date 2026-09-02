@@ -842,3 +842,93 @@ def test_the_point_estimate_may_tie_the_peer_median_but_never_regress(fitted):
 
     m = fitted["metrics"]
     assert m["mape"] <= m["baseline_mape"] * (1 + POINT_REGRESSION_TOLERANCE)
+
+
+# ===========================================================================
+# The review queue: a human's verdict, and the one manual override on the data
+# ===========================================================================
+
+
+@pytest.fixture
+def flagged(catalog, staff_client):
+    """One ad the text classifier suspects is filed under the wrong model."""
+    other = Model.objects.create(brand=catalog["brand"], name_fa="۲۰۷")
+    ad = Ad.objects.create(
+        code="rev00001", brand=catalog["brand"], model=catalog["model"],
+        variant=catalog["variant"], city=catalog["city"], year_jalali=1400,
+        mileage=50_000, current_price=1_000_000_000, status=Ad.Status.ACTIVE,
+        publish_at=djtz.now(), first_seen_at=djtz.now(), last_seen_at=djtz.now())
+    AdPrediction.objects.create(ad=ad, suspected_model=other, suspected_model_prob=0.97)
+    return ad, staff_client
+
+
+def test_a_settled_case_leaves_the_queue(flagged):
+    ad, client = flagged
+    assert client.get("/api/ml/review-queue/").json()["count"] == 1
+
+    client.post(f"/api/ml/review-queue/{ad.code}/",
+                {"kind": "suspect_model", "verdict": "rejected"}, format="json")
+
+    body = client.get("/api/ml/review-queue/").json()
+    assert body["count"] == 0
+    assert body["settled"] == 1
+
+
+def test_a_verdict_records_what_the_model_claimed_at_the_time(flagged):
+    """The next retrain may change its mind. A decision has to stay readable
+    against what was actually on screen when somebody made it."""
+    from apps.ml.models import ReviewDecision
+
+    ad, client = flagged
+    client.post(f"/api/ml/review-queue/{ad.code}/",
+                {"kind": "suspect_model", "verdict": "confirmed"}, format="json")
+
+    decision = ReviewDecision.objects.get(ad=ad)
+    assert decision.verdict == "confirmed"
+    assert decision.claim["confidence"] == 0.97
+    assert decision.claim["filed_model_id"] == ad.model_id
+
+
+def test_excluding_an_ad_removes_it_from_every_number_built_from_peers(flagged):
+    """A broken listing poisons every median it sits in, and there was no way to
+    say so short of deleting the row."""
+    from apps.core.pricing import scorable_rows
+
+    ad, client = flagged
+    assert scorable_rows().filter(code=ad.code).exists()
+
+    client.post(f"/api/ml/review-queue/{ad.code}/",
+                {"kind": "data_anomaly", "exclude": True}, format="json")
+
+    ad.refresh_from_db()
+    assert ad.excluded_from_analytics is True
+    assert not scorable_rows().filter(code=ad.code).exists()
+
+
+def test_a_verdict_and_an_exclusion_are_independent(flagged):
+    """Rejecting a flag on a listing that is nonetheless junk is a real
+    combination, and so is the reverse."""
+    ad, client = flagged
+    body = client.post(f"/api/ml/review-queue/{ad.code}/",
+                       {"kind": "suspect_model", "verdict": "rejected",
+                        "exclude": True}, format="json").json()
+    assert body["verdict"] == "rejected"
+    assert body["excluded_from_analytics"] is True
+
+
+def test_the_review_queue_refuses_an_unknown_flag_kind(flagged):
+    ad, client = flagged
+    r = client.post(f"/api/ml/review-queue/{ad.code}/",
+                    {"kind": "vibes", "verdict": "confirmed"}, format="json")
+    assert r.status_code == 400
+
+
+def test_deciding_is_staff_only(api_client, catalog, db):
+    ad = Ad.objects.create(
+        code="rev00002", brand=catalog["brand"], model=catalog["model"],
+        variant=catalog["variant"], city=catalog["city"], year_jalali=1400,
+        current_price=1_000_000_000, status=Ad.Status.ACTIVE,
+        publish_at=djtz.now(), first_seen_at=djtz.now(), last_seen_at=djtz.now())
+    r = api_client.post(f"/api/ml/review-queue/{ad.code}/",
+                        {"kind": "suspect_model", "verdict": "confirmed"}, format="json")
+    assert r.status_code in (401, 403)
