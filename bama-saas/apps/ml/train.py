@@ -31,7 +31,7 @@ from django.utils import timezone
 from apps.core.models import Ad, ListingEpisode, Model
 from apps.core.quality import exclude_unclear_price, verified
 from apps.ml import features, metrics, registry
-from apps.ml.models import MLModel
+from apps.ml.models import MLModel, ReviewDecision
 
 logger = logging.getLogger("bama.ml")
 
@@ -920,6 +920,18 @@ def train_model_text() -> dict:
 
     rows = _rows(_population().exclude(model__isnull=True),
                  extra_fields=("title", "trim", "model__name_fa"))
+    # Rows a reviewer confirmed are filed under the wrong model carry a label we
+    # now know is wrong, so training on them teaches the classifier the mistake
+    # a human just caught. This is the loop closing: the queue is not only a
+    # worklist, it is the one place this project acquires supervision, and the
+    # next fit is measurably different because somebody looked.
+    mislabelled = set(
+        ReviewDecision.objects
+        .filter(kind=ReviewDecision.Kind.SUSPECT_MODEL,
+                verdict=ReviewDecision.Verdict.CONFIRMED)
+        .values_list("ad_id", flat=True)
+    )
+    rows = [r for r in rows if r["code"] not in mislabelled]
     counts = Counter(r["model_id"] for r in rows)
     keep = {mid for mid, n in counts.items() if n >= MIN_CLASS_ADS}
     rows = [r for r in rows if r["model_id"] in keep]
@@ -986,6 +998,9 @@ def train_model_text() -> dict:
             for (a, b), n in confusions.most_common(20)
         ],
         "suspect_threshold": SUSPECT_THRESHOLD,
+        # Visible on the model card: review effort should show up as a
+        # number, or nobody can tell whether it changed anything.
+        "dropped_by_review": len(mislabelled),
     }
     record = registry.register(
         name=MLModel.Name.MODEL_TEXT,

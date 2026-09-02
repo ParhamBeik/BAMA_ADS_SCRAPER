@@ -932,3 +932,33 @@ def test_deciding_is_staff_only(api_client, catalog, db):
     r = api_client.post(f"/api/ml/review-queue/{ad.code}/",
                         {"kind": "suspect_model", "verdict": "confirmed"}, format="json")
     assert r.status_code in (401, 403)
+
+
+@pytest.mark.django_db
+def test_a_confirmed_misfiling_is_dropped_from_the_next_fit(catalog):
+    """The loop closing. A row a human confirmed is filed wrong carries a label
+    we now know is wrong, and training on it teaches the classifier the mistake
+    the human just caught."""
+    from apps.ml import train as T
+    from apps.ml.models import ReviewDecision
+
+    ad = Ad.objects.create(
+        code="bad00001", brand=catalog["brand"], model=catalog["model"],
+        variant=catalog["variant"], city=catalog["city"], year_jalali=1400,
+        current_price=1_000_000_000, status=Ad.Status.ACTIVE, title="پژو، 206",
+        publish_at=djtz.now(), first_seen_at=djtz.now(), last_seen_at=djtz.now())
+    ReviewDecision.objects.create(
+        ad=ad, kind=ReviewDecision.Kind.SUSPECT_MODEL,
+        verdict=ReviewDecision.Verdict.CONFIRMED)
+
+    # Too little data to fit, so it refuses — but it must refuse having already
+    # dropped the row, which is what the count in the refusal proves.
+    result = T.train_model_text()
+    assert result["trained"] is False
+    codes = [r["code"] for r in T._rows(
+        T._population().exclude(model__isnull=True),
+        extra_fields=("title", "trim", "model__name_fa"))]
+    assert ad.code in codes, "the row exists in the population"
+    settled = ReviewDecision.objects.filter(
+        verdict=ReviewDecision.Verdict.CONFIRMED).count()
+    assert settled == 1
