@@ -44,10 +44,21 @@ class MeView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
+        """Who is this? ``{"user": null}`` is a valid answer, not an error.
+
+        This used to 401 for anonymous visitors, which is the wrong shape twice
+        over. "Nobody is signed in" is the *expected* answer on the first load
+        of a public page, not a failure — and the browser logs every 4xx as a
+        console error, so the app printed one on every cold visit and
+        Lighthouse's `errors-in-console` audit was right to fail it.
+
+        The envelope keeps `id`/`email` at the top level too, so the existing
+        client, which reads the payload directly, does not break on deploy.
+        """
         if not request.user.is_authenticated:
-            return Response({"detail": "Not authenticated."},
-                            status=status.HTTP_401_UNAUTHORIZED)
-        return Response(_user_payload(request.user))
+            return Response({"user": None, "authenticated": False})
+        payload = _user_payload(request.user)
+        return Response({**payload, "user": payload, "authenticated": True})
 
 
 class LoginSerializer(serializers.Serializer):

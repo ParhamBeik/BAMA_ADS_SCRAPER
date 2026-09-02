@@ -26,6 +26,8 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | null>(null);
 
+
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
@@ -34,8 +36,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     api
       .get<AuthUser>("/api/auth/me/")
-      .then((u) => !cancelled && setUser(u))
-      .catch(() => !cancelled && setUser(null))
+      .then((u) => {
+        if (cancelled) return;
+        setUser(u);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setUser(null);
+      })
       .finally(() => !cancelled && setLoading(false));
     return () => {
       cancelled = true;

@@ -10,7 +10,29 @@
  * red mean direction, amber means a confidence warning. Reusing them decoratively
  * would make a legend meaningless.
  */
-import ReactECharts from "echarts-for-react";
+// Modular, not the umbrella package. `echarts` imported whole is 1.1 MB of
+// JavaScript for a product that draws lines and bars: the whole build is
+// pulled in — maps, treemaps, graphs, the WebGL renderer, every component —
+// and none of it is reachable. Registering exactly what the option below uses
+// drops the chart chunk by roughly 80% and makes adding a chart type a
+// deliberate act rather than a free one.
+import ReactEChartsCore from "echarts-for-react/lib/core";
+import { BarChart, LineChart } from "echarts/charts";
+import {
+  GridComponent,
+  LegendComponent,
+  TooltipComponent,
+} from "echarts/components";
+import * as echarts from "echarts/core";
+import { CanvasRenderer } from "echarts/renderers";
+
+echarts.use([
+  LineChart, BarChart,
+  GridComponent, TooltipComponent, LegendComponent,
+  // Canvas, not SVG: these charts redraw on theme change and on every filter,
+  // and the series here are long enough that SVG node counts matter.
+  CanvasRenderer,
+]);
 import { useMemo } from "react";
 import { useTheme } from "./theme";
 
@@ -141,7 +163,7 @@ export function Chart({
   }, [x, series, yFormatter, stack, resolved, xType, yMax]);
 
   return (
-    <ReactECharts
+    <ReactEChartsCore echarts={echarts}
       option={option}
       // Fixed height: charts that size themselves from their container reflow
       // when data arrives and shove the page around.

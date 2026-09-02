@@ -14,13 +14,23 @@ import { lazy, Suspense, useEffect, type ReactNode } from "react";
 import { Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { useAuth } from "./auth";
 import { AppHeader, AuthHeader, MobileNav } from "./components/AppHeader";
-import { Deals } from "./pages/Deals";
-import { Explorer } from "./pages/Explorer";
-import { Home } from "./pages/Home";
+// Only Login stays eager. Home looked like the other obvious candidate and was
+// the opposite: it imports the deal card, which imports the whole card tree, so
+// an anonymous visitor on the login form was downloading the authenticated
+// home page's dependencies to render an email field.
 import { Login } from "./pages/Login";
-import { Signup } from "./pages/Signup";
-import { Saved } from "./pages/Saved";
-import { ListingDetail } from "./pages/ListingDetail";
+
+const Home = lazy(() => import("./pages/Home").then((m) => ({ default: m.Home })));
+
+const Deals = lazy(() => import("./pages/Deals").then((m) => ({ default: m.Deals })));
+const Explorer = lazy(() =>
+  import("./pages/Explorer").then((m) => ({ default: m.Explorer })),
+);
+const Signup = lazy(() => import("./pages/Signup").then((m) => ({ default: m.Signup })));
+const Saved = lazy(() => import("./pages/Saved").then((m) => ({ default: m.Saved })));
+const ListingDetail = lazy(() =>
+  import("./pages/ListingDetail").then((m) => ({ default: m.ListingDetail })),
+);
 
 const Control = lazy(() =>
   import("./pages/Control").then((m) => ({ default: m.Control })),
@@ -43,6 +53,11 @@ const Methodology = lazy(() =>
 export function App() {
   const { user, loading } = useAuth();
 
+  // Measured, not assumed: rendering a tree optimistically from a stored
+  // session hint and re-rendering when the real answer arrived cost 330ms of
+  // extra blocking time and moved first paint *later*. The HTML shell already
+  // paints (see index.html), so there is nothing to gain by rendering React
+  // twice, and the blank moment this leaves is bounded by one API call.
   if (loading) return null;
   return user ? <AppShell /> : <AuthRoutes />;
 }

@@ -3,14 +3,67 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>بازار خودرو باما — قیمت منصفانه و معامله‌های واقعی</title>
+    <meta
+      name="description"
+      content="قیمت منصفانه‌ی هر خودرو بر پایه‌ی آگهی‌های مشابه، با کارکرد و وضعیت بدنه لحاظ‌شده — و فهرستی از آگهی‌هایی که پایین‌تر از حد معمول قیمت خورده‌اند."
+    />
+    <link rel="canonical" href="https://bama.parhambeik.ir/" />
+    <meta name="robots" content="index, follow" />
+    <meta name="color-scheme" content="light dark" />
+    <!-- Matches --panel in styles.css for each scheme, so the browser chrome
+         does not flash the opposite theme before the stylesheet applies. -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#1d1a16" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="fa_IR" />
+    <meta property="og:title" content="بازار خودرو باما" />
+    <meta
+      property="og:description"
+      content="قیمت منصفانه‌ی هر خودرو بر پایه‌ی آگهی‌های مشابه، و فهرست معامله‌های واقعی."
+    />
+    <meta name="twitter:card" content="summary" />
+
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <title>بازار خودرو باما</title>
-    <!-- Fonts are bundled (see src/main.tsx), not loaded from a CDN: this app's
-         users are in Iran, where fonts.googleapis.com is unreliable, and the
-         fallback was Tahoma for everyone it failed for. -->
+    <link rel="apple-touch-icon" href="/favicon.svg" />
+    <link rel="manifest" href="/site.webmanifest" />
+
+    <!-- Fonts are bundled (declared in src/styles.css), not loaded from a CDN:
+         this app's users are in Iran, where fonts.googleapis.com is unreliable,
+         and the fallback was Tahoma for everyone it failed for.
+
+         Preconnect is therefore pointless and preload is not: the face is
+         discovered inside a stylesheet the browser has to download and parse
+         first, so without this hint the Persian text waits two round trips. -->
+    <!--preload-fonts-->
+    <!-- Painted from HTML, before the bundle exists.
+         This app is client-rendered and gates its first render on
+         `/api/auth/me/`, so the shell used to stay blank until the JS had
+         downloaded, parsed, executed *and* completed a round trip — 3.4s to
+         first paint under mobile throttling, of a white screen. The mark below
+         paints as soon as the stylesheet does. React clears it on mount, and it
+         is sized and positioned to match what replaces it so the swap costs no
+         layout shift. -->
+    <style>
+      #boot {
+        min-height: 100dvh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "Vazirmatn Variable", Tahoma, system-ui, sans-serif;
+        font-size: 19px;
+        font-weight: 600;
+        color: #57534e;
+        background: #faf8f5;
+      }
+      @media (prefers-color-scheme: dark) {
+        #boot { color: #a8a29e; background: #141210; }
+      }
+    </style>
+    <script type="module" src="/src/main.tsx"></script>
   </head>
   <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <div id="root"><div id="boot">بازار خودرو باما</div></div>
   </body>
 </html>

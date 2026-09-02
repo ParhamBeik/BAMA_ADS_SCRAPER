@@ -1138,7 +1138,12 @@ def test_logging_out_ends_the_session(api_client):
     assert api_client.get("/api/auth/me/").status_code == 200
 
     assert api_client.post("/api/auth/logout/").status_code == 204
-    assert api_client.get("/api/auth/me/").status_code == 401
+    # 200 with `authenticated: false`, not 401: "nobody is signed in" is the
+    # expected answer on a public page, and every 4xx the SPA fires on load
+    # lands in the browser console as an error.
+    after = api_client.get("/api/auth/me/")
+    assert after.status_code == 200
+    assert after.json()["authenticated"] is False
 
 
 @pytest.mark.django_db
@@ -1153,7 +1158,7 @@ def test_logout_everywhere_kills_other_devices(catalog):
     assert phone.get("/api/auth/me/").status_code == 200
 
     assert laptop.post("/api/auth/logout-everywhere/").json()["sessions_ended"] >= 2
-    assert phone.get("/api/auth/me/").status_code == 401
+    assert phone.get("/api/auth/me/").json()["authenticated"] is False
 
 
 @pytest.mark.django_db
