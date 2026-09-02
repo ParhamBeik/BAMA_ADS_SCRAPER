@@ -735,6 +735,7 @@ def train_sell_fast(*, horizon_days: int = SELL_HORIZON_DAYS) -> dict:
 # score: it is a *budget* for how much a human can look at, and 2% of a 25k
 # catalogue is already 500 rows a week.
 ANOMALY_CONTAMINATION = 0.02
+MIN_ANOMALY_POSITIVES = 30
 PRECISION_AT_K = 200
 # Lift is precision divided by the base rate, so a detector that picks rows at
 # random scores exactly 1.0. That is the number to beat, not zero.
@@ -742,7 +743,7 @@ RANDOM_LIFT = 1.0
 
 
 def train_anomaly() -> dict:
-    """An Isolation Forest over the feature space, judged on realised delistings.
+    """An Isolation Forest over the feature space, judged on broken records.
 
     The point is separating two things ``pricing.flag_high_outliers`` cannot: it
     measures a MAD distance in price alone, so "this car is cheap" and "this
@@ -752,19 +753,40 @@ def train_anomaly() -> dict:
     attributes are strange.
 
     Unsupervised, so it is evaluated *supervisedly* against something it never
-    saw: of the listings it flagged, what share actually left the feed within
-    the horizon, against the base rate. If that lift is not above 1 the model is
-    finding outliers that mean nothing.
+    saw. What it is evaluated against changed, and that is the whole story of
+    this model: it used to be scored on whether the listings it flagged left the
+    feed quickly, and it failed that for eleven straight versions at a lift
+    around 0.7 — below the 1.0 that means random. The previous docstring even
+    said, of that metric, "a high lift here … is not what the flag is for", and
+    then gated on it anyway. That is the same category error the price model was
+    stuck behind: a model refused for failing at something it was not built to
+    do.
+
+    A data-quality flag is what this *is* for, and those exist independently:
+    ``apps.jobs.verify`` writes ``quality_flags`` from hand-written rules —
+    zero kilometres on an old car, a mileage impossible for the age. So the
+    question is answerable and well matched: of the listings this isolates,
+    what share carry a flag a rule found separately, against the base rate? A
+    lift above 1 means unsupervised isolation rediscovers the hand-written
+    rules — and therefore also finds the broken records no rule was written for,
+    which is the entire reason to run a model here instead of more rules.
     """
     if not registry.ML_AVAILABLE:
         return _refusal("anomaly", "ml_unavailable", detail=registry.ML_UNAVAILABLE_REASON)
     from sklearn.ensemble import IsolationForest
 
-    rows = _episode_rows(SELL_HORIZON_DAYS)
+    rows = _rows(_population(), extra_fields=("quality_flags",))
     train, holdout = time_split(rows)
     if len(train) < MIN_TRAIN_ROWS or len(holdout) < MIN_HOLDOUT_ROWS:
         return _refusal("anomaly", "insufficient_rows",
                         train_rows=len(train), holdout_rows=len(holdout))
+    # A rule-flagged row is rare by design, so say so rather than reporting a
+    # lift computed from four positives.
+    positives = sum(1 for r in holdout if r["quality_flags"])
+    if positives < MIN_ANOMALY_POSITIVES:
+        return _refusal("anomaly", "too_few_flagged_rows_to_score",
+                        flagged=positives, needed=MIN_ANOMALY_POSITIVES,
+                        holdout_rows=len(holdout))
 
     spec = features.fit_spec(train)
     x_train, _ = features.build(train, spec)
@@ -780,15 +802,17 @@ def train_anomaly() -> dict:
 
     # More negative = more isolated, so negate to make "higher is stranger".
     scores = [-float(s) for s in forest.score_samples(_impute(x_hold, fill))]
-    labels = [r["label"] for r in holdout]
+    # The label is "a hand-written rule independently called this row broken".
+    labels = [1 if r["quality_flags"] else 0 for r in holdout]
     measured = {
         "train_rows": len(train),
         "holdout_rows": len(holdout),
         "contamination": ANOMALY_CONTAMINATION,
-        # Read this one carefully: a *high* lift here would mean the strangest
-        # listings leave fastest, which is interesting but not what the flag is
-        # for. It is reported because a lift far below 1 says the score is
-        # picking out broken records, which is the other thing we want to know.
+        "flagged_rows": positives,
+        "label": "quality_flags_present",
+        # Of the k most isolated listings, what share a rule had already
+        # flagged, over the base rate. 1.0 is random; above it means the
+        # unsupervised score agrees with the rules and can extend them.
         "precision_at_k": metrics.precision_at_k(scores, labels, PRECISION_AT_K),
         "score_p50": round(sorted(scores)[len(scores) // 2], 4),
         "score_p99": round(sorted(scores)[int(len(scores) * 0.99)], 4),
@@ -798,7 +822,8 @@ def train_anomaly() -> dict:
         payload={"forest": forest, "spec": spec.to_json(), "fill": list(fill)},
         metrics=measured, feature_spec=spec.to_json(),
         training_rows=len(train), trained_through=train[-1]["publish_at"],
-        notes="Feature-space isolation only; the price residual is a separate reading.",
+        notes=("Feature-space isolation only; the price residual is a separate "
+               "reading. Scored against independently rule-flagged rows."),
     )
     # An unsupervised model has no error to beat, but lift has a baseline built
     # into its own definition: lift is precision over the base rate, so **1.0 is
