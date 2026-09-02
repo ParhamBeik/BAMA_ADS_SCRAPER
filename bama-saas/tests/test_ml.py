@@ -791,3 +791,54 @@ def test_a_growing_category_vocabulary_is_not_a_change_of_task():
     fewer = {**spec, "columns": spec["columns"][:-1]}
     assert registry.incumbent_metric(
         MLModel.Name.SELL_FAST, "brier", feature_spec=fewer) is None
+
+
+# ===========================================================================
+# The price model is gated on the band it produces, not on a point metric
+# ===========================================================================
+
+
+def test_the_cohort_band_is_the_thing_the_price_model_has_to_beat():
+    """`peer_distribution` already draws a p10..p90 on the listing page, so the
+    incumbent interval is real. Gating a quantile model against a *point*
+    estimator on a *point* metric judged it on the one thing it was not for."""
+    from apps.ml.train import _cohort_quantile_baseline
+
+    rows = [{"model_id": 1, "variant_id": 1, "year_jalali": 1400,
+             "current_price": p} for p in range(100, 1100, 100)]
+    band = _cohort_quantile_baseline(rows)
+
+    assert band[0.1][0] < band[0.5][0] < band[0.9][0]
+
+
+def test_a_cohort_too_thin_for_a_band_yields_no_comparison():
+    """Two order statistics from four cars is not an interval, and crediting the
+    model for beating one would be crediting it for the cohort's refusal."""
+    from apps.ml.train import _cohort_quantile_baseline
+
+    rows = [{"model_id": 1, "variant_id": 1, "year_jalali": 1400,
+             "current_price": p} for p in (100, 200, 300, 400)]
+    band = _cohort_quantile_baseline(rows)
+
+    assert band[0.5][0] is None
+
+
+@pytest.mark.slow
+def test_the_price_model_beats_the_cohort_band_on_the_proper_scoring_rule(fitted):
+    """Pinball loss settles sharpness against calibration, which coverage and
+    width cannot settle between them: a narrower band that misses more can still
+    be worse, and this is the number that says which."""
+    m = fitted["metrics"]
+    assert m["pinball_cohort_mean"] is not None, "no comparison was made"
+    assert m["pinball_mean"] < m["pinball_cohort_mean"]
+
+
+@pytest.mark.slow
+def test_the_point_estimate_may_tie_the_peer_median_but_never_regress(fitted):
+    """The band is what earns promotion, but the price on the card must not get
+    worse to buy it. This is the guard that stops the new gate being a looser
+    one rather than a more correct one."""
+    from apps.ml.train import POINT_REGRESSION_TOLERANCE
+
+    m = fitted["metrics"]
+    assert m["mape"] <= m["baseline_mape"] * (1 + POINT_REGRESSION_TOLERANCE)
