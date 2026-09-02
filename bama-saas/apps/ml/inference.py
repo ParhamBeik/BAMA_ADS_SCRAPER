@@ -30,7 +30,7 @@ import math
 
 from django.db import transaction
 
-from apps.core.models import Ad
+from apps.core.models import Ad, DealScoreCache
 from apps.core.quality import exclude_unclear_price, verified
 from apps.ml import features, registry
 from apps.ml.models import AdPrediction, MLModel
@@ -138,8 +138,30 @@ def _apply_price(rows, predictions, art) -> None:
     # widened interval, not to the booster.
     delta = float(art["payload"].get("conformal_delta", 0.0))
     shift = {"0.1": -delta, "0.5": 0.0, "0.9": delta}
+
+    # The model predicts a log-ratio against the peer median, so serving it
+    # needs that median back. It comes from `DealScoreCache` — the same number
+    # the statistical panel prints — which makes the learned estimate exactly
+    # "the peer median times a learned adjustment" and guarantees the two
+    # accounts of a car on screen can always be reconciled by the reader.
+    # A car with no cached valuation gets no learned price either: a refusal,
+    # which every surface already renders, rather than an unanchored guess.
+    anchored = art["payload"].get("target") == "log_ratio_to_peer_median"
+    medians: dict[str, float] = {}
+    if anchored:
+        medians = {
+            code: float(m) for code, m in DealScoreCache.objects
+            .filter(ad_id__in=[r["code"] for r in rows], peer_median__gt=0)
+            .values_list("ad_id", "peer_median")
+        }
+        rows = [r for r in rows if r["code"] in medians]
+        if not rows:
+            return
+
     matrix, codes = features.build(rows, spec)
-    quantiles = {a: np.exp(boosters[a].predict(matrix) + shift[a])
+    offset = (np.log(np.array([medians[c] for c in codes], dtype=np.float64))
+              if anchored else 0.0)
+    quantiles = {a: np.exp(boosters[a].predict(matrix) + shift[a] + offset)
                  for a in ("0.1", "0.5", "0.9")}
     # Exact TreeSHAP straight out of LightGBM — same algorithm the `shap`
     # package would run for a tree model, without the dependency. The last

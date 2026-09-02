@@ -526,8 +526,14 @@ def fitted(catalog, settings, tmp_path):
             publish_at=published, first_seen_at=published, last_seen_at=now,
         ))
     Ad.objects.bulk_create(ads)
+    # The price model predicts a ratio against the peer median, and serving it
+    # needs that median back — from the same cache the statistical panel reads.
+    # Without this the scorer correctly refuses every row, which is the right
+    # behaviour and would make these tests silently vacuous.
+    from apps.core.pricing import compute_deal_scores
     from apps.ml.train import train_price
 
+    compute_deal_scores()
     return train_price()
 
 

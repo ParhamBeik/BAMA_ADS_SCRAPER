@@ -142,6 +142,43 @@ def _refusal(name: str, reason: str, **detail) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _median_table(rows: list[dict]) -> dict:
+    """Cohort medians at three widths, for looking a peer median up later.
+
+    Split out of ``_peer_median_baseline`` because the price model now needs the
+    same lookup for its *own* target, not only for the baseline it is judged
+    against — and both must be built from the same rows in the same way or the
+    comparison stops being like-for-like.
+    """
+    by_cohort: dict[tuple, list[int]] = defaultdict(list)
+    by_model_year: dict[tuple, list[int]] = defaultdict(list)
+    by_model: dict[int, list[int]] = defaultdict(list)
+    for r in rows:
+        price = r["current_price"]
+        if not price or not r["model_id"]:
+            continue
+        by_model[r["model_id"]].append(price)
+        by_model_year[(r["model_id"], r["year_jalali"])].append(price)
+        by_cohort[(r["model_id"], r["variant_id"], r["year_jalali"])].append(price)
+    return {"cohort": by_cohort, "model_year": by_model_year, "model": by_model}
+
+
+def _median_for(table: dict, row: dict) -> float | None:
+    """This row's peer median, backing off model+year and then model."""
+    for name, key in (
+        ("cohort", (row["model_id"], row["variant_id"], row["year_jalali"])),
+        ("model_year", (row["model_id"], row["year_jalali"])),
+        ("model", row["model_id"]),
+    ):
+        values = table[name].get(key)
+        if values:
+            ordered = sorted(values)
+            mid = len(ordered) // 2
+            return float(ordered[mid] if len(ordered) % 2 else
+                         (ordered[mid - 1] + ordered[mid]) / 2)
+    return None
+
+
 def _peer_median_baseline(train: list[dict], holdout: list[dict]) -> list[float | None]:
     """What the existing method would predict for each holdout row.
 
@@ -150,42 +187,12 @@ def _peer_median_baseline(train: list[dict], holdout: list[dict]) -> list[float 
     purpose. A gate the incumbent can only pass by being handed an unfair
     comparison is not a gate.
     """
-    by_cohort: dict[tuple, list[int]] = defaultdict(list)
-    by_model_year: dict[tuple, list[int]] = defaultdict(list)
-    by_model: dict[int, list[int]] = defaultdict(list)
-    for r in train:
-        price = r["current_price"]
-        if not price:
-            continue
-        if r["model_id"]:
-            by_model[r["model_id"]].append(price)
-            by_model_year[(r["model_id"], r["year_jalali"])].append(price)
-            by_cohort[(r["model_id"], r["variant_id"], r["year_jalali"])].append(price)
-
-    def med(values: list[int]) -> float:
-        ordered = sorted(values)
-        mid = len(ordered) // 2
-        return float(ordered[mid] if len(ordered) % 2 else
-                     (ordered[mid - 1] + ordered[mid]) / 2)
-
-    out: list[float | None] = []
-    for r in holdout:
-        for table, key in (
-            (by_cohort, (r["model_id"], r["variant_id"], r["year_jalali"])),
-            (by_model_year, (r["model_id"], r["year_jalali"])),
-            (by_model, r["model_id"]),
-        ):
-            values = table.get(key)
-            if values:
-                out.append(med(values))
-                break
-        else:
-            out.append(None)
-    return out
+    table = _median_table(train)
+    return [_median_for(table, r) for r in holdout]
 
 
 def train_price() -> dict:
-    """Three LightGBM quantile regressors on log price: p10, p50, p90.
+    """Three LightGBM quantile regressors on the gap to the peer median.
 
     Quantiles rather than one point estimate because the product question is
     "where do prices sit for this car", and a median cannot answer that — it
@@ -194,9 +201,22 @@ def train_price() -> dict:
     gives an honest empirical quantile with no distributional assumption, and
     this price distribution is nothing like Gaussian.
 
-    Fitted on ``log(price)``: prices span three orders of magnitude here, and
-    squared error in toman space would let one 40B import dominate the fit for
-    every Pride in the catalogue.
+    The target is ``log(price) - log(peer_median)``, not ``log(price)``. Working
+    in log space at all is because prices span three orders of magnitude here
+    and squared error in toman space would let one 40B import dominate the fit
+    for every Pride in the catalogue. Working against the peer median is
+    because the first version, which predicted the level directly, could not
+    pass its own coverage veto on production data — and the diagnosis was not
+    overfitting but drift: this market inflates, so the price level of the
+    training window is not the price level of the holdout window a week later.
+    A ratio is stationary where a level is not.
+
+    It also makes the model the right *shape* for this product. What is left to
+    learn, once the cohort level is divided out, is precisely what a cohort
+    median structurally cannot see — this car's mileage, condition, city,
+    seller type, photo count. The learned layer becomes a correction on top of
+    the statistical baseline rather than a rival to it, and the peer median
+    stays the anchor every screen is built around.
     """
     if not registry.ML_AVAILABLE:
         return _refusal("price", "ml_unavailable", detail=registry.ML_UNAVAILABLE_REASON)
@@ -224,12 +244,56 @@ def train_price() -> dict:
     if len(valid_rows) < MIN_HOLDOUT_ROWS:
         fit_rows, valid_rows = train, train  # too small to stop early; fit plainly
 
+    # --- The target is the gap against the peer median, not the price --------
+    #
+    # Fitting log(price) directly failed the coverage veto on production for a
+    # reason no amount of tuning fixes: prices here inflate, so the level the
+    # model learned on the training window is not the level of the holdout
+    # window. Measured on 79,409 real ads, raw validation coverage was 74.1%
+    # against 64.4% on the holdout — the same model, the same fit, eight days
+    # apart, and the gap is the market moving underneath it.
+    #
+    # Predicting log(price) - log(peer_median) removes it. Both sides inflate
+    # together, so the ratio is stationary where the level is not, and what is
+    # left for the model to learn is the thing a cohort median structurally
+    # cannot see: how much *this* car's mileage, condition, city, seller type
+    # and photo count move it away from its own cohort. That is also exactly
+    # the shape the product wants — a correction on top of the statistical
+    # baseline rather than a rival to it, which is what keeps the peer median
+    # the anchor on every screen.
+    #
+    # Offsets come from the fit rows for training and from the whole training
+    # half for the holdout, mirroring `_peer_median_baseline` so the model and
+    # the baseline it is gated against never see different cohort tables.
+    fit_table = _median_table(fit_rows)
+    train_table = _median_table(train)
+
+    def _with_offsets(rows, table):
+        kept, offsets = [], []
+        for r in rows:
+            med = _median_for(table, r)
+            if med and med > 0 and r["current_price"]:
+                kept.append(r)
+                offsets.append(math.log(med))
+        return kept, np.array(offsets, dtype=np.float64)
+
+    fit_rows, fit_offset = _with_offsets(fit_rows, fit_table)
+    valid_rows, valid_offset = _with_offsets(valid_rows, fit_table)
+    holdout, hold_offset = _with_offsets(holdout, train_table)
+    if (len(fit_rows) < MIN_TRAIN_ROWS or len(valid_rows) < MIN_HOLDOUT_ROWS
+            or len(holdout) < MIN_HOLDOUT_ROWS):
+        return _refusal("price", "insufficient_rows_with_peers",
+                        fit_rows=len(fit_rows), validation_rows=len(valid_rows),
+                        holdout_rows=len(holdout))
+
     spec = features.fit_spec(fit_rows)
     x_fit, _ = features.build(fit_rows, spec)
     x_valid, _ = features.build(valid_rows, spec)
     x_hold, _ = features.build(holdout, spec)
-    y_fit = np.log(np.array([r["current_price"] for r in fit_rows], dtype=np.float64))
-    y_valid = np.log(np.array([r["current_price"] for r in valid_rows], dtype=np.float64))
+    y_fit = np.log(np.array([r["current_price"] for r in fit_rows],
+                            dtype=np.float64)) - fit_offset
+    y_valid = np.log(np.array([r["current_price"] for r in valid_rows],
+                              dtype=np.float64)) - valid_offset
     actual = [float(r["current_price"]) for r in holdout]
 
     boosters, preds, rounds = {}, {}, {}
@@ -274,7 +338,9 @@ def train_price() -> dict:
         raw = boosters[str(alpha)].predict(x_hold)
         # The median is not widened — only the band around it.
         widened = raw + (delta if alpha == 0.9 else -delta if alpha == 0.1 else 0.0)
-        preds[alpha] = np.exp(widened)
+        # Back into price space: the boosters predict a log-ratio against the
+        # peer median, so the offset has to be added before exponentiating.
+        preds[alpha] = np.exp(widened + hold_offset)
 
     p10, p50, p90 = (list(preds[a]) for a in QUANTILES)
     baseline = _peer_median_baseline(train, holdout)
@@ -330,15 +396,20 @@ def train_price() -> dict:
 
     record = registry.register(
         name=MLModel.Name.PRICE,
-        algorithm="lightgbm.LGBMRegressor(objective=quantile) + conformal calibration",
+        algorithm=("lightgbm.LGBMRegressor(objective=quantile) on log price ratio "
+                   "to peer median + conformal calibration"),
         # `delta` travels with the boosters: an interval served without the
         # widening that earned its coverage guarantee is not the interval that
-        # was measured.
+        # was measured. `target` travels with them because a consumer that
+        # exponentiates these predictions without adding the peer-median offset
+        # back would publish a price of about 1 toman.
         payload={"boosters": boosters, "spec": spec.to_json(),
-                 "conformal_delta": float(delta)},
+                 "conformal_delta": float(delta),
+                 "target": "log_ratio_to_peer_median"},
         metrics=measured, feature_spec=spec.to_json(),
         training_rows=len(train), trained_through=train[-1]["publish_at"],
-        notes="p10/p50/p90 on log price; holdout is every ad published after the split.",
+        notes=("p10/p50/p90 on log(price) - log(peer_median); the served price is "
+               "the peer median times the learned adjustment."),
     )
     # Two conditions, because the product renders two things. The point
     # estimate has to beat the peer median it sits beside, and the *band* has to
