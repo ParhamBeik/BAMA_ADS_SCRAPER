@@ -1132,3 +1132,34 @@ main:focus { outline: none; }
   .row.between { flex-wrap: wrap; }
   .card { overflow-x: clip; }
 }
+
+/* --- price verdict --------------------------------------------------------
+   The headline on a valuation panel. Colour is a reinforcement, never the
+   message: the word itself says "above"/"below"/"in line", so this still reads
+   correctly in greyscale and to anyone who cannot separate the two hues. */
+.verdict {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  border-radius: 8px;
+  border-inline-start: 3px solid var(--border);
+  background: var(--panel-2);
+}
+.verdict strong { font-size: 15px; }
+.verdict .muted { font-size: 12.5px; }
+.verdict-below { border-inline-start-color: var(--up); }
+.verdict-below strong { color: var(--up); }
+.verdict-above { border-inline-start-color: var(--down); }
+.verdict-above strong { color: var(--down); }
+.verdict-inline { border-inline-start-color: var(--muted); }
+.mini-table th {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 500;
+  color: var(--muted);
+  text-align: start;
+  white-space: nowrap;
+}

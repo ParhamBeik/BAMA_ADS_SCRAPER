@@ -2,9 +2,10 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import {
-  Async, BamaLink, FLAG_LABEL, Fa, ListingActions, PriceBar, Provenance, pct, toman,
+  Async, BamaLink, FLAG_LABEL, Fa, ListingActions, PriceBar, PriceVerdict, Provenance,
+  fa, pct, toman,
 } from "../ui";
-import type { Distribution } from "../ui";
+import type { Basis, Distribution, Verdict } from "../ui";
 
 type Ad = {
   code: string;
@@ -53,6 +54,10 @@ type FairPrice = {
   fair_value?: number | null;
   asking?: number | null;
   gap_pct?: number | null;
+  verdict?: Verdict;
+  basis?: Basis;
+  confidence?: string;
+  position_pct?: number | null;
   peer_count?: number;
   cohort_stale?: boolean;
   distribution?: Distribution;
@@ -237,16 +242,66 @@ export function ListingDetail() {
         <Async query={fair}>
           {(fp) => (
             <>
-              <p>
-                قیمت منصفانه: {fp.fair_value != null ? toman(fp.fair_value) : "—"} تومان
-              </p>
+              {/* The one line a reader can act on, before any arithmetic. */}
+              <PriceVerdict
+                verdict={fp.verdict}
+                gapPct={fp.gap_pct}
+                basis={fp.basis}
+                peerCount={fp.peer_count}
+                confidence={fp.confidence}
+              />
+              <table className="table mini-table">
+                <tbody>
+                  <tr>
+                    <th>این آگهی</th>
+                    <td className="num">{toman(fp.asking)}</td>
+                  </tr>
+                  <tr>
+                    <th>قیمت منصفانه</th>
+                    <td className="num">
+                      {fp.fair_value != null ? toman(fp.fair_value) : "—"}
+                    </td>
+                  </tr>
+                  {fp.distribution?.median != null && (
+                    <tr>
+                      <th>میانه‌ی گروه</th>
+                      <td className="num">{toman(fp.distribution.median)}</td>
+                    </tr>
+                  )}
+                  {/* Mode beside median: in a market that quotes round numbers
+                      "what people actually ask" and "the middle" differ, and
+                      both are worth showing. */}
+                  {fp.distribution?.mode?.value != null && (
+                    <tr>
+                      <th>پرتکرارترین قیمت</th>
+                      <td className="num">
+                        {toman(fp.distribution.mode.value)}
+                        <span className="muted">
+                          {" "}({fa(fp.distribution.mode.count)} آگهی)
+                        </span>
+                      </td>
+                    </tr>
+                  )}
+                  {fp.distribution?.p10 != null && (
+                    <tr>
+                      <th>بازه‌ی رایج</th>
+                      <td className="num">
+                        {toman(fp.distribution.p10)} — {toman(fp.distribution.p90)}
+                      </td>
+                    </tr>
+                  )}
+                  {fp.position_pct != null && (
+                    <tr>
+                      <th>جایگاه در گروه</th>
+                      <td className="num">
+                        گران‌تر از {pct(fp.position_pct, 0)} آگهی‌های مشابه
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
               {/* Where this car sits among its peers, before the arithmetic. */}
               <PriceBar distribution={fp.distribution} asking={fp.asking} />
-              {fp.peer_count != null && (
-                <p className="empty-hint">
-                  بر پایه {fp.peer_count} آگهی مشابه با همان مدل، تیپ و سال ساخت.
-                </p>
-              )}
               {/* Why the confidence may read lower than the peer count alone
                   suggests. Without this the badge appears to contradict the
                   number printed beside it. */}
@@ -304,7 +359,7 @@ export function ListingDetail() {
   );
 }
 
-interface Verdict {
+interface DealRow {
   discount_pct: number | null;
   peer_median: number | null;
   peer_count: number | null;
@@ -322,7 +377,7 @@ function DealVerdict({ code }: { code: string }) {
     // be retried and must not surface as a failed panel.
     retry: false,
     queryFn: ({ signal }) =>
-      api.get<Verdict>(`/api/analytics/deal-scores/${code}/`, signal),
+      api.get<DealRow>(`/api/analytics/deal-scores/${code}/`, signal),
   });
 
   if (!verdict.data) return null;

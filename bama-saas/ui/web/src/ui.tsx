@@ -701,6 +701,78 @@ export interface Distribution {
   p90: number;
   max: number;
   count: number;
+  /** The most commonly asked price, after rounding to ~1% of the cohort's scale. */
+  mode?: { value: number; count: number; step: number };
+}
+
+/** Where an ask sits against what its peers support. */
+export type Verdict = "below" | "inline" | "above" | "unknown";
+
+/** Which comparison produced a valuation. Anything but `exact` widened the net. */
+export type Basis = "exact" | "model_year" | "model" | "none";
+
+const VERDICT_WORD: Record<Verdict, string> = {
+  below: "پایین‌تر از حد معمول",
+  inline: "در حد معمول",
+  above: "بالاتر از حد معمول",
+  unknown: "بدون ارزیابی",
+};
+
+/**
+ * How the comparison was built. This is not a footnote — it changes what the
+ * number means, so it is printed with every valuation that used a wider net.
+ * `model` has thrown away the model year, which for a depreciating car is a
+ * large thing to throw away, and the reader has to be told.
+ */
+const BASIS_NOTE: Record<Basis, (n: number) => string> = {
+  exact: (n) => `بر پایه ${fa(n)} آگهی با همان مدل، تیپ و سال ساخت.`,
+  model_year: (n) =>
+    `بر پایه ${fa(n)} آگهی از همین مدل و سال — تیپ در این مقایسه لحاظ نشده.`,
+  model: (n) =>
+    `بر پایه ${fa(n)} آگهی از همین مدل در همه‌ی سال‌ها — سال ساخت در این مقایسه لحاظ نشده.`,
+  none: () => "",
+};
+
+/**
+ * The headline a buyer can act on without reading anything else.
+ *
+ * Deliberately says "above/below what is typical" rather than
+ * "overpriced/underpriced": the number is a comparison against peers, not a
+ * judgement of the seller, and the cohort behind it can be eight cars.
+ */
+export function PriceVerdict({
+  verdict,
+  gapPct,
+  basis,
+  peerCount,
+  confidence,
+}: {
+  verdict?: Verdict;
+  gapPct?: number | null;
+  basis?: Basis;
+  peerCount?: number | null;
+  confidence?: string;
+}) {
+  if (!verdict || verdict === "unknown") return null;
+  const size = Math.abs(gapPct ?? 0);
+  return (
+    <div className={`verdict verdict-${verdict}`}>
+      <strong>
+        {verdict === "inline" || size < 1
+          ? VERDICT_WORD[verdict]
+          : `${pct(size, 0)} ${VERDICT_WORD[verdict]}`}
+      </strong>
+      {basis && basis !== "none" && peerCount != null && (
+        <span className="muted">{BASIS_NOTE[basis](peerCount)}</span>
+      )}
+      {/* A widened comparison is capped at low confidence however many cars it
+          found, so this badge and the peer count above can look contradictory
+          unless the note explains which comparison ran. */}
+      {confidence === "low" && (
+        <span className="badge warn">اطمینان: کم</span>
+      )}
+    </div>
+  );
 }
 
 /**

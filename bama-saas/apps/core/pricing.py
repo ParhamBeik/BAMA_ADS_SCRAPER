@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import math
 import statistics
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -55,6 +55,27 @@ MIN_PEERS = 8
 # Confidence tiers. Sample size dominates how much a cohort median can be
 # trusted, so it drives the label the user sees.
 TIERS = ((40, "high"), (15, "medium"), (MIN_PEERS, "low"))
+TIER_ORDER = ("insufficient", "low", "medium", "high")
+
+# When the exact cohort is too thin, widen the comparison rather than refuse.
+# Widest last; each rung must clear MIN_PEERS on its own to be used.
+#
+# Measured on production 2026-09-02: a quarter of live listings sit in a
+# (model, variant, year) cohort with fewer than eight peers, and every one of
+# them got no answer at all. A weaker comparison that says which comparison it
+# is beats a blank panel — but only if it says so, which is why `basis` is
+# returned beside every number built this way and why the cap below exists.
+PEER_LADDER = (
+    ("exact", ("model_id", "variant_id", "year_jalali")),
+    ("model_year", ("model_id", "year_jalali")),
+    ("model", ("model_id",)),
+)
+
+# A widened comparison cannot claim more confidence than this however many cars
+# it found. Thirty-one cars of the same model across six model years is not
+# "high" confidence about a 1396 car — it is a different, blunter question, and
+# the headcount alone would happily call it high.
+BASIS_CONFIDENCE_CAP = {"exact": "high", "model_year": "medium", "model": "low"}
 
 # ...but not on its own. Forty peers nobody has seen in three days is not the
 # same evidence as forty seen this morning, and the tier said "high" for both:
@@ -454,6 +475,82 @@ def cohort_peers(*, model_id: int, variant_id, year_jalali
     ]
 
 
+def cap_confidence(label: str, basis: str) -> str:
+    """Never let a headcount claim more than the comparison can support."""
+    cap = BASIS_CONFIDENCE_CAP.get(basis, "low")
+    return label if TIER_ORDER.index(label) <= TIER_ORDER.index(cap) else cap
+
+
+def laddered_peers(*, model_id: int, variant_id, year_jalali
+                   ) -> tuple[list[tuple], str]:
+    """Peers for a car, widening the comparison until one rung is thick enough.
+
+    Returns ``(peers, basis)``. The basis is not a diagnostic — it changes what
+    the number *means*, so it travels with it to every caller and onto the
+    screen. ``exact`` compares like with like; ``model`` has thrown away the
+    model year, which for a car that depreciates is a large thing to throw away.
+    """
+    values = {"model_id": model_id, "variant_id": variant_id,
+              "year_jalali": year_jalali}
+    base = without_cohort_outliers(scorable_rows())
+    for basis, fields in PEER_LADDER:
+        if any(values[f] is None for f in fields):
+            continue
+        peers = [
+            (price, mileage, condition_band(status), last_seen)
+            for price, mileage, status, last_seen in base
+            .filter(**{f: values[f] for f in fields})
+            .values_list("current_price", "mileage", "body_status", "last_seen_at")
+        ]
+        if len(peers) >= MIN_PEERS:
+            return peers, basis
+    return [], "none"
+
+
+# Sellers quote round numbers, so the most *common* asking price is a real
+# feature of this market rather than an artefact — but only after rounding, or
+# every price is its own mode. One percent of the cohort's own scale keeps the
+# granularity sensible for a 200M car and a 6B one alike.
+MODE_GRANULARITY = 0.01
+
+
+def price_mode(prices: list[int]) -> dict:
+    """The most commonly asked price, and how many asked it."""
+    if not prices:
+        return {}
+    step = max(1, int(statistics.median(prices) * MODE_GRANULARITY))
+    counts = Counter(round(p / step) * step for p in prices)
+    value, n = counts.most_common(1)[0]
+    return {"value": int(value), "count": n, "step": step}
+
+
+def position_pct(prices: list[int], asking: int | None) -> int | None:
+    """What share of the cohort is cheaper than this car, 0-100."""
+    if not prices or not asking:
+        return None
+    return round(sum(1 for p in prices if p < asking) / len(prices) * 100)
+
+
+# The gap has to clear the cohort's own noise before it is worth calling. A
+# fixed percentage would label half a tight cohort overpriced and nothing in a
+# loose one; half the median absolute deviation scales with the spread that is
+# actually there. The floor stops a suspiciously uniform cohort from making
+# every 1% wobble a verdict.
+MIN_VERDICT_BAND_PCT = 3.0
+
+
+def price_verdict(gap_pct: float | None, spread: float | None) -> str:
+    """``below`` / ``inline`` / ``above`` — where an ask sits against fair value."""
+    if gap_pct is None:
+        return "unknown"
+    band = max(MIN_VERDICT_BAND_PCT, (spread or 0) * 100 / 2)
+    if gap_pct <= -band:
+        return "below"
+    if gap_pct >= band:
+        return "above"
+    return "inline"
+
+
 def fair_price(code: str) -> dict:
     """An explainable asking-price estimate for one listing."""
     ad = (
@@ -465,7 +562,7 @@ def fair_price(code: str) -> dict:
     if not ad.model_id or not ad.current_price:
         return {"code": code, "available": False, "reason": "missing_model_or_price"}
 
-    peers = cohort_peers(
+    peers, basis = laddered_peers(
         model_id=ad.model_id, variant_id=ad.variant_id, year_jalali=ad.year_jalali,
     )
     baseline = cohort_baseline(peers)
@@ -473,7 +570,7 @@ def fair_price(code: str) -> dict:
         return {
             "code": code, "available": False, "reason": "insufficient_peers",
             "asking": ad.current_price, "peer_count": len(peers),
-            "min_peers": MIN_PEERS,
+            "min_peers": MIN_PEERS, "basis": basis,
         }
 
     adjusted = baseline.adjusted(
@@ -509,20 +606,30 @@ def fair_price(code: str) -> dict:
             "facts": {"peers": adjusted.bucket_peers, "bucket": adjusted.bucket},
         })
 
+    prices = [p for p, *_ in peers]
+    spread = dispersion(prices, baseline.base)
+    gap_pct = (
+        round((ad.current_price - adjusted.fair_value) / adjusted.fair_value * 100, 1)
+        if adjusted.fair_value else None
+    )
     return {
         "code": code,
         "available": True,
         "reason": "",
         "asking": ad.current_price,
         "fair_value": adjusted.fair_value,
-        "gap_pct": (
-            round((ad.current_price - adjusted.fair_value) / adjusted.fair_value * 100, 1)
-            if adjusted.fair_value else None
-        ),
+        "gap_pct": gap_pct,
+        # The headline. Positive `gap_pct` means the seller is asking above what
+        # the peers support, so this is the one field a reader can act on
+        # without reading anything else on the panel.
+        "verdict": price_verdict(gap_pct, spread),
+        # Which comparison produced all of the above. `exact` is like-for-like;
+        # anything else widened the net and the screen has to say so.
+        "basis": basis,
         "components": components,
         "peer_count": baseline.peer_count,
-        "dispersion": dispersion([p for p, *_ in peers], baseline.base),
-        "confidence": baseline.confidence,
+        "dispersion": spread,
+        "confidence": cap_confidence(baseline.confidence, basis),
         # The freshness of the cohort this number was built from, as opposed to
         # the freshness of the crawl as a whole (which is what the envelope's
         # `coverage` describes). A healthy sweep can still be quoting a cohort
@@ -533,7 +640,10 @@ def fair_price(code: str) -> dict:
         # A components table answers "how was the number built"; this answers
         # "is this cheap", which is the question people actually arrive with.
         # Free: it is the same peer list the baseline was computed from.
-        "distribution": peer_distribution([p for p, *_ in peers]),
+        "distribution": peer_distribution(prices),
+        # "Cheaper than 72% of comparable cars" is the sentence people actually
+        # want, and it needs no arithmetic from the reader.
+        "position_pct": position_pct(prices, ad.current_price),
     }
 
 
@@ -555,6 +665,10 @@ def peer_distribution(prices: list[int]) -> dict:
         "p90": int(percentile(prices, 90)),
         "max": max(prices),
         "count": len(prices),
+        # Median answers "what is the middle"; mode answers "what are people
+        # actually asking", and in a market that quotes round numbers those are
+        # different and both worth showing.
+        "mode": price_mode(prices),
     }
 
 
@@ -793,12 +907,20 @@ def _turnover_rates() -> dict[int, dict]:
 
 
 def compute_deal_scores(*, model_id: int | None = None) -> dict:
-    """Rebuild deal scores for every eligible ad, or one model's.
+    """Value every eligible ad against its peers, or one model's.
+
+    This used to write only bargains, and the name still says "deal" because
+    that is what the board reads. But refusing to store a row for a car priced
+    at or above its peers meant the product could say "this is cheap" and could
+    never say "this is fair" or "you are being overcharged" — and on production
+    that silence covered 16,459 of 23,698 live cars. Every valued car now gets
+    a row; ``discount_pct`` simply goes negative when the ask is above the peer
+    median, and the board filters on the sign.
 
     Eligible = ACTIVE, priced, publish-complete, price is one car's cash price,
-    cohort of at least ``MIN_PEERS``. Rows with a non-positive fair value, an
-    asking price at or above it, or one below half the peer median are not
-    written at all: a board of typos and non-deals is worse than a short board.
+    and *some* rung of ``PEER_LADDER`` has at least ``MIN_PEERS``. Still not
+    written: a non-positive fair value, or an ask below half the peer median.
+    Those are typos, not prices, and no verdict on them is meaningful.
 
     Idempotent — a full refresh drops every row and rebuilds, a per-model
     refresh drops only that model's.
@@ -828,21 +950,30 @@ def compute_deal_scores(*, model_id: int | None = None) -> dict:
     # defaulted — "we do not know how fast this sells" is not "it sells slowly".
     liquidity = _turnover_rates()
 
-    peers_by_cohort: dict = defaultdict(list)
+    # Group at every rung of the ladder in one pass, so a car whose exact cohort
+    # is too thin is still compared against something rather than dropped. A
+    # quarter of live listings are in that position.
+    groups: dict[str, dict[tuple, list]] = {b: defaultdict(list) for b, _ in PEER_LADDER}
     for r in rows:
-        if None not in (r["model_id"], r["variant_id"], r["year_jalali"]):
-            peers_by_cohort[(r["model_id"], r["variant_id"], r["year_jalali"])].append(r)
+        for basis, fields in PEER_LADDER:
+            if any(r[f] is None for f in fields):
+                continue
+            groups[basis][tuple(r[f] for f in fields)].append(r)
 
-    now = timezone.now()
-    objs: list[DealScoreCache] = []
-    explained_low: list[Ad] = []
-    cleared_low: list[Ad] = []
-    for (mid, vid, yj), peers in peers_by_cohort.items():
-        # The baseline is built from unflagged peers, but every peer is still
-        # scored against it. Both halves matter: an outlier that helps set the
-        # baseline shrinks its own apparent discount, while an outlier dropped
-        # from the results is a genuinely underpriced car hidden from the one
-        # board a buyer reads.
+    built: dict[tuple[str, tuple], tuple | None] = {}
+
+    def cohort_for(basis: str, key: tuple):
+        """``(baseline, spread)`` for one group, computed once and reused.
+
+        The baseline is built from unflagged peers, but every peer is still
+        scored against it. Both halves matter: an outlier that helps set the
+        baseline shrinks its own apparent discount, while an outlier dropped
+        from the results is a genuinely underpriced car hidden from the one
+        board a buyer reads.
+        """
+        if (basis, key) in built:
+            return built[(basis, key)]
+        peers = groups[basis][key]
         clean = [r for r in peers if not set(r["cohort_flags"] or []) & COHORT_FLAGS]
         baseline_rows = clean if len(clean) >= MIN_PEERS else peers
         baseline = cohort_baseline(
@@ -850,91 +981,126 @@ def compute_deal_scores(*, model_id: int | None = None) -> dict:
               r["last_seen_at"])
              for r in baseline_rows]
         )
-        if baseline is None:
+        result = None
+        if baseline is not None:
+            result = (baseline, dispersion(
+                [r["current_price"] for r in baseline_rows if r["current_price"]],
+                baseline.base,
+            ))
+        built[(basis, key)] = result
+        return result
+
+    now = timezone.now()
+    objs: list[DealScoreCache] = []
+    explained_low: list[Ad] = []
+    cleared_low: list[Ad] = []
+    for r in rows:
+        found = None
+        for basis, fields in PEER_LADDER:
+            if any(r[f] is None for f in fields):
+                continue
+            got = cohort_for(basis, tuple(r[f] for f in fields))
+            if got is not None:
+                found = (basis, *got)
+                break
+        if found is None:
             continue
-        spread = dispersion(
-            [r["current_price"] for r in baseline_rows if r["current_price"]], baseline.base
-        )
+        basis, baseline, spread = found
+        mid, vid, yj = r["model_id"], r["variant_id"], r["year_jalali"]
         floor = MIN_ASK_VS_MEDIAN * baseline.base
 
-        for r in peers:
-            adjusted = baseline.adjusted(
-                r["mileage"], condition_band(r["body_status"]),
-                haircuts, mile_haircuts,
-            )
-            fair_value = adjusted.fair_value
-            price = r["current_price"]
-            has_low = FLAG_OUTLIER_LOW in (r["cohort_flags"] or [])
-            explained = (
-                price < baseline.base * 0.9
-                and ((adjusted.band_adjustment or 0) + (adjusted.adjustment or 0)) != 0
-                and (fair_value <= 0 or (fair_value - price) / max(fair_value, 1) * 100 <= 0)
-            )
-            if explained and not has_low:
-                flags = [f for f in (r["cohort_flags"] or []) if f != FLAG_OUTLIER_LOW]
-                flags.append(FLAG_OUTLIER_LOW)
-                explained_low.append(Ad(code=r["code"], cohort_flags=flags))
-            elif has_low and not explained:
-                cleared_low.append(Ad(
-                    code=r["code"],
-                    cohort_flags=[f for f in (r["cohort_flags"] or [])
-                                  if f != FLAG_OUTLIER_LOW],
-                ))
-            # fair_value <= 0 means the adjustment ate the car. Bucket medians
-            # cannot produce one, but the last generation shipped 123% discounts
-            # because nothing ever checked.
-            if fair_value <= 0 or price < floor:
-                continue
-            # Measured against the cohort median, which is the number every
-            # surface prints next to it. It used to be measured against
-            # `fair_value` while the card struck through `peer_median`, so the
-            # two figures on screen could not be reconciled by the reader — a
-            # Tondar 90 showed price 1.20B, median 1.20B and a badge of 9%.
-            # The condition and mileage adjustments still ride along in
-            # `components` and still drive the fair-price estimate on the
-            # listing page; they simply no longer move the headline number.
-            discount_pct = (baseline.base - price) / baseline.base * 100
-            if discount_pct <= 0:
-                continue  # priced at or above the peer median: not a deal
-            first_seen = r["first_seen_at"]
-            objs.append(DealScoreCache(
-                ad_id=r["code"],
-                score=round(min(100.0, discount_pct), 1),
-                discount_pct=round(discount_pct, 2),
-                peer_median=int(baseline.base),
-                needs_review=adjusted.band in REVIEW_CONDITION_BANDS,
-                components={
-                    "discount_pct": round(discount_pct, 2),
-                    "peer_median": int(baseline.base),
-                    "fair_value": fair_value,
-                    "price": price,
-                    "age_days": (now - first_seen).days if first_seen else 0,
-                    "peer_count": baseline.peer_count,
-                    "confidence": baseline.confidence,
-                    # Why the confidence may be lower than the peer count alone
-                    # would suggest. Without this the badge appears to
-                    # contradict the number printed next to it.
-                    "cohort_stale": baseline.stale,
-                    "dispersion": spread,
-                    "model_id": mid,
-                    "variant_id": vid,
-                    "year_jalali": yj,
-                    "mileage": r["mileage"],
-                    "mileage_adjustment": adjusted.adjustment,
-                    "mileage_bucket": adjusted.bucket,
-                    "mileage_bucket_peers": adjusted.bucket_peers,
-                    "mileage_basis": adjusted.mileage_basis,
-                    "body_status": r["body_status"],
-                    "condition_band": adjusted.band,
-                    "condition_adjustment": adjusted.band_adjustment,
-                    "condition_band_peers": adjusted.band_peers,
-                    "condition_basis": adjusted.band_basis,
-                    # Absent, not zero, when there is no measured rate for this
-                    # model: the UI must be able to tell "sells slowly" from
-                    # "we have not watched it long enough to say".
-                    **({"liquidity": liquidity[mid]} if mid in liquidity else {}),
-                },
+        adjusted = baseline.adjusted(
+            r["mileage"], condition_band(r["body_status"]),
+            haircuts, mile_haircuts,
+        )
+        fair_value = adjusted.fair_value
+        price = r["current_price"]
+        has_low = FLAG_OUTLIER_LOW in (r["cohort_flags"] or [])
+        explained = (
+            price < baseline.base * 0.9
+            and ((adjusted.band_adjustment or 0) + (adjusted.adjustment or 0)) != 0
+            and (fair_value <= 0 or (fair_value - price) / max(fair_value, 1) * 100 <= 0)
+        )
+        if explained and not has_low:
+            flags = [f for f in (r["cohort_flags"] or []) if f != FLAG_OUTLIER_LOW]
+            flags.append(FLAG_OUTLIER_LOW)
+            explained_low.append(Ad(code=r["code"], cohort_flags=flags))
+        elif has_low and not explained:
+            cleared_low.append(Ad(
+                code=r["code"],
+                cohort_flags=[f for f in (r["cohort_flags"] or [])
+                              if f != FLAG_OUTLIER_LOW],
             ))
+        # fair_value <= 0 means the adjustment ate the car. Bucket medians
+        # cannot produce one, but the last generation shipped 123% discounts
+        # because nothing ever checked.
+        if fair_value <= 0 or price < floor:
+            continue
+        # Measured against the cohort median, which is the number every
+        # surface prints next to it. It used to be measured against
+        # `fair_value` while the card struck through `peer_median`, so the
+        # two figures on screen could not be reconciled by the reader — a
+        # Tondar 90 showed price 1.20B, median 1.20B and a badge of 9%.
+        # The condition and mileage adjustments still ride along in
+        # `components` and still drive the fair-price estimate on the
+        # listing page; they simply no longer move the headline number.
+        discount_pct = (baseline.base - price) / baseline.base * 100
+        # A row is now written whatever the sign. A negative `discount_pct` is a
+        # car priced *above* its peers, and that is an answer a buyer asked for
+        # — "is this price fair?" is a different question from "is this a
+        # bargain?", and only the second one used to be answerable. The board
+        # still shows bargains only; it filters on the sign at query time
+        # instead of the sign deciding whether the car is valued at all.
+        first_seen = r["first_seen_at"]
+        gap_pct = (
+            round((price - fair_value) / fair_value * 100, 1) if fair_value else None
+        )
+        objs.append(DealScoreCache(
+            ad_id=r["code"],
+            score=round(min(100.0, discount_pct), 1),
+            discount_pct=round(discount_pct, 2),
+            peer_median=int(baseline.base),
+            needs_review=adjusted.band in REVIEW_CONDITION_BANDS,
+            components={
+                "discount_pct": round(discount_pct, 2),
+                "peer_median": int(baseline.base),
+                "fair_value": fair_value,
+                "price": price,
+                # Against `fair_value` rather than the median, so the listing
+                # page and the board agree on the verdict word even though they
+                # headline different numbers.
+                "gap_pct": gap_pct,
+                "verdict": price_verdict(gap_pct, spread),
+                # Which rung of the ladder produced this. Anything but "exact"
+                # widened the comparison and the screen has to say so.
+                "basis": basis,
+                "age_days": (now - first_seen).days if first_seen else 0,
+                "peer_count": baseline.peer_count,
+                "confidence": cap_confidence(baseline.confidence, basis),
+                # Why the confidence may be lower than the peer count alone
+                # would suggest. Without this the badge appears to
+                # contradict the number printed next to it.
+                "cohort_stale": baseline.stale,
+                "dispersion": spread,
+                "model_id": mid,
+                "variant_id": vid,
+                "year_jalali": yj,
+                "mileage": r["mileage"],
+                "mileage_adjustment": adjusted.adjustment,
+                "mileage_bucket": adjusted.bucket,
+                "mileage_bucket_peers": adjusted.bucket_peers,
+                "mileage_basis": adjusted.mileage_basis,
+                "body_status": r["body_status"],
+                "condition_band": adjusted.band,
+                "condition_adjustment": adjusted.band_adjustment,
+                "condition_band_peers": adjusted.band_peers,
+                "condition_basis": adjusted.band_basis,
+                # Absent, not zero, when there is no measured rate for this
+                # model: the UI must be able to tell "sells slowly" from
+                # "we have not watched it long enough to say".
+                **({"liquidity": liquidity[mid]} if mid in liquidity else {}),
+            },
+        ))
 
     if model_id is not None:
         DealScoreCache.objects.filter(ad__model_id=model_id).delete()

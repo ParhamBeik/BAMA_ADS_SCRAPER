@@ -737,6 +737,12 @@ def deal_scores(request):
     qs = _deal_score_qs(now=now, by_freshness=band not in ("review", "ml"))
     cutoff = now - timedelta(days=window["window_days"])
 
+    # Every band on this endpoint is a *deal* board, and the cache now holds a
+    # valuation for every car including those priced above their peers. Without
+    # this the `all` band — which has no threshold of its own — would quietly
+    # turn into "every listing" the moment the valuation went universal.
+    qs = qs.filter(discount_pct__gt=0)
+
     # "The gap has a cause this score cannot see" — once as a threshold on the
     # discount, once as the seller's own declaration. Built as one predicate so
     # the bands cannot drift into overlapping or leaving a row homeless.

@@ -646,7 +646,7 @@ def _cover(at, lo=1, hi=FEED_DEPTH, run=None):
 
 
 def _ad(catalog, code, last_seen, *, price=1_000_000_000, mileage=100_000,
-        seen_recently=False):
+        seen_recently=False, year_jalali=1399):
     """One ACTIVE listing.
 
     `seen_recently` decouples "when was this published" from "when did the
@@ -660,7 +660,7 @@ def _ad(catalog, code, last_seen, *, price=1_000_000_000, mileage=100_000,
     return Ad.objects.create(
         code=code, brand=catalog["brand"], model=catalog["model"],
         variant=catalog["variant"], city=catalog["city"],
-        year=1399, year_jalali=1399, year_calendar="jalali",
+        year=year_jalali, year_jalali=year_jalali, year_calendar="jalali",
         mileage=mileage, current_price=price,
         publish_at=last_seen, first_seen_at=last_seen - timedelta(days=10),
         last_seen_at=djtz.now() if seen_recently else last_seen,
@@ -912,14 +912,21 @@ def test_thin_cohort_is_not_scored(catalog):
 
 
 @pytest.mark.django_db
-def test_asking_above_peer_median_is_not_a_deal(catalog):
+def test_a_car_above_its_peers_is_valued_but_is_not_a_deal(catalog):
+    """It used to be dropped entirely, which is why the product could say "this
+    is cheap" and never "you are being overcharged". It is now valued with a
+    negative discount; the *board* is what filters on the sign."""
     for i in range(8):
         _ad(catalog, f"peer{i:03d}", NOW, price=1_000_000_000, mileage=100_000)
     expensive = _ad(catalog, "pricey01", NOW, price=1_200_000_000, mileage=100_000)
 
     compute_deal_scores()
 
-    assert DealScoreCache.objects.filter(ad_id=expensive.code).first() is None
+    row = DealScoreCache.objects.get(ad_id=expensive.code)
+    assert row.discount_pct < 0
+    assert row.components["verdict"] == "above"
+    assert DealScoreCache.objects.filter(discount_pct__gt=0,
+                                         ad_id=expensive.code).first() is None
 
 
 @pytest.mark.django_db
@@ -1171,3 +1178,121 @@ def test_pruned_counts_ads_not_cascaded_rows(known_catalog, make_payload):
 
     # 1 ad, not the handful of related rows deleted alongside it.
     assert backfill_images()["pruned"] == 1
+
+
+# ===========================================================================
+# Universal valuation: the backoff ladder, and the verdict for every car
+# ===========================================================================
+
+
+@pytest.mark.django_db
+def test_a_thin_cohort_widens_the_comparison_instead_of_refusing(catalog):
+    """A quarter of live listings sit in a cohort under MIN_PEERS and used to
+    get nothing at all. The comparison widens to the model year, then the model,
+    and says which one it used."""
+    from apps.core import pricing
+
+    # Two cars of this exact variant+year — far short of MIN_PEERS — but plenty
+    # of the same model in other years.
+    thin = _ad(catalog, "thin0001", NOW, price=900_000_000, mileage=100_000,
+               year_jalali=1399)
+    _ad(catalog, "thin0002", NOW, price=910_000_000, mileage=100_000, year_jalali=1399)
+    for i in range(10):
+        _ad(catalog, f"other{i:03d}", NOW, price=1_000_000_000, mileage=100_000,
+            year_jalali=1400)
+
+    result = pricing.fair_price(thin.code)
+
+    assert result["available"] is True
+    assert result["basis"] == "model"
+    assert result["peer_count"] >= pricing.MIN_PEERS
+
+
+@pytest.mark.django_db
+def test_a_widened_comparison_cannot_claim_high_confidence(catalog):
+    """Thirty cars of one model across six years is not strong evidence about a
+    1399 car. Headcount alone would happily call it high."""
+    from apps.core import pricing
+
+    thin = _ad(catalog, "thin0001", NOW, price=900_000_000, mileage=100_000,
+               year_jalali=1399, seen_recently=True)
+    for i in range(45):
+        _ad(catalog, f"other{i:03d}", NOW, price=1_000_000_000, mileage=100_000,
+            year_jalali=1400, seen_recently=True)
+
+    result = pricing.fair_price(thin.code)
+
+    assert result["basis"] == "model"
+    assert result["confidence"] == "low"
+
+
+@pytest.mark.django_db
+def test_an_exact_cohort_is_preferred_over_a_wider_one(catalog):
+    """The ladder must stop at the first rung that is thick enough, or every
+    car would be judged against the broadest possible comparison."""
+    from apps.core import pricing
+
+    target = _ad(catalog, "target01", NOW, price=900_000_000, mileage=100_000,
+                 year_jalali=1399)
+    for i in range(9):
+        _ad(catalog, f"same{i:03d}", NOW, price=1_000_000_000, mileage=100_000,
+            year_jalali=1399)
+    for i in range(30):
+        _ad(catalog, f"other{i:03d}", NOW, price=400_000_000, mileage=100_000,
+            year_jalali=1390)
+
+    result = pricing.fair_price(target.code)
+
+    assert result["basis"] == "exact"
+    assert result["peer_count"] == 10
+
+
+@pytest.mark.django_db
+def test_the_verdict_scales_with_the_cohort_s_own_spread(catalog):
+    """A fixed percentage would call half a tight cohort overpriced and nothing
+    in a loose one."""
+    from apps.core.pricing import price_verdict
+
+    # 4% over, in a cohort whose typical deviation is 20% — noise.
+    assert price_verdict(4.0, 0.20) == "inline"
+    # The same 4% in a cohort where cars sit within 1% of each other — real.
+    assert price_verdict(4.0, 0.01) == "above"
+    assert price_verdict(-9.0, 0.02) == "below"
+    assert price_verdict(None, 0.02) == "unknown"
+
+
+@pytest.mark.django_db
+def test_the_most_common_asking_price_is_reported_beside_the_median(catalog):
+    """Sellers quote round numbers, so the mode is a real feature of this market
+    — but only after rounding, or every price is its own mode."""
+    from apps.core.pricing import price_mode
+
+    prices = [1_000_000_000] * 5 + [1_004_000_000] * 3 + [1_500_000_000]
+    mode = price_mode(prices)
+
+    # 1.000B and 1.004B are the same asking price to any human reader.
+    assert mode["count"] == 8
+    assert abs(mode["value"] - 1_000_000_000) < 20_000_000
+
+
+@pytest.mark.django_db
+def test_the_deal_board_still_shows_only_bargains(catalog, staff_client):
+    """The cache went universal; the board must not have. `all` has no threshold
+    of its own, so without an explicit filter it would become "every listing"."""
+    # Published now, not at the module's fixed NOW: the board only shows
+    # listings inside its freshness window, and NOW is weeks in the past.
+    fresh = djtz.now()
+    for i in range(8):
+        _ad(catalog, f"peer{i:03d}", fresh, price=1_000_000_000, mileage=100_000,
+            seen_recently=True)
+    _ad(catalog, "pricey01", fresh, price=1_400_000_000, mileage=100_000,
+        seen_recently=True)
+    _ad(catalog, "bargain1", fresh, price=800_000_000, mileage=100_000,
+        seen_recently=True)
+
+    compute_deal_scores()
+
+    codes = {r["code"] for r in
+             staff_client.get("/api/analytics/deal-scores/?band=all").json()["results"]}
+    assert "bargain1" in codes
+    assert "pricey01" not in codes
