@@ -1222,6 +1222,22 @@ def test_logout_everywhere_kills_other_devices(catalog):
 
 
 @pytest.mark.django_db
+def test_logout_everywhere_blacklists_jwt_tokens():
+    from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken
+    from rest_framework_simplejwt.tokens import RefreshToken
+
+    user = User.objects.create_user(email="jwt_user@example.com", password="StrongPass1!")
+    refresh = RefreshToken.for_user(user)
+    client = APIClient()
+    client.force_authenticate(user)
+    assert not BlacklistedToken.objects.filter(token__token=str(refresh)).exists()
+
+    resp = client.post("/api/auth/logout-everywhere/")
+    assert resp.status_code == 200
+    assert BlacklistedToken.objects.filter(token__token=str(refresh)).exists()
+
+
+@pytest.mark.django_db
 def test_email_availability_is_reported_before_submit(api_client):
     User.objects.create_user(email="taken@example.com", password="StrongPass1!")
 
@@ -1364,6 +1380,40 @@ def test_failed_image_fetch_is_not_retried_until_its_short_marker_expires(monkey
     assert images.fetch(_LARGE[0]) is None
     assert images.fetch(_LARGE[0]) is None
     assert len(calls) == 1
+
+
+def test_svg_image_is_refused(monkeypatch):
+    monkeypatch.setattr(images, "consecutive_blocks", lambda: 0)
+
+    class FakeResponse:
+        headers = {"Content-Type": "image/svg+xml"}
+
+        def raise_for_status(self):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def iter_content(self, chunk_size):
+            return [b"<svg></svg>"]
+
+    monkeypatch.setattr(images.requests, "get", lambda *args, **kwargs: FakeResponse())
+    assert images.fetch(_SMALL) is None
+
+
+@pytest.mark.django_db
+def test_listing_image_endpoint_has_csp(member, catalog, monkeypatch):
+    client, _ = member
+    ad = catalog["ads"][0]
+    ad.primary_image_url = "https://cdn.bama.ir/thumb.jpg"
+    ad.save(update_fields=["primary_image_url"])
+    monkeypatch.setattr(images, "fetch", lambda url: ("image/jpeg", b"\xff\xd8\xff\xe0"))
+    resp = client.get(f"/api/img/{ad.code}/thumb/")
+    assert resp.status_code == 200
+    assert resp.headers["Content-Security-Policy"] == "default-src 'none'"
 
 
 @pytest.mark.django_db

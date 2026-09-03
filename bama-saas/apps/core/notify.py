@@ -14,9 +14,11 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from datetime import timedelta
 
 import requests
 from django.conf import settings
+from django.utils import timezone
 
 from apps.core.models import DealScoreCache, NotifiedAd, NotifierSettings
 from apps.core.quality import exclude_unclear_price, verified_by_ad
@@ -257,16 +259,19 @@ def deliver_alerts(*, dry_run: bool = False) -> dict:
     return {"rules": len(rules), "delivered": delivered, "dry_run": dry_run}
 
 
-def send_alerts(*, dry_run: bool = False) -> dict:
+def send_alerts(*, dry_run: bool = False, max_send: int = MAX_PER_RUN) -> dict:
     """Retry unsent per-user Telegram alerts without rebuilding the feed."""
     from apps.accounts.models import AlertDelivery
 
-    pending = AlertDelivery.objects.filter(
-        telegram_sent=False, rule__telegram_chat_id__gt="",
-    ).select_related("ad", "rule")
-    pending_count = pending.count()
+    since = timezone.now() - timedelta(hours=24)
+    pending_qs = AlertDelivery.objects.filter(
+        telegram_sent=False,
+        rule__telegram_chat_id__gt="",
+        created_at__gte=since,
+    ).select_related("ad", "rule").order_by("-created_at")
+    pending_count = pending_qs.count()
     sent = 0
-    for delivery in pending:
+    for delivery in pending_qs[:max_send]:
         if dry_run:
             sent += 1
         elif send_telegram(format_delivery_alert(delivery), delivery.rule.telegram_chat_id):

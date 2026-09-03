@@ -423,6 +423,7 @@ def listing_image(request, code: str, index: int | None = None):
     # that copy to whoever asks — the same shape as the response cache that made
     # the analytics readable without an account. Browsers still cache it.
     response["Cache-Control"] = f"private, max-age={settings.IMAGE_CACHE_SECONDS}, immutable"
+    response["Content-Security-Policy"] = "default-src 'none'"
     response["ETag"] = f'"{hashlib.sha256(body).hexdigest()[:32]}"'
     response["Content-Length"] = str(len(body))
     return response

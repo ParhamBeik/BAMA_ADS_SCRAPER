@@ -38,6 +38,13 @@ CACHE_PREFIX = "img:v1:"
 FAILED_CACHE_PREFIX = "img:failed:v1:"
 IMAGE_FETCH_TIMEOUT = 5
 FAILED_IMAGE_CACHE_SECONDS = 120
+ALLOWED_IMAGE_TYPES = frozenset({
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/webp",
+    "image/avif",
+})
 
 
 def proxy_path(code: str, index: int) -> str:
@@ -116,9 +123,11 @@ def fetch(url: str) -> tuple[str, bytes] | None:
             stream=True,
         ) as response:
             response.raise_for_status()
-            content_type = (response.headers.get("Content-Type") or "").split(";")[0].strip()
-            if not content_type.startswith("image/"):
-                log.warning("images: %s answered %s, not an image", url, content_type or "?")
+            raw_type = (response.headers.get("Content-Type") or "").split(";")[0]
+            content_type = raw_type.strip().lower()
+            if content_type not in ALLOWED_IMAGE_TYPES:
+                log.warning("images: %s answered %s, not an allowed image type",
+                            url, content_type or "?")
                 return None
 
             # Read with a ceiling rather than trusting Content-Length, which a

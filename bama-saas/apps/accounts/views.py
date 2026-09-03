@@ -174,6 +174,16 @@ class LogoutEverywhereView(APIView):
             if row.get_decoded().get("_auth_user_id") == uid:
                 row.delete()
                 killed += 1
+        try:
+            from rest_framework_simplejwt.token_blacklist.models import (
+                BlacklistedToken,
+                OutstandingToken,
+            )
+
+            for token in OutstandingToken.objects.filter(user=request.user):
+                BlacklistedToken.objects.get_or_create(token=token)
+        except Exception:  # noqa: BLE001
+            pass
         logout(request)
         return Response({"sessions_ended": killed})
 

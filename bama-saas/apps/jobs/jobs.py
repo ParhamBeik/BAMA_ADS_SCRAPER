@@ -320,7 +320,8 @@ def sync_episodes(*, limit: int | None = None, full: bool = False) -> dict:
     if not full and last_sync:
         ads = ads.filter(
             Q(last_seen_at__gte=last_sync)
-            | Q(status__in=(Ad.Status.REMOVED, Ad.Status.UNVERIFIED))
+            | Q(code__in=open_by_ad.keys())
+            | Q(removed_at__gte=last_sync)
         )
     if limit:
         ads = ads[:limit]
