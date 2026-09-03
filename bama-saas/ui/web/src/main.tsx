@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter } from "react-router-dom";
 import { App } from "./App";
 import { AuthProvider } from "./auth";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ThemeProvider } from "./theme";
 // Fonts are declared in styles.css, not imported here: an @import in this file
 // means the browser cannot discover them until the JS module graph has loaded
@@ -25,16 +26,21 @@ const queryClient = new QueryClient({
   },
 });
 
+// The boundary is outside every provider on purpose. A provider that throws
+// during its own render takes the tree down just as thoroughly as a page does,
+// and a boundary nested inside one cannot catch its parent.
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <ThemeProvider>
-        <AuthProvider>
-          <BrowserRouter>
-            <App />
-          </BrowserRouter>
-        </AuthProvider>
-      </ThemeProvider>
-    </QueryClientProvider>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <ThemeProvider>
+          <AuthProvider>
+            <BrowserRouter>
+              <App />
+            </BrowserRouter>
+          </AuthProvider>
+        </ThemeProvider>
+      </QueryClientProvider>
+    </ErrorBoundary>
   </StrictMode>,
 );

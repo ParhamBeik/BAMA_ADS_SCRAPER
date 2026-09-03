@@ -6,13 +6,15 @@
 
 | Page | Performance | Accessibility | Best practices | SEO |
 | --- | --- | --- | --- | --- |
-| `/` — public landing | **100** | **100** | **100** | **100** |
-| `/login` | 95 | **100** | **100** | **100** |
+| `/` → `/login` | 95 | **100** | **100** | **100** |
 | `/methodology` | 94 | **100** | **100** | **100** |
 
-`/` is a complete static document: FCP 0.9s, LCP 0.9s, TBT 0ms, CLS 0, 20 DOM
-elements. It carries no JavaScript at all, which is why it is the one page that
-scores 100 on performance and why it does so repeatably.
+There used to be a third row here, and it was the good one: a static landing
+document at `/` that scored a repeatable 100 on performance with FCP 0.9s and no
+JavaScript at all. It was removed on request — `/` is the application now, and an
+anonymous visitor is redirected to the sign-in form. The cost is stated plainly
+because it is real: the site no longer has a page a crawler can read, so the
+sitemap has one entry and the SEO ceiling here is the methodology page.
 
 `/login` and `/methodology` are React routes. Their remaining 5–6 points are
 one thing: the browser cannot paint until 14 KB of render-blocking CSS has
@@ -42,7 +44,6 @@ a page that already scores 100.
 
 | Change | Effect |
 | --- | --- |
-| Static landing at `/` | FCP 3.4s → 0.9s, LCP 3.8s → 0.9s |
 | `echarts` → modular registration | chart chunk 1.1 MB → 560 KB |
 | Removed the `charts` manual chunk | 560 KB left the initial `modulepreload` set |
 | Dropped all `modulepreload` hints | FCP 2.3s → 1.9s — they outranked the one stylesheet that blocks rendering |

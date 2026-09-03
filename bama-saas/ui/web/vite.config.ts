@@ -3,11 +3,11 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import type { Plugin } from "vite";
-import { landingHtml, robotsTxt, sitemapXml } from "./scripts/landing";
+import { robotsTxt, sitemapXml } from "./scripts/seo";
 
-// The public origin: the canonical link, the sitemap's `<loc>`s, and the
-// `Sitemap:` line in robots.txt all come from here, because a crawler discards
-// a sitemap advertised from a different host than the one it is on.
+// The public origin: the sitemap's `<loc>`s and the `Sitemap:` line in
+// robots.txt both come from here, because a crawler discards a sitemap
+// advertised from a different host than the one it is on.
 //
 // `||`, not `??`: Docker's `ENV VITE_SITE_URL=$VITE_SITE_URL` sets the variable
 // to the empty string when the build arg is not passed, and an empty string is
@@ -35,31 +35,19 @@ const SITE_URL = (process.env.VITE_SITE_URL || "https://bama-89-106-206-4.sslip.
  * acceptably; the Persian body text is the one that looks broken in Tahoma.
  */
 /**
- * Emit the public landing page as a second, standalone document.
+ * Emit the two files a crawler reads.
  *
- * nginx serves it at `/` and the SPA shell everywhere else, so a first-time
- * visitor gets HTML instead of a spinner and a crawler gets something to read,
- * without the app's own routes losing their shell. See scripts/landing.mjs for
- * why a page with no data does not get a framework.
+ * Emitted, not kept in `public/`: both name the site's origin, and a file
+ * copied verbatim out of `public/` cannot pick it up. They used to exist in
+ * both places, where the emitted copy silently won and the committed one was
+ * what everybody edited.
  */
-function emitLanding(): Plugin {
+function emitSeoFiles(): Plugin {
   return {
-    name: "emit-landing",
+    name: "emit-seo-files",
     enforce: "post",
     apply: "build",
-    generateBundle(_options, bundle) {
-      const fontHref = Object.keys(bundle).find((f) =>
-        /vazirmatn-arabic-.*\.woff2$/.test(f),
-      );
-      this.emitFile({
-        type: "asset",
-        fileName: "landing.html",
-        source: landingHtml({ fontHref, siteUrl: SITE_URL }),
-      });
-      // Emitted, not kept in `public/`: both of these name the site's origin,
-      // and a file copied verbatim out of `public/` cannot pick it up. They
-      // used to exist in both places, where the emitted copy silently won and
-      // the committed one was what everybody edited.
+    generateBundle() {
       this.emitFile({ type: "asset", fileName: "sitemap.xml", source: sitemapXml(SITE_URL) });
       this.emitFile({ type: "asset", fileName: "robots.txt", source: robotsTxt(SITE_URL) });
     },
@@ -86,7 +74,7 @@ function preloadPersianFont(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), preloadPersianFont(), emitLanding()],
+  plugins: [react(), tailwindcss(), preloadPersianFont(), emitSeoFiles()],
   // `@` is the convention every shadcn component is generated against; without it
   // each generated file would need its import paths rewritten by hand.
   resolve: { alias: { "@": path.resolve(import.meta.dirname, "src") } },

@@ -18,6 +18,14 @@ import { AppHeader, AuthHeader, MobileNav } from "./components/AppHeader";
 // the opposite: it imports the deal card, which imports the whole card tree, so
 // an anonymous visitor on the login form was downloading the authenticated
 // home page's dependencies to render an email field.
+//
+// Every one of the lazy routes below is wrapped in `<Lazy>`, and that is not
+// decoration. Six of them were not, and the failure was silent and total: React
+// has no fallback to show, so `#root` renders empty, and an empty root on this
+// app is a black screen — `--bg` is `#14120f` in dark mode. Reproduced by
+// failing one chunk request, which is a Tuesday on the connections these
+// readers are on. Suspense covers the wait; the boundary in main.tsx covers the
+// rejection, because a `lazy()` that never resolves throws rather than suspends.
 import { Login } from "./pages/Login";
 
 const Home = lazy(() => import("./pages/Home").then((m) => ({ default: m.Home })));
@@ -121,7 +129,7 @@ function AuthRoutes() {
         />
         <Route
           path="/signup"
-          element={<><AuthHeader to="/login" label="ورود" /><Signup /></>}
+          element={<><AuthHeader to="/login" label="ورود" /><Lazy><Signup /></Lazy></>}
         />
         {/* Public, and deliberately the only gated-looking route that is.
             It publishes how every number on the site is produced, including
@@ -131,8 +139,9 @@ function AuthRoutes() {
             the endpoint drops the coverage block precisely so that stays true.
 
             It gets the same header as the other two, because a signed-out
-            reader arrives here from the landing page and otherwise has no way
-            on to the product except the browser's back button. */}
+            reader arrives here from a shared link — there is no public page to
+            come from any more — and otherwise has no way on to the product
+            except the browser's back button. */}
         {/* The only signed-out route with page content rather than a centred
             form, so it is the only one that needs the shell's gutters: without
             them its unwrapped paragraphs sit flush against the viewport edge
@@ -175,15 +184,15 @@ function AppShell() {
       <main id="main" tabIndex={-1}
             className="mx-auto max-w-[1600px] px-4 pt-2 pb-24 sm:px-6 lg:pb-16">
         <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/deals" element={<Deals />} />
-          <Route path="/explore" element={<Explorer />} />
+          <Route path="/" element={<Lazy><Home /></Lazy>} />
+          <Route path="/deals" element={<Lazy><Deals /></Lazy>} />
+          <Route path="/explore" element={<Lazy><Explorer /></Lazy>} />
           <Route path="/analyse" element={<Lazy><Analyse /></Lazy>} />
           <Route path="/budget" element={<Lazy><Budget /></Lazy>} />
           <Route path="/alerts" element={<Lazy><Alerts /></Lazy>} />
           <Route path="/methodology" element={<Lazy><Methodology /></Lazy>} />
-          <Route path="/saved" element={<Saved />} />
-          <Route path="/listing/:code" element={<ListingDetail />} />
+          <Route path="/saved" element={<Lazy><Saved /></Lazy>} />
+          <Route path="/listing/:code" element={<Lazy><ListingDetail /></Lazy>} />
           <Route
             path="/control"
             element={

@@ -4,10 +4,7 @@
       "startServerCommand": "node scripts/lighthouse-server.mjs",
       "startServerReadyPattern": "lighthouse server listening",
       "startServerReadyTimeout": 10000,
-      "url": [
-        "http://localhost:4173/landing.html",
-        "http://localhost:4173/index.html"
-      ],
+      "url": ["http://localhost:4173/index.html"],
       "numberOfRuns": 3,
       "settings": { "preset": "desktop" }
     },
