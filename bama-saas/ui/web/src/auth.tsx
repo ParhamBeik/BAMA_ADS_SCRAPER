@@ -16,6 +16,11 @@ export interface AuthUser {
   is_staff: boolean;
 }
 
+interface AuthResponse extends Partial<AuthUser> {
+  authenticated?: boolean;
+  user?: AuthUser | null;
+}
+
 interface AuthState {
   user: AuthUser | null;
   loading: boolean;
@@ -35,10 +40,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     api
-      .get<AuthUser>("/api/auth/me/")
+      .get<AuthResponse>("/api/auth/me/")
       .then((u) => {
         if (cancelled) return;
-        setUser(u);
+        // Anonymous users receive the valid 200 envelope
+        // `{authenticated: false, user: null}`. Keep accepting the legacy
+        // top-level user shape so a rolling deploy cannot log out a live user.
+        setUser(u.authenticated === false ? null : (u.user ?? (u as AuthUser)));
       })
       .catch(() => {
         if (cancelled) return;

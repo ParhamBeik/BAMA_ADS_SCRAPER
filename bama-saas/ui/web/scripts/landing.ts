@@ -15,8 +15,14 @@
  *
  * The font href is passed in rather than hardcoded: it carries a content hash
  * that changes on every build, and a literal one rots into a preload of a 404.
+ * The site URL is passed in for a duller reason — the first version of this
+ * hardcoded a hostname that did not resolve, which is worse than shipping no
+ * canonical at all, because a canonical pointing somewhere dead tells a crawler
+ * to index nothing.
  */
-export function landingHtml({ fontHref }: { fontHref?: string }): string {
+export function landingHtml(
+  { fontHref, siteUrl }: { fontHref?: string; siteUrl: string },
+): string {
   const preload = fontHref
     ? `<link rel="preload" as="font" type="font/woff2" href="/${fontHref}" crossorigin />`
     : "";
@@ -32,7 +38,8 @@ export function landingHtml({ fontHref }: { fontHref?: string }): string {
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>بازار خودرو باما — قیمت منصفانه‌ی خودرو بر پایه‌ی آگهی‌های واقعی</title>
 <meta name="description" content="قیمت منصفانه‌ی هر خودرو بر پایه‌ی آگهی‌های مشابه، با کارکرد و وضعیت بدنه لحاظ‌شده — و فهرستی از آگهی‌هایی که پایین‌تر از حد معمول قیمت خورده‌اند." />
-<link rel="canonical" href="https://bama.parhambeik.ir/" />
+<link rel="canonical" href="${siteUrl}/" />
+<meta property="og:url" content="${siteUrl}/" />
 <meta name="robots" content="index, follow" />
 <meta name="color-scheme" content="light dark" />
 <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />

@@ -74,6 +74,11 @@ jobs:
       # The prod image runs this exact build; a broken import must fail here,
       # not halfway through a deploy.
       - run: npm run build
+      # Lighthouse runs against the same static production bundle that nginx
+      # serves. The config keeps performance tolerant of runner noise while
+      # requiring deterministic accessibility, best-practices, and SEO scores.
+      - name: Lighthouse
+        run: npx --yes @lhci/cli@0.15.1 autorun
 
   lint:
     runs-on: ubuntu-latest

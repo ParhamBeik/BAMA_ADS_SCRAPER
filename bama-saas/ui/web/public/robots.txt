@@ -12,4 +12,4 @@ Disallow: /budget
 Disallow: /control
 Disallow: /api/
 
-Sitemap: https://bama.parhambeik.ir/sitemap.xml
+Sitemap: https://bama-89-106-206-4.sslip.io/sitemap.xml

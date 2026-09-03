@@ -29,4 +29,5 @@ bama-saas/.mypy_cache/
 bama-saas/.ruff_cache/
 bama-saas/*.log
 bama-saas/.env
+bama-saas/ui/web/.lighthouseci/
 postgres_data/

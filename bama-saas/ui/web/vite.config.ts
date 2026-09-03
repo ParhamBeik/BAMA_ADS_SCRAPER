@@ -39,7 +39,20 @@ function emitLanding(): Plugin {
       this.emitFile({
         type: "asset",
         fileName: "landing.html",
-        source: landingHtml({ fontHref }),
+        source: landingHtml({ fontHref, siteUrl: SITE_URL }),
+      });
+      // Only the two pages that render without a session. Listing every route
+      // would point a crawler at pages that answer with a login form, which is
+      // how a site ends up indexed as a wall of identical sign-in screens.
+      this.emitFile({
+        type: "asset",
+        fileName: "sitemap.xml",
+        source: `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>${SITE_URL}/</loc><changefreq>daily</changefreq><priority>1.0</priority></url>
+  <url><loc>${SITE_URL}/methodology</loc><changefreq>weekly</changefreq><priority>0.6</priority></url>
+</urlset>
+`,
       });
     },
   };
@@ -54,18 +67,27 @@ function preloadPersianFont(): Plugin {
       const font = Object.keys(ctx.bundle ?? {}).find((f) =>
         /vazirmatn-arabic-.*\.woff2$/.test(f),
       );
-      return html.replace(
-        "<!--preload-fonts-->",
-        font
-          ? `<link rel="preload" as="font" type="font/woff2" href="/${font}" crossorigin />`
-          : "",
-      );
+      return html
+        .replace(
+          "<!--preload-fonts-->",
+          font
+            ? `<link rel="preload" as="font" type="font/woff2" href="/${font}" crossorigin />`
+            : "",
+        )
+        // Vite's own `%VAR%` substitution reads .env files, not `define`, so
+        // the placeholder is resolved here where the value actually lives.
+        .replaceAll("%VITE_SITE_URL%", SITE_URL);
     },
   };
 }
 
 // The dev server proxies /api to Django so the browser sees one origin and there
 // is no CORS or cookie-domain difference between development and production.
+// The public origin, used for the canonical link and the sitemap. Overridable
+// so a different deployment does not need a code change; defaulted so a build
+// that forgets to set it still emits a URL that resolves.
+const SITE_URL = process.env.VITE_SITE_URL ?? "https://bama-89-106-206-4.sslip.io";
+
 export default defineConfig({
   plugins: [react(), tailwindcss(), preloadPersianFont(), emitLanding()],
   // `@` is the convention every shadcn component is generated against; without it
