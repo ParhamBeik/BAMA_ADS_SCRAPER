@@ -396,8 +396,16 @@ td.num, th.num {
    `table`: that one is a data grid with a header row and hover rows, and these
    are four facts stacked in a corner of a card, where a hover highlight and
    12px header treatment read as a control the reader can click. */
-.mini-table { font-size: 12.5px; }
+.mini-table { font-size: 12.5px; max-width: 100%; }
 .mini-table td { padding: 4px 8px; border-bottom: 1px solid var(--border); }
+/* A table is at least as wide as its widest unbreakable token, and these cells
+   carry machine strings — `lightgbm.LGBMRegressor(objective=quantile, ...)`,
+   feature names, promotion reasons — with no space to break at. On a 390px
+   phone that one string set a 323px minimum and pushed the table 38px past the
+   card, where an ancestor clipped it instead of letting it scroll: the metrics
+   were not squeezed, they were gone. Breaking mid-token is the lesser evil for
+   an identifier nobody reads as prose. */
+.mini-table td { overflow-wrap: anywhere; }
 .mini-table tbody tr:last-child td { border-bottom: none; }
 .mini-table tbody tr:hover { background: none; }
 .mini-table td:first-child { color: var(--muted); }
