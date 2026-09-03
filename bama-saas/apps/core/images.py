@@ -29,12 +29,15 @@ import requests
 from django.conf import settings
 from django.core.cache import cache
 
-from apps.jobs.fetcher import HEADERS
+from apps.jobs.fetcher import HEADERS, consecutive_blocks
 from apps.jobs.parsing import is_cdn_url
 
 log = logging.getLogger("bama.images")
 
 CACHE_PREFIX = "img:v1:"
+FAILED_CACHE_PREFIX = "img:failed:v1:"
+IMAGE_FETCH_TIMEOUT = 5
+FAILED_IMAGE_CACHE_SECONDS = 120
 
 
 def proxy_path(code: str, index: int) -> str:
@@ -87,14 +90,18 @@ def source_url(ad, index: int | None) -> str:
 def fetch(url: str) -> tuple[str, bytes] | None:
     """``(content_type, body)`` from cache, or from the CDN once. None on failure.
 
-    A miss that fails upstream is deliberately *not* cached as a negative: the
-    usual cause is a block that lifts on Bama's schedule, and remembering the
-    failure for a month would outlive the outage by a wide margin.
+    A cold miss during a crawl block or a recent upstream failure is left for
+    the browser to fetch directly. The failure marker is deliberately short:
+    it prevents a card grid from parking every web worker on the same rotten
+    image without treating a transient CDN failure as a month-long absence.
     """
     key = CACHE_PREFIX + hashlib.sha256(url.encode()).hexdigest()
     hit = cache.get(key)
     if hit is not None:
         return hit
+    failed_key = FAILED_CACHE_PREFIX + hashlib.sha256(url.encode()).hexdigest()
+    if consecutive_blocks() or cache.get(failed_key):
+        return None
 
     try:
         # `with`, because both early returns below abandon a half-read stream:
@@ -105,7 +112,7 @@ def fetch(url: str) -> tuple[str, bytes] | None:
         with requests.get(
             url,
             headers={**HEADERS, "Accept": "image/avif,image/webp,image/*,*/*;q=0.8"},
-            timeout=settings.BAMA_REQUEST_TIMEOUT,
+            timeout=IMAGE_FETCH_TIMEOUT,
             stream=True,
         ) as response:
             response.raise_for_status()
@@ -124,6 +131,7 @@ def fetch(url: str) -> tuple[str, bytes] | None:
                     return None
     except requests.RequestException as exc:
         log.warning("images: %s failed: %s", url, exc)
+        cache.set(failed_key, True, FAILED_IMAGE_CACHE_SECONDS)
         return None
 
     value = (content_type, bytes(body))

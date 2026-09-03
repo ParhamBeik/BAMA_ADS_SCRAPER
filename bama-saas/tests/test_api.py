@@ -1347,6 +1347,30 @@ def test_out_of_range_and_non_cdn_urls_resolve_to_nothing():
     assert images.source_url(ad, -1) == ""
 
 
+def test_blocked_crawl_leaves_a_cold_image_for_the_browser(monkeypatch):
+    monkeypatch.setattr(images, "consecutive_blocks", lambda: 1)
+    requested = []
+    monkeypatch.setattr(images.requests, "get", lambda *args, **kwargs: requested.append(args))
+
+    assert images.fetch(_SMALL) is None
+    assert requested == []
+
+
+def test_failed_image_fetch_is_not_retried_until_its_short_marker_expires(monkeypatch):
+    monkeypatch.setattr(images, "consecutive_blocks", lambda: 0)
+    calls = []
+
+    def fail(*args, **kwargs):
+        calls.append(args)
+        raise images.requests.RequestException("CDN unavailable")
+
+    monkeypatch.setattr(images.requests, "get", fail)
+
+    assert images.fetch(_LARGE[0]) is None
+    assert images.fetch(_LARGE[0]) is None
+    assert len(calls) == 1
+
+
 @pytest.mark.django_db
 def test_model_search_resolves_one_model_by_id(api_client, catalog):
     """Integration: the lookup a shared analysis link depends on.
