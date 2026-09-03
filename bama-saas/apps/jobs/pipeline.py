@@ -221,7 +221,7 @@ def run_step(name: str, *, triggered_by: str = JobRun.Trigger.SCHEDULER, **opts)
                 result = job(**opts)
             detail = " ".join(f"{k}={v}" for k, v in result.items() if k != "checks")
             row.detail = detail[:4000]
-            if result.get("skipped"):
+            if result.get("skipped") is True:
                 row.status = JobRun.Status.SKIPPED
             duration = time.monotonic() - start
             ok = result.get("ok", True)

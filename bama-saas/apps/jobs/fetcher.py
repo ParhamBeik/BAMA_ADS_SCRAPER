@@ -276,7 +276,7 @@ def is_waf_block(exc: BaseException) -> bool:
 def _last_runs(limit: int = 40):
     return list(
         FetchRun.objects.filter(
-            source=FetchRun.Source.LIVE_FETCH,
+            source__in=(FetchRun.Source.LIVE_FETCH, FetchRun.Source.SOLD_PROBE),
             created_at__gte=djtz.now() - STREAK_LOOKBACK,
         )
         .order_by("-created_at")

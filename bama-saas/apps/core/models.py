@@ -318,6 +318,7 @@ class FetchRun(models.Model):
 
     class Source(models.TextChoices):
         LIVE_FETCH = "live_fetch", "Live fetch"
+        SOLD_PROBE = "sold_probe", "Sold probe"
         BULK_IMPORT = "bulk_import", "Bulk import"
         HISTORY_REPLAY = "history_replay", "History replay"
         LEGACY_BASELINE = "legacy_baseline", "Legacy baseline"

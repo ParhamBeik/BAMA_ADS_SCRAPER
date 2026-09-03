@@ -77,6 +77,17 @@ def test_a_successful_step_is_recorded():
 
 
 @pytest.mark.django_db
+def test_rejected_fetch_ads_do_not_mark_the_step_skipped(monkeypatch):
+    """Rejected input is crawler output, not a crawler skip."""
+    monkeypatch.setitem(P.JOBS, "fetch", lambda **_: {"rejected": 1})
+
+    result = P.run_step("fetch")
+
+    assert result.ok
+    assert JobRun.objects.get(name="fetch").status == JobRun.Status.OK
+
+
+@pytest.mark.django_db
 def test_a_failing_step_is_recorded_with_its_error(stub_jobs):
     stub_jobs(fail={"snapshot"})
     result = P.run_step("snapshot")

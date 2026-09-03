@@ -506,7 +506,7 @@ def fetch(**opts) -> dict:
         "pages": run.pages_fetched, "deepest_rank": run.deepest_rank,
         "reached_end": run.reached_end, "fetched": run.fetched_count,
         "created": run.created_count, "updated": run.updated_count,
-        "skipped": run.skipped_count, "price_changes": run.price_change_count,
+        "rejected": run.skipped_count, "price_changes": run.price_change_count,
     }
 
 
@@ -611,7 +611,7 @@ def probe_sold() -> dict:
     )
 
     run = FetchRun.objects.create(
-        source=FetchRun.Source.LIVE_FETCH,
+        source=FetchRun.Source.SOLD_PROBE,
         mode=FetchRun.Mode.DELTA,
         status=FetchRun.Status.RUNNING,
         started_at=now,

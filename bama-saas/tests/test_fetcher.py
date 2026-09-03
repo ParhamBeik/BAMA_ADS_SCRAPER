@@ -650,7 +650,8 @@ def test_no_history_yields_no_expected_depth():
 NOW = djtz.now
 
 
-def make_run(*, blocked=False, failed=False, pages=0, ago_minutes=1, mode="delta"):
+def make_run(*, blocked=False, failed=False, pages=0, ago_minutes=1, mode="delta",
+             source=FetchRun.Source.LIVE_FETCH):
     at = NOW() - timedelta(minutes=ago_minutes)
     if blocked:
         status, reason = FetchRun.Status.FAILED, FetchRun.StopReason.BLOCKED
@@ -659,7 +660,7 @@ def make_run(*, blocked=False, failed=False, pages=0, ago_minutes=1, mode="delta
     else:
         status, reason = FetchRun.Status.SUCCEEDED, FetchRun.StopReason.STALE_PAGES
     run = FetchRun.objects.create(
-        source=FetchRun.Source.LIVE_FETCH, mode=mode, status=status,
+        source=source, mode=mode, status=status,
         stop_reason=reason, pages_fetched=pages,
     )
     # created_at is auto_now_add; started/finished drive the cooldown clock.
@@ -751,6 +752,13 @@ def test_blocks_are_counted_across_modes():
     make_run(blocked=True, mode="delta", ago_minutes=2)
     make_run(blocked=True, mode="backfill", ago_minutes=1)
     assert crawl_gate.consecutive_blocks() == 2
+
+
+@pytest.mark.django_db
+def test_a_blocked_sold_probe_counts_toward_the_shared_cooldown():
+    make_run(blocked=True, source=FetchRun.Source.SOLD_PROBE, ago_minutes=1)
+
+    assert crawl_gate.consecutive_blocks() == 1
 
 
 @pytest.mark.django_db
