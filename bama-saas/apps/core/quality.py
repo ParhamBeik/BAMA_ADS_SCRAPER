@@ -36,7 +36,13 @@ def verified(qs):
 
     Soft flags stay in the data and only serve monitoring, so one unparseable
     publish phrase never removes an otherwise perfect price from the statistics.
-    Uses jsonb containment, which the ``ad_quality_gin`` index serves.
+
+    Reads the ``is_verified`` generated column, not the flags themselves. This
+    used to be five NOT-containment predicates over ``quality_flags``, which no
+    index can serve — GIN accelerates a positive ``@>`` and this asks the
+    opposite — so every analytical read sequential-scanned the table. Postgres
+    computes the column, which means none of the three write paths can forget to
+    maintain it.
 
     ``excluded_from_analytics`` is the manual override, set only from the review
     queue. It belongs here rather than at each call site for the same reason

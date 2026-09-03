@@ -292,14 +292,27 @@ class Ad(models.Model):
             models.Index(fields=("model", "variant", "year"), name="ad_market_idx"),
             # The real cohort key: calendar-normalised model year.
             models.Index(fields=("model", "variant", "year_jalali"), name="ad_market_jy_idx"),
-            GinIndex(fields=["quality_flags"], name="ad_quality_gin"),
-            GinIndex(fields=["cohort_flags"], name="ad_cohort_gin"),
             models.Index(fields=("model", "current_price"), name="ad_market_price_idx"),
-            GinIndex(fields=["raw_payload"], opclasses=["jsonb_path_ops"], name="ad_raw_gin"),
-            # The browse-list predicate. GIN accelerates positive `@>` only, not
-            # the NOT-containment exclusions quality.py applies on top, so
-            # pagination's .count() was sequential-scanning the whole table on
-            # every request. This narrows that scan first.
+            # No GIN indexes on `quality_flags`, `cohort_flags` or `raw_payload`.
+            # All three existed to serve jsonb containment and all three were
+            # measured at zero scans across the table's entire life — `ad_raw_gin`
+            # alone was 131 MB, 54% of this table's index weight and 5.3% of the
+            # whole database.
+            #
+            # The two flag indexes could never have worked: every consumer asked
+            # the *negated* question ("not quarantined", "not an outlier"), and
+            # GIN cannot serve a negation. They are now generated boolean columns
+            # (`is_verified`, `has_high_outlier`, `has_low_outlier`), which is
+            # what made those reads index-backed. The payload index never had a
+            # caller at all — nothing in the codebase queries `raw_payload` with
+            # a jsonb operator; the one reference is `__isnull`, which GIN cannot
+            # serve either.
+            #
+            # They were not free while they sat there. 97% of writes to this
+            # table are non-HOT, so every one of ~1.08M updates maintained them,
+            # and every autovacuum had to scan them.
+            #
+            # The browse-list predicate. Narrows pagination's `.count()` scan.
             models.Index(
                 fields=("status", "publish_at"),
                 name="ad_list_active_idx",
