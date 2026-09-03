@@ -104,6 +104,33 @@ def test_ad_filter_tokenized_persian_search():
 
 
 @pytest.mark.django_db
+def test_search_matches_across_the_two_spellings_of_the_same_letter():
+    """Arabic ي and Persian ی are different codepoints for the same letter.
+
+    Bama's feed carries both, and a reader's keyboard produces whichever their
+    layout has. `search_tokens` has always normalised the *query*, but the
+    stored columns were raw — so a title Bama sent as «كيا» could not be found
+    by typing «کیا», and vice versa. Both sides are normalised into
+    `search_text` now, which is what makes this symmetric.
+
+    The digit case is covered above; this is the letter case, and it is the one
+    a user hits without ever knowing there were two spellings.
+    """
+    brand = Brand.objects.create(name_fa="کیا", slug="kia-search")
+    model = Model.objects.create(brand=brand, name_fa="سراتو")
+    ad = Ad.objects.create(
+        code="arabicyeh1", brand=brand, model=model,
+        # Arabic yeh and Arabic kaf, as the source sends them.
+        title="كيا سراتو",
+        status="active", publish_at=timezone.now(), last_seen_at=timezone.now(),
+    )
+
+    for spelling in ("كيا", "کیا"):
+        found = AdFilter({"q": spelling}, queryset=Ad.objects.all()).qs
+        assert found.filter(code=ad.code).exists(), f"{spelling!r} found nothing"
+
+
+@pytest.mark.django_db
 def test_database_verification_gate_matches_every_hard_rule():
     brand = Brand.objects.create(name_fa="کیا", slug="kia")
     model = Model.objects.create(brand=brand, name_fa="سراتو")
