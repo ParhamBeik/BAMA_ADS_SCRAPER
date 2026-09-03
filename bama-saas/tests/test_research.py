@@ -15,7 +15,6 @@ from datetime import date, timedelta
 import pytest
 from django.urls import reverse
 from django.utils import timezone
-from rest_framework.test import APIClient
 
 from apps.core import pricing as FP
 from apps.core import research as R
@@ -296,17 +295,16 @@ def test_brand_scope_isolates_its_own_cohorts(cohorts):
 
 
 @pytest.mark.django_db
-def test_market_index_endpoint(cohorts):
+def test_market_index_endpoint(cohorts, api_client):
     """Integration: the endpoint's scope contract and change_pct summary."""
     model, cheap = cohorts["model"], cohorts["cheap"]
     _snap(model, cheap, D0, price=500_000_000, count=10)
     _snap(model, cheap, D1, price=550_000_000, count=10)
     build_index(MarketIndex.Scope.MARKET, None)
 
-    client = APIClient()
     url = reverse("core:market-index")
 
-    res = client.get(url)
+    res = api_client.get(url)
     assert res.status_code == 200
     body = res.json()
     assert body["scope"] == "market"
@@ -318,8 +316,8 @@ def test_market_index_endpoint(cohorts):
     assert body["window"]["clamped"] is True
 
     # A non-market scope without ?id is a client error, not an empty series.
-    assert client.get(url, {"scope": "brand"}).status_code == 400
-    assert client.get(url, {"scope": "nonsense"}).status_code == 400
+    assert api_client.get(url, {"scope": "brand"}).status_code == 400
+    assert api_client.get(url, {"scope": "nonsense"}).status_code == 400
 
 
 # ---------------------------------------------------------------------------

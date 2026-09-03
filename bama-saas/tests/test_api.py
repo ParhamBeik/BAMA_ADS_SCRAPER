@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import pytest
+from django.conf import settings
 from django.core.cache import CacheKeyWarning
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
@@ -47,12 +48,6 @@ _NOW = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-@pytest.fixture
-def api_client() -> APIClient:
-    """Anonymous DRF API client."""
-    return APIClient()
-
 
 @pytest.fixture
 def catalog(db):
@@ -137,8 +132,8 @@ def test_wipe_users_clears_every_account():
 
 
 @pytest.mark.django_db
-def test_auth_registration_creates_session_user(api_client):
-    response = api_client.post(
+def test_auth_registration_creates_session_user(anonymous_client):
+    response = anonymous_client.post(
         "/api/auth/register/",
         {"email": "new-user@example.com", "password": "StrongPass1!"},
         format="json",
@@ -146,7 +141,7 @@ def test_auth_registration_creates_session_user(api_client):
     assert response.status_code == 201, response.content
     assert response.json()["email"] == "new-user@example.com"
 
-    me = api_client.get("/api/auth/me/")
+    me = anonymous_client.get("/api/auth/me/")
     assert me.status_code == 200
     assert me.json()["email"] == "new-user@example.com"
 
@@ -1042,18 +1037,18 @@ def make_ad(exposure_catalog, code, **overrides):
 # --- the scraped payload is not public -------------------------------------
 
 @pytest.mark.django_db
-def test_ad_list_does_not_leak_the_raw_payload(exposure_catalog):
+def test_ad_list_does_not_leak_the_raw_payload(exposure_catalog, api_client):
     make_ad(exposure_catalog, "leak0001")
-    body = APIClient().get("/api/ads/").json()
+    body = api_client.get("/api/ads/").json()
 
     assert body["results"], "fixture should be listed"
     assert "raw_payload" not in body["results"][0]
 
 
 @pytest.mark.django_db
-def test_ad_detail_does_not_leak_the_raw_payload(exposure_catalog):
+def test_ad_detail_does_not_leak_the_raw_payload(exposure_catalog, api_client):
     make_ad(exposure_catalog, "leak0002")
-    body = APIClient().get("/api/ads/leak0002/").json()
+    body = api_client.get("/api/ads/leak0002/").json()
 
     assert body["code"] == "leak0002"
     assert "raw_payload" not in body
@@ -1084,13 +1079,13 @@ def test_provenance_returns_the_full_record_to_staff(exposure_catalog):
 # --- exposure_catalog and statistics describe the same population --------------------
 
 @pytest.mark.django_db
-def test_a_hard_failed_ad_is_not_listed(exposure_catalog):
+def test_a_hard_failed_ad_is_not_listed(exposure_catalog, api_client):
     """It was listed and filterable while every analytical read excluded it, so
     a user could find an ad the market summary insisted did not exist."""
     make_ad(exposure_catalog, "good0001")
     make_ad(exposure_catalog, "bad00001", quality_flags=["price_too_low"])
 
-    codes = {r["code"] for r in APIClient().get("/api/ads/").json()["results"]}
+    codes = {r["code"] for r in api_client.get("/api/ads/").json()["results"]}
 
     assert codes == {"good0001"}
 
@@ -1103,7 +1098,7 @@ def test_inspect_routes_are_gone(exposure_catalog):
 
 
 @pytest.mark.django_db
-def test_an_underpriced_outlier_is_never_hidden_from_browsing(exposure_catalog):
+def test_an_underpriced_outlier_is_never_hidden_from_browsing(exposure_catalog, api_client):
     """The asymmetry the browse filter turns on.
 
     A listing priced far *below* its peers is the underpriced car this product
@@ -1112,22 +1107,22 @@ def test_an_underpriced_outlier_is_never_hidden_from_browsing(exposure_catalog):
     """
     make_ad(exposure_catalog, "odd00001", cohort_flags=["price_outlier_low"])
 
-    rows = APIClient().get("/api/ads/").json()["results"]
+    rows = api_client.get("/api/ads/").json()["results"]
 
     assert [r["code"] for r in rows] == ["odd00001"]
     assert rows[0]["cohort_flags"] == ["price_outlier_low"]
 
 
 @pytest.mark.django_db
-def test_an_absurdly_overpriced_listing_is_hidden_by_default(exposure_catalog):
+def test_an_absurdly_overpriced_listing_is_hidden_by_default(exposure_catalog, api_client):
     """The other half: a 206 was live at 5.8 trillion toman. That is noise in
     every list it appears in, and nobody browsing is looking for it — but
     ?include_outliers=true still returns it rather than pretending it is gone."""
     make_ad(exposure_catalog, "odd00002", cohort_flags=["price_outlier_high"])
 
-    assert APIClient().get("/api/ads/").json()["results"] == []
+    assert api_client.get("/api/ads/").json()["results"] == []
 
-    rows = APIClient().get("/api/ads/?include_outliers=true").json()["results"]
+    rows = api_client.get("/api/ads/?include_outliers=true").json()["results"]
     assert [r["code"] for r in rows] == ["odd00002"]
 
 
@@ -1198,15 +1193,15 @@ def test_the_session_cookie_is_not_readable_by_script(api_client):
 
 
 @pytest.mark.django_db
-def test_logging_out_ends_the_session(api_client):
-    _register(api_client, "owner@example.com")
-    assert api_client.get("/api/auth/me/").status_code == 200
+def test_logging_out_ends_the_session(anonymous_client):
+    _register(anonymous_client, "owner@example.com")
+    assert anonymous_client.get("/api/auth/me/").status_code == 200
 
-    assert api_client.post("/api/auth/logout/").status_code == 204
+    assert anonymous_client.post("/api/auth/logout/").status_code == 204
     # 200 with `authenticated: false`, not 401: "nobody is signed in" is the
     # expected answer on a public page, and every 4xx the SPA fires on load
     # lands in the browser console as an error.
-    after = api_client.get("/api/auth/me/")
+    after = anonymous_client.get("/api/auth/me/")
     assert after.status_code == 200
     assert after.json()["authenticated"] is False
 
@@ -1521,7 +1516,7 @@ CACHED_ENDPOINTS = (
 
 @pytest.mark.django_db
 @pytest.mark.parametrize("url", CACHED_ENDPOINTS)
-def test_a_warm_cache_is_not_a_way_past_the_gate(api_client, url):
+def test_a_warm_cache_is_not_a_way_past_the_gate(anonymous_client, url):
     """Caching the response instead of the answer opens the whole endpoint.
 
     `cache_page` wraps a view from outside, so a hit returns the stored response
@@ -1536,7 +1531,7 @@ def test_a_warm_cache_is_not_a_way_past_the_gate(api_client, url):
     """
     view = resolve(url.split("?")[0]).func
     with patch.object(view.cls, "permission_classes", [IsAuthenticated]):
-        assert api_client.get(url).status_code in (401, 403), "cold: gate holds"
+        assert anonymous_client.get(url).status_code in (401, 403), "cold: gate holds"
 
         member = APIClient()
         member.force_authenticate(User.objects.create_user(
@@ -1544,7 +1539,7 @@ def test_a_warm_cache_is_not_a_way_past_the_gate(api_client, url):
         assert member.get(url).status_code == 200, "a member can read it"
 
         # Same URL, no credentials, cache now warm.
-        assert api_client.get(url).status_code in (401, 403), "warm: gate still holds"
+        assert anonymous_client.get(url).status_code in (401, 403), "warm: gate still holds"
 
 
 @pytest.mark.django_db
@@ -1724,9 +1719,9 @@ def other_member(db):
 
 
 @pytest.mark.django_db
-def test_the_watch_and_alert_endpoints_require_a_session(api_client):
+def test_the_watch_and_alert_endpoints_require_a_session(anonymous_client):
     for url in ("/api/watchlists/", "/api/alert-rules/", "/api/alerts/"):
-        assert api_client.get(url).status_code in (401, 403), url
+        assert anonymous_client.get(url).status_code in (401, 403), url
 
 
 @pytest.mark.django_db
@@ -1973,3 +1968,23 @@ def test_the_market_read_is_a_refusal_not_an_error_when_thin(staff_client):
     body = staff_client.get("/api/analytics/market-read/").json()
     assert body["available"] is False
     assert body["reason"]
+
+
+@pytest.mark.django_db
+def test_public_reads_permission_boundary(anonymous_client, catalog):
+    """Anonymous access to public read endpoints respects API_PUBLIC_READS."""
+    endpoints = [
+        "/api/brands/",
+        f"/api/brands/{catalog['brand'].slug}/models/",
+        f"/api/models/{catalog['model'].id}/variants/",
+        "/api/ads/",
+        "/api/markets/",
+        "/api/analytics/deal-scores/",
+        "/api/analytics/overview/",
+        "/api/analytics/movers/?scope=brand",
+    ]
+    expected = 200 if settings.API_PUBLIC_READS else 403
+    for url in endpoints:
+        resp = anonymous_client.get(url)
+        assert resp.status_code == expected, f"{url} returned {resp.status_code}, expected {expected}"
+

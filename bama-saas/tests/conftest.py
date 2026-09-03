@@ -14,6 +14,7 @@ os.environ.setdefault("DJANGO_DEBUG", "1")
 os.environ.setdefault("API_PUBLIC_READS", "1")
 
 import pytest
+from django.conf import settings
 from django.core.cache import cache
 from rest_framework.test import APIClient
 
@@ -54,8 +55,27 @@ def _reset_throttles():
 
 
 @pytest.fixture
-def api_client() -> APIClient:
-    """Anonymous DRF client."""
+def api_client(db) -> APIClient:
+    """DRF client for API tests.
+
+    In open profile (API_PUBLIC_READS=1), anonymous requests are permitted.
+    In hardened profile (API_PUBLIC_READS not set), authenticates as a regular user
+    so business-logic tests continue to exercise endpoints under closed defaults.
+    """
+    client = APIClient()
+    if not getattr(settings, "API_PUBLIC_READS", False):
+        from apps.accounts.models import User
+
+        user = User.objects.create_user(
+            email="api_client_fixture@example.com", password="StrongPass1!"
+        )
+        client.force_authenticate(user)
+    return client
+
+
+@pytest.fixture
+def anonymous_client() -> APIClient:
+    """Always-unauthenticated DRF client."""
     return APIClient()
 
 
