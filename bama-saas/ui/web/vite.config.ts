@@ -3,7 +3,22 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import type { Plugin } from "vite";
-import { landingHtml } from "./scripts/landing";
+import { landingHtml, robotsTxt, sitemapXml } from "./scripts/landing";
+
+// The public origin: the canonical link, the sitemap's `<loc>`s, and the
+// `Sitemap:` line in robots.txt all come from here, because a crawler discards
+// a sitemap advertised from a different host than the one it is on.
+//
+// `||`, not `??`: Docker's `ENV VITE_SITE_URL=$VITE_SITE_URL` sets the variable
+// to the empty string when the build arg is not passed, and an empty string is
+// not nullish — `??` would let a build with no arg emit `<loc></loc>`.
+//
+// Trailing slashes are stripped because every use site appends its own path.
+// `https://host/` produced `href="https://host//"`, a canonical naming a URL
+// the site does not serve, which is the exact failure a canonical is meant to
+// prevent.
+const SITE_URL = (process.env.VITE_SITE_URL || "https://bama-89-106-206-4.sslip.io")
+  .replace(/\/+$/, "");
 
 /**
  * Inject a `<link rel="preload">` for the Persian face, with the real hashed
@@ -41,19 +56,12 @@ function emitLanding(): Plugin {
         fileName: "landing.html",
         source: landingHtml({ fontHref, siteUrl: SITE_URL }),
       });
-      // Only the two pages that render without a session. Listing every route
-      // would point a crawler at pages that answer with a login form, which is
-      // how a site ends up indexed as a wall of identical sign-in screens.
-      this.emitFile({
-        type: "asset",
-        fileName: "sitemap.xml",
-        source: `<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>${SITE_URL}/</loc><changefreq>daily</changefreq><priority>1.0</priority></url>
-  <url><loc>${SITE_URL}/methodology</loc><changefreq>weekly</changefreq><priority>0.6</priority></url>
-</urlset>
-`,
-      });
+      // Emitted, not kept in `public/`: both of these name the site's origin,
+      // and a file copied verbatim out of `public/` cannot pick it up. They
+      // used to exist in both places, where the emitted copy silently won and
+      // the committed one was what everybody edited.
+      this.emitFile({ type: "asset", fileName: "sitemap.xml", source: sitemapXml(SITE_URL) });
+      this.emitFile({ type: "asset", fileName: "robots.txt", source: robotsTxt(SITE_URL) });
     },
   };
 }
@@ -67,32 +75,24 @@ function preloadPersianFont(): Plugin {
       const font = Object.keys(ctx.bundle ?? {}).find((f) =>
         /vazirmatn-arabic-.*\.woff2$/.test(f),
       );
-      return html
-        .replace(
-          "<!--preload-fonts-->",
-          font
-            ? `<link rel="preload" as="font" type="font/woff2" href="/${font}" crossorigin />`
-            : "",
-        )
-        // Vite's own `%VAR%` substitution reads .env files, not `define`, so
-        // the placeholder is resolved here where the value actually lives.
-        .replaceAll("%VITE_SITE_URL%", SITE_URL);
+      return html.replace(
+        "<!--preload-fonts-->",
+        font
+          ? `<link rel="preload" as="font" type="font/woff2" href="/${font}" crossorigin />`
+          : "",
+      );
     },
   };
 }
-
-// The dev server proxies /api to Django so the browser sees one origin and there
-// is no CORS or cookie-domain difference between development and production.
-// The public origin, used for the canonical link and the sitemap. Overridable
-// so a different deployment does not need a code change; defaulted so a build
-// that forgets to set it still emits a URL that resolves.
-const SITE_URL = process.env.VITE_SITE_URL ?? "https://bama-89-106-206-4.sslip.io";
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), preloadPersianFont(), emitLanding()],
   // `@` is the convention every shadcn component is generated against; without it
   // each generated file would need its import paths rewritten by hand.
   resolve: { alias: { "@": path.resolve(import.meta.dirname, "src") } },
+  // The dev server proxies /api to Django so the browser sees one origin and
+  // there is no CORS or cookie-domain difference between development and
+  // production.
   server: {
     port: 5173,
     proxy: {

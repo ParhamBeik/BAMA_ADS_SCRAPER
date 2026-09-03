@@ -7,6 +7,14 @@ COPY package.json package-lock.json ./
 # the built bundle) -- npm ci is strict about peer conflicts, this isn't.
 RUN npm ci --legacy-peer-deps
 COPY . .
+# The public origin, baked in at build time because the canonical link, the
+# sitemap and robots.txt are static files in the bundle -- there is no runtime
+# to read an env var. Unset is fine: vite.config.ts treats the empty string the
+# Docker ARG leaves behind as "not provided" and falls back to the deployed
+# host. Without this ARG the override was unreachable from the only build that
+# produces the deployed artifact.
+ARG VITE_SITE_URL=""
+ENV VITE_SITE_URL=$VITE_SITE_URL
 RUN npm run build
 # Precompress every text asset once, here, instead of on every request from
 # every visitor. `gzip_static` in nginx.conf picks these up automatically.

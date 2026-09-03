@@ -1,4 +1,22 @@
 /**
+ * Everything a crawler reads, generated from one origin.
+ *
+ * The landing page, the sitemap and robots.txt all name the site's own host,
+ * and they have to name the *same* one: a robots.txt advertising a sitemap on a
+ * different host is discarded by Google as a cross-host sitemap, and a canonical
+ * pointing at a host that does not resolve tells a crawler to index nothing.
+ * That is why `siteUrl` is threaded through all three from a single definition
+ * in vite.config.ts rather than each file carrying its own literal — the first
+ * two versions of this each got one file right and left another behind.
+ *
+ * They are emitted by the build rather than kept in `public/` for the same
+ * reason. A file in `public/` is copied verbatim, so it cannot pick up the
+ * origin, and an emitted asset of the same name silently wins — leaving a
+ * committed file that looks authoritative, is served by `npm run dev`, and
+ * never reaches production.
+ */
+
+/**
  * The public entry page, emitted as a complete standalone document.
  *
  * Not a React route, and that is the whole point. Everything else in this app
@@ -115,4 +133,47 @@ footer a{color:var(--muted)}
 </div>
 </body>
 </html>`;
+}
+
+/**
+ * The two pages that render without a session.
+ *
+ * Listing every route would point a crawler at pages that answer with a login
+ * form, which is how a site ends up indexed as a wall of identical sign-in
+ * screens.
+ */
+export function sitemapXml(siteUrl: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>${siteUrl}/</loc><changefreq>daily</changefreq><priority>1.0</priority></url>
+  <url><loc>${siteUrl}/methodology</loc><changefreq>weekly</changefreq><priority>0.6</priority></url>
+</urlset>
+`;
+}
+
+/**
+ * The crawl policy, with the sitemap on the same host as everything else.
+ *
+ * The `Allow`/`Disallow` split mirrors `AuthRoutes` in App.tsx: the landing
+ * page and the methodology page render for a signed-out reader, and every other
+ * path redirects to a login form that is not worth indexing.
+ */
+export function robotsTxt(siteUrl: string): string {
+  return `User-agent: *
+Allow: /$
+Allow: /methodology
+# Both of the above render without a session; see App.tsx AuthRoutes.
+# Everything else needs a session, so crawling it only produces login pages.
+Disallow: /deals
+Disallow: /explore
+Disallow: /analyse
+Disallow: /listing
+Disallow: /saved
+Disallow: /alerts
+Disallow: /budget
+Disallow: /control
+Disallow: /api/
+
+Sitemap: ${siteUrl}/sitemap.xml
+`;
 }

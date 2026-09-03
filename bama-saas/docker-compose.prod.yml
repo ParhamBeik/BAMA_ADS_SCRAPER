@@ -107,7 +107,15 @@ services:
         aliases: [backend]   # ui/web/nginx.conf proxies /api/ and /admin/ here
 
   frontend:
-    build: { context: ./ui/web, dockerfile: Dockerfile.prod }
+    build:
+      context: ./ui/web
+      dockerfile: Dockerfile.prod
+      # The origin the canonical link, the sitemap and robots.txt name. Left
+      # unset it falls back to the deployed host, so a `.env` without it builds
+      # the same bundle as before; setting it is what makes moving to a real
+      # domain a deploy rather than a code change.
+      args:
+        VITE_SITE_URL: ${VITE_SITE_URL:-}
     container_name: bama-frontend
     restart: unless-stopped
     logging: *logging
