@@ -133,9 +133,23 @@ function AuthRoutes() {
             It gets the same header as the other two, because a signed-out
             reader arrives here from the landing page and otherwise has no way
             on to the product except the browser's back button. */}
+        {/* The only signed-out route with page content rather than a centred
+            form, so it is the only one that needs the shell's gutters: without
+            them its unwrapped paragraphs sit flush against the viewport edge
+            and the first card runs under the floating header. Same measurements
+            as AppShell's <main>, so the page does not shift when a reader signs
+            in; the extra top padding is what the header would have occupied if
+            it were in flow. */}
         <Route
           path="/methodology"
-          element={<><AuthHeader to="/login" label="ورود" /><Lazy><Methodology /></Lazy></>}
+          element={
+            <>
+              <AuthHeader to="/login" label="ورود" />
+              <main className="mx-auto max-w-[1600px] px-4 pt-20 pb-24 sm:px-6 lg:pb-16">
+                <Lazy><Methodology /></Lazy>
+              </main>
+            </>
+          }
         />
         <Route path="*" element={<RememberThenLogin />} />
       </Routes>
