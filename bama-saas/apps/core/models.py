@@ -9,7 +9,13 @@ import uuid
 from django.contrib.postgres.indexes import GinIndex
 from django.db import models
 from django.db.models import Q
+from django.db.models.expressions import RawSQL
 from django.utils import timezone
+
+from apps.core.rules import HARD_RULE_IDS
+
+_HARD_RULE_SQL = ", ".join(repr(rule) for rule in sorted(HARD_RULE_IDS))
+_IS_VERIFIED_SQL = f"NOT (excluded_from_analytics OR quality_flags ?| ARRAY[{_HARD_RULE_SQL}])"
 
 # ===========================================================================
 # Catalog — the dimensions, and the current snapshot of one ad
@@ -259,6 +265,25 @@ class Ad(models.Model):
     # fields it reads, and ingest's UPDATE path puts the same call's result in
     # `_ad_defaults`. `quality.price_basis_unclear` stays the only definition.
     price_basis_unclear = models.BooleanField(default=False, db_index=True)
+    # Database-maintained because both ingestion and the review queue update
+    # the source columns without necessarily calling ``save()``.
+    is_verified = models.GeneratedField(
+        expression=RawSQL(_IS_VERIFIED_SQL, [], output_field=models.BooleanField()),
+        output_field=models.BooleanField(), db_persist=True, db_index=True,
+    )
+    has_high_outlier = models.GeneratedField(
+        expression=RawSQL(
+            "cohort_flags ? 'price_outlier_high'", [], output_field=models.BooleanField(),
+        ),
+        output_field=models.BooleanField(), db_persist=True, db_index=True,
+    )
+    has_low_outlier = models.GeneratedField(
+        expression=RawSQL(
+            "cohort_flags ? 'price_outlier_low'", [], output_field=models.BooleanField(),
+        ),
+        output_field=models.BooleanField(), db_persist=True, db_index=True,
+    )
+    search_text = models.TextField(blank=True, default="")
 
     class Meta:
         db_table = "catalog_ad"
@@ -280,6 +305,13 @@ class Ad(models.Model):
                 name="ad_list_active_idx",
                 condition=Q(current_price__gt=0),
             ),
+            GinIndex(
+                fields=["search_text"], opclasses=["gin_trgm_ops"], name="ad_search_text_trgm",
+            ),
+            models.Index(
+                fields=("status", "publish_at"), name="ad_scorable_idx",
+                condition=Q(current_price__gt=0, is_verified=True, price_basis_unclear=False),
+            ),
         ]
 
     def save(self, *args, **kwargs):
@@ -288,14 +320,18 @@ class Ad(models.Model):
         Local import: `quality` reaches back into this module for `verified_by_ad`,
         so importing it at module scope closes a cycle.
         """
+        from apps.core.normalization import search_document
         from apps.core.quality import price_basis_unclear
 
         self.price_basis_unclear = price_basis_unclear(
             title=self.title, description=self.description,
             price_type=self.price_type, prepayment=self.current_prepayment,
         )
+        model_name = self.model.name_fa if self.model_id else ""
+        brand_name = self.brand.name_fa if self.brand_id else ""
+        self.search_text = search_document(self.title, model_name, brand_name, self.description)
         if (fields := kwargs.get("update_fields")) is not None:
-            kwargs["update_fields"] = {*fields, "price_basis_unclear"}
+            kwargs["update_fields"] = {*fields, "price_basis_unclear", "search_text"}
         super().save(*args, **kwargs)
 
     def __str__(self) -> str:

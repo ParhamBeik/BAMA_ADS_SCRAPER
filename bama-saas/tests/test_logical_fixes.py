@@ -7,13 +7,20 @@ Unit tests verify pure-logic text normalization and condition band classificatio
 from __future__ import annotations
 
 import pytest
+from django.db import connection
 from django.utils import timezone
 
 from apps.core.filters import AdFilter
 from apps.core.models import Ad, Brand, Model
-from apps.core.normalization import normalize_text, search_tokens, to_persian_digits
+from apps.core.normalization import (
+    normalize_text,
+    search_document,
+    search_tokens,
+    to_persian_digits,
+)
 from apps.core.pricing import MILEAGE_BUCKETS, Baseline, _monotone
-from apps.core.quality import CLEAN, COSMETIC, PAINTED, STRUCTURAL, condition_band
+from apps.core.quality import CLEAN, COSMETIC, PAINTED, STRUCTURAL, condition_band, verified
+from apps.core.rules import HARD_RULE_IDS
 
 
 def test_normalization_digits_and_characters():
@@ -24,6 +31,7 @@ def test_normalization_digits_and_characters():
     assert normalize_text("كویيك") == "کوییک"
     assert search_tokens("پژو، ۲۰۶ تیپ ۵") == ["پژو", "206", "تیپ", "5"]
     assert to_persian_digits("206") == "۲۰۶"
+    assert search_document("كيا", "سورنتو", "توضیح") == "کیا سورنتو توضیح"
 
 
 def test_condition_band_classification_monotonicity():
@@ -92,3 +100,30 @@ def test_ad_filter_tokenized_persian_search():
     # Search with Persian numbers "پژو ۲۰۶"
     qs_persian = AdFilter({"q": "پژو ۲۰۶"}, queryset=Ad.objects.all()).qs
     assert qs_persian.filter(code=ad.code).exists()
+    assert ad.search_text == "پژو 206 206 پژو"
+
+
+@pytest.mark.django_db
+def test_database_verification_gate_matches_every_hard_rule():
+    brand = Brand.objects.create(name_fa="کیا", slug="kia")
+    model = Model.objects.create(brand=brand, name_fa="سراتو")
+    ad = Ad.objects.create(code="verified01", brand=brand, model=model, title="کیا سراتو")
+
+    assert verified(Ad.objects).get() == ad
+    ad.quality_flags = [next(iter(HARD_RULE_IDS))]
+    ad.save(update_fields=["quality_flags"])
+
+    assert not verified(Ad.objects).exists()
+
+
+@pytest.mark.django_db
+def test_database_verification_expression_names_every_hard_rule():
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT generation_expression FROM information_schema.columns "
+            "WHERE table_name = 'catalog_ad' AND column_name = 'is_verified'"
+        )
+        expression, = cursor.fetchone()
+
+    assert expression
+    assert all(rule in expression for rule in HARD_RULE_IDS)

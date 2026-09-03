@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from apps.core.rules import HARD_RULE_IDS  # noqa: F401 - public compatibility export
 from apps.jobs.parsing import (
     normalize_model_year,
     parse_int,
@@ -255,13 +256,6 @@ RULES: tuple[Callable[[dict, dict], Rejection | None], ...] = (
     _brand_missing,
     _photo_missing,
 )
-
-# Rule ids whose presence makes a row unusable. Analytics excludes exactly
-# these (apps.core.quality.verified).
-HARD_RULE_IDS = frozenset({
-    "code_missing", "price_missing_for_lumpsum", "price_too_low", "brand_missing",
-    "photo_missing",
-})
 
 # Flags raised outside RULES because they need database state the rule signature
 # deliberately does not carry. Listed here so the full flag vocabulary is

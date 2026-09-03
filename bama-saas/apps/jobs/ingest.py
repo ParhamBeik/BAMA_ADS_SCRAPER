@@ -31,6 +31,7 @@ from apps.core.models import (
     PriceObservation,
     Variant,
 )
+from apps.core.normalization import search_document
 from apps.core.quality import price_basis_unclear
 from apps.jobs.parsing import (
     SEMANTIC_HASH_VERSION,
@@ -434,6 +435,9 @@ def _ad_defaults(extracted: dict, dims: dict, observed_at, publish_at, quality_f
             description=description,
             price_type=price_type,
             prepayment=prepayment,
+        ),
+        "search_text": search_document(
+            title, dims["model"].name_fa, dims["brand"].name_fa, description,
         ),
         "canonical_path": (detail.get("url") or "")[:400],
         "image_count": parse_int(detail.get("image_count")) or (len(gallery) or None),

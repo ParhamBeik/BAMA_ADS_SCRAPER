@@ -59,7 +59,7 @@ class AdFilter(django_filters.FilterSet):
     def filter_q(self, queryset, name, value):
         if not value:
             return queryset
-        from apps.core.normalization import search_tokens, to_persian_digits
+        from apps.core.normalization import search_tokens
 
         tokens = search_tokens(value)
         if not tokens:
@@ -67,21 +67,7 @@ class AdFilter(django_filters.FilterSet):
 
         combined_q = Q()
         for t in tokens:
-            token_q = (
-                Q(title__icontains=t)
-                | Q(brand__name_fa__icontains=t)
-                | Q(model__name_fa__icontains=t)
-                | Q(description__icontains=t)
-            )
-            # If the token contains digits, also query Persian digit representation
-            persian_t = to_persian_digits(t)
-            if persian_t != t:
-                token_q |= (
-                    Q(title__icontains=persian_t)
-                    | Q(model__name_fa__icontains=persian_t)
-                    | Q(description__icontains=persian_t)
-                )
-            combined_q &= token_q
+            combined_q &= Q(search_text__icontains=t)
 
         return queryset.filter(combined_q)
 

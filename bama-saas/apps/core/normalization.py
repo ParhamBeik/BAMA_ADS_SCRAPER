@@ -43,6 +43,11 @@ def normalize_text(text: str | None) -> str:
     return _WHITESPACE_RE.sub(" ", cleaned).strip()
 
 
+def search_document(*parts: str | None) -> str:
+    """One normalized document for substring search."""
+    return normalize_text(" ".join(part or "" for part in parts))
+
+
 def to_persian_digits(text: str) -> str:
     """Translate ASCII digits to Persian digits."""
     if not text:

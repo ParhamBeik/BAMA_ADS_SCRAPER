@@ -16,7 +16,7 @@ import re
 
 from django.db.models import Q
 
-from apps.jobs.verify import HARD_RULE_IDS
+from apps.core.rules import HARD_RULE_IDS  # noqa: F401 - public compatibility export
 
 # ---------------------------------------------------------------------------
 # Row-level trust
@@ -44,10 +44,7 @@ def verified(qs):
     of "an ad the numbers may be built from", and a rule enforced in four places
     is a rule enforced in three.
     """
-    disqualifying = Q(excluded_from_analytics=True)
-    for rule_id in sorted(HARD_RULE_IDS):
-        disqualifying |= Q(quality_flags__contains=[rule_id])
-    return qs.exclude(disqualifying)
+    return qs.filter(is_verified=True)
 
 
 def without_cohort_outliers(qs):
@@ -56,10 +53,7 @@ def without_cohort_outliers(qs):
     An outlier must not help define the number that judges it, but it is still a
     real listing — anything shown to a user should keep it and surface the flag.
     """
-    disqualifying = Q()
-    for flag in sorted(COHORT_FLAGS):
-        disqualifying |= Q(cohort_flags__contains=[flag])
-    return qs.exclude(disqualifying)
+    return qs.filter(has_high_outlier=False, has_low_outlier=False)
 
 
 def without_high_outliers(qs):
@@ -68,14 +62,12 @@ def without_high_outliers(qs):
     An absurd asking price is noise (a 206 was listed at 5.8 trillion toman); an
     absurdly cheap one is the underpriced car this product exists to find.
     """
-    return qs.exclude(cohort_flags__contains=[FLAG_OUTLIER_HIGH])
+    return qs.filter(has_high_outlier=False)
 
 
 def verified_by_ad(qs, field: str = "ad"):
     """Same gate for a queryset that *references* Ad (prices, scores, episodes)."""
-    from apps.core.models import Ad  # local: avoids a models <-> services cycle
-
-    return qs.filter(**{f"{field}__in": verified(Ad.objects)})
+    return qs.filter(**{f"{field}__is_verified": True})
 
 
 # ---------------------------------------------------------------------------
