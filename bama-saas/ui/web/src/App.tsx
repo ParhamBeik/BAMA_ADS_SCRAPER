@@ -123,6 +123,12 @@ function AuthRoutes() {
           path="/signup"
           element={<><AuthHeader to="/login" label="ورود" /><Signup /></>}
         />
+        {/* Public, and deliberately the only gated-looking route that is.
+            It publishes how every number on the site is produced, including
+            the models the promotion gate refused and why — a claim like that
+            is worth nothing if a reader has to make an account to check it.
+            It carries no user data and no listing data, only model metrics. */}
+        <Route path="/methodology" element={<Lazy><Methodology /></Lazy>} />
         <Route path="*" element={<RememberThenLogin />} />
       </Routes>
     </div>

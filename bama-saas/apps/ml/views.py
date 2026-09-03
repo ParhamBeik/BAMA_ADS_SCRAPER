@@ -26,7 +26,7 @@ from __future__ import annotations
 from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAdminUser
+from rest_framework.permissions import AllowAny, IsAdminUser
 from rest_framework.response import Response
 
 from apps.core.models import Ad
@@ -67,6 +67,7 @@ def _card(record: MLModel) -> dict:
 
 
 @api_view(["GET"])
+@permission_classes([AllowAny])
 def models_view(request):
     """Every trained model, newest first — the methodology page's data."""
     if not registry.ML_AVAILABLE:

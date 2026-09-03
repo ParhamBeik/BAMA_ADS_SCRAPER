@@ -1,6 +1,7 @@
 User-agent: *
 Allow: /$
 Allow: /methodology
+# Both of the above render without a session; see App.tsx AuthRoutes.
 # Everything else needs a session, so crawling it only produces login pages.
 Disallow: /deals
 Disallow: /explore
