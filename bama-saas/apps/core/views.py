@@ -53,6 +53,7 @@ from apps.core.quality import (
     without_high_outliers,
 )
 from apps.core.serializers import (
+    AdListSerializer,
     AdSerializer,
     BrandSerializer,
     ModelSerializer,
@@ -346,6 +347,9 @@ class AdViewSet(viewsets.ReadOnlyModelViewSet):
     ordering_fields = ("current_price", "year", "year_jalali", "mileage",
                        "publish_at", "last_seen_at", "image_count")
     search_fields = ("title", "brand__name_fa", "model__name_fa")
+
+    def get_serializer_class(self):
+        return AdListSerializer if self.action == "list" else AdSerializer
 
     def get_queryset(self):
         related = ("brand", "model", "variant", "city", "dealer")

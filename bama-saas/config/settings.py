@@ -6,7 +6,6 @@ must never fail open.
 """
 
 import os
-import sys
 from datetime import timedelta
 from pathlib import Path
 
@@ -19,15 +18,14 @@ def env_list(name: str, default: str = "") -> list[str]:
     return [v.strip() for v in os.environ.get(name, default).split(",") if v.strip()]
 
 
-# Tests run the permissive profile; a deployed process must opt in explicitly,
-# so the default is the hardened one. (pytest-django imports settings long after
-# pytest itself, so the module check is reliable — and a production process has
-# no reason to have pytest imported.)
-DEBUG = os.environ.get("DJANGO_DEBUG") == "1" or "pytest" in sys.modules
+DEBUG = os.environ.get("DJANGO_DEBUG") == "1"
 
-SECRET_KEY = os.environ.get(
-    "SECRET_KEY", "django-insecure-dev-key-replace-me-in-production"
-)
+DEV_SECRET_KEY = "django-insecure-dev-key-replace-me-in-production"
+SECRET_KEY = os.environ.get("SECRET_KEY", DEV_SECRET_KEY)
+if not DEBUG and SECRET_KEY == DEV_SECRET_KEY:
+    from django.core.exceptions import ImproperlyConfigured
+    raise ImproperlyConfigured("SECRET_KEY must be set when DJANGO_DEBUG is off")
+API_PUBLIC_READS = os.environ.get("API_PUBLIC_READS") == "1"
 ALLOWED_HOSTS = ["*"] if DEBUG else env_list("ALLOWED_HOSTS")
 
 INSTALLED_APPS = [
@@ -155,7 +153,7 @@ REST_FRAMEWORK = {
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": (
-        "rest_framework.permissions.AllowAny" if DEBUG
+        "rest_framework.permissions.AllowAny" if API_PUBLIC_READS
         else "rest_framework.permissions.IsAuthenticated",
     ),
     "DEFAULT_FILTER_BACKENDS": (

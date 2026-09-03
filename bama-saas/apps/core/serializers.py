@@ -97,6 +97,7 @@ class AdSerializer(serializers.ModelSerializer):
             body_status=obj.body_status,
         )
 
+
     class Meta:
         model = Ad
         fields = (
@@ -114,6 +115,13 @@ class AdSerializer(serializers.ModelSerializer):
             "cohort_flags", "price_basis_unclear", "condition_flagged",
             "mileage_implausible",
         )
+
+
+class AdListSerializer(AdSerializer):
+    """The grid payload; full prose belongs to the detail endpoint."""
+
+    class Meta(AdSerializer.Meta):
+        fields = tuple(field for field in AdSerializer.Meta.fields if field != "description")
 
 
 class NotifierSettingsSerializer(serializers.ModelSerializer):
