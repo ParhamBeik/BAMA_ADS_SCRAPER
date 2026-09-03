@@ -17,6 +17,7 @@ import hashlib
 import statistics
 from collections import defaultdict
 from datetime import timedelta
+from typing import Literal
 
 from django.conf import settings
 from django.core.cache import cache
@@ -132,20 +133,27 @@ def _coverage() -> dict:
     }
 
 
-def envelope(payload: dict, *, coverage: dict | None = None, **extra) -> Response:
+def envelope(payload: dict, *, coverage: dict | Literal[False] | None = None,
+             **extra) -> Response:
     """Wrap an answer with everything needed to judge it.
 
     `coverage` is passed in by the cached endpoints so it keeps the vintage of
     the answer it qualifies — see `cached_answer`. Uncached endpoints read it
     fresh, which for them is the same thing.
+
+    `coverage=False` drops the block entirely, and there are two reasons an
+    answer wants that. It is operational state — whether the source is refusing
+    us right now, how many hours since the last sweep — which qualifies a market
+    number and is nobody's business on an endpoint that serves anonymous
+    readers. And on an answer that is not about listing data at all, the block
+    is not merely private but wrong: a model card is no more or less true
+    because the crawl is behind.
     """
-    return Response({
-        **payload,
-        "as_of": timezone.now(),
-        "coverage": coverage if coverage is not None else _coverage(),
-        "methodology_version": METHODOLOGY_VERSION,
-        **extra,
-    })
+    body = {**payload, "as_of": timezone.now(),
+            "methodology_version": METHODOLOGY_VERSION, **extra}
+    if coverage is not False:
+        body["coverage"] = coverage if coverage is not None else _coverage()
+    return Response(body)
 
 
 def cache_key(prefix: str, parts: dict) -> str:

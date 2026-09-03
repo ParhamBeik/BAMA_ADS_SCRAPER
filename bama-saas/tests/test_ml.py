@@ -18,6 +18,7 @@ import math
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from django.urls import resolve
 from django.utils import timezone as djtz
 
 from apps.core.models import Ad, Brand, City, ListingEpisode, Model, Variant
@@ -982,9 +983,62 @@ def test_the_model_card_page_does_not_grow_without_bound(staff_client):
         training_rows=1000, feature_spec={}, metrics={}, artifact_path="live")
 
     body = staff_client.get("/api/ml/models/").json()
+    if not body.get("available"):
+        # The same graceful path its sibling above takes: without the ML extras
+        # installed the view refuses before it ever reads the table, and there
+        # is no window to assert on. Asserting the keys unconditionally failed
+        # with a bare KeyError instead of skipping.
+        pytest.skip(f"models endpoint unavailable: {body.get('reason')}")
 
     assert body["trained_total"] == 12
     assert body["shown"] == HISTORY_PER_MODEL + 1
     versions = [m["version"] for m in body["models"]]
     assert 99 in versions, "the live model is never dropped from the page"
     assert 1 not in versions, "the oldest refused attempt is"
+
+
+@pytest.mark.django_db
+def test_the_model_card_page_is_readable_without_an_account(api_client):
+    """The one endpoint in this app an anonymous reader may have.
+
+    Its whole argument is that promotion is gated on measured out-of-time
+    performance and that refused challengers are published with the reason —
+    which is worth nothing behind a signup form. `AllowAny` is one line and
+    nothing else in the suite would notice it being dropped.
+
+    The declared permission is what is asserted, not just the 200. `DEBUG` is
+    on under pytest and it makes `AllowAny` the project-wide default, so a
+    request-level check alone passes just as happily with the decorator
+    deleted — the staff-only tests either side of this one are meaningful for
+    the mirror-image reason, that `IsAdminUser` overrides that default.
+    """
+    from rest_framework.permissions import AllowAny as Any_
+
+    view = resolve("/api/ml/models/").func
+    assert view.cls.permission_classes == [Any_], "the endpoint is declared public"
+    assert api_client.get("/api/ml/models/").status_code == 200
+
+
+@pytest.mark.django_db
+def test_the_public_model_card_page_does_not_publish_crawl_state(api_client):
+    """Coverage reports operational state — whether the source is currently
+    refusing us, how long since the last sweep. It qualifies a market number,
+    it says nothing about whether a model card is true, and it used to sit
+    behind a session. The one anonymous endpoint does not carry it."""
+    body = api_client.get("/api/ml/models/").json()
+    assert "coverage" not in body
+    assert "as_of" in body, "the rest of the envelope is unchanged"
+
+
+@pytest.mark.django_db
+def test_the_model_card_page_is_answered_from_cache(api_client):
+    """Public means the request rate is set by whoever asks most often, and the
+    uncached view ran a full count over one row per scored ad plus the coverage
+    queries on every hit. A second reader inside the window pays nothing."""
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    api_client.get("/api/ml/models/")
+    with CaptureQueriesContext(connection) as second:
+        api_client.get("/api/ml/models/")
+    assert len(second) == 0, "a warm read touches the database not at all"

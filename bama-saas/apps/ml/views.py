@@ -7,6 +7,8 @@ Four endpoints, and the split between them is who they are for:
   ``methodology_version`` has been pointing at for months with nothing behind
   it: a reader who wants to know why a number on a card is what it is can now
   read what produced it, including the models that were *not* promoted and why.
+  The one anonymous endpoint in the app, and therefore the one that is cached
+  and that ships no coverage block — see ``models_view``.
 - ``/api/ads/<code>/prediction/`` — one listing's learned view with its SHAP
   decomposition, drawn beside the statistical breakdown rather than instead of
   it.
@@ -32,7 +34,7 @@ from rest_framework.permissions import AllowAny, IsAdminUser
 from rest_framework.response import Response
 
 from apps.core.models import Ad
-from apps.core.views import envelope
+from apps.core.views import cached, envelope
 from apps.ml import inference, monitoring, registry
 from apps.ml.models import AdPrediction, MLModel, ReviewDecision
 
@@ -45,6 +47,12 @@ REVIEW_LIMIT = 100
 # is enough to see whether a line of challengers is improving or thrashing,
 # which is the only question the history answers.
 HISTORY_PER_MODEL = 4
+
+# The model cards change when `ml_train` runs, which is nightly. Five minutes
+# is far shorter than that and still collapses a burst of anonymous traffic to
+# one query; the cost of being five minutes stale on a page about last night's
+# training run is nothing.
+MODELS_CACHE_SECONDS = 300
 
 
 def _card(record: MLModel) -> dict:
@@ -73,9 +81,7 @@ def _card(record: MLModel) -> dict:
     }
 
 
-@api_view(["GET"])
-@permission_classes([AllowAny])
-def models_view(request):
+def _models_payload() -> dict:
     """What is live per model, plus a bounded history of what was refused.
 
     Bounded, because this table grows by five rows every night and nothing was
@@ -89,12 +95,11 @@ def models_view(request):
     interesting shape and the forty before them are not.
     """
     if not registry.ML_AVAILABLE:
-        return envelope({"available": False, "reason": "ml_unavailable",
-                         "detail": registry.ML_UNAVAILABLE_REASON, "models": []})
+        return {"available": False, "reason": "ml_unavailable",
+                "detail": registry.ML_UNAVAILABLE_REASON, "models": []}
     records = list(MLModel.objects.order_by("name", "-version"))
     if not records:
-        return envelope({"available": False, "reason": "no_models_trained",
-                         "models": []})
+        return {"available": False, "reason": "no_models_trained", "models": []}
 
     kept, seen = [], defaultdict(int)
     for record in records:
@@ -105,7 +110,7 @@ def models_view(request):
             kept.append(record)
     kept.sort(key=lambda r: (r.name, -r.version))
 
-    return envelope({
+    return {
         "available": True,
         "models": [_card(r) for r in kept],
         "shown": len(kept),
@@ -114,7 +119,30 @@ def models_view(request):
         "active": {r.name: r.version for r in records
                    if r.status == MLModel.Status.ACTIVE},
         "scored_ads": AdPrediction.objects.count(),
-    })
+    }
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def models_view(request):
+    """The model cards, and the only answer here an anonymous reader can have.
+
+    Public on purpose: the page's claim is that promotion is gated on measured
+    out-of-time performance and that refused challengers are published with the
+    reason. A claim like that is worth nothing behind a signup form.
+
+    Which is also why it is cached and why it drops the coverage block. Being
+    public means the cost of a request is set by whoever asks most often, and
+    the uncached version ran a full count over one row per scored ad plus the
+    three coverage queries on every hit — cheap per reader, a sequential table
+    scan a second under the per-IP anonymous throttle. The payload is identical
+    for every caller and changes once a night, so it caches perfectly. Coverage
+    goes because it reports operational state — `source_blocked`, `swept_at` —
+    that has no bearing on whether a model card is true and that used to sit
+    behind a session.
+    """
+    return envelope(cached("ml:models", MODELS_CACHE_SECONDS, _models_payload),
+                    coverage=False)
 
 
 @api_view(["GET"])
