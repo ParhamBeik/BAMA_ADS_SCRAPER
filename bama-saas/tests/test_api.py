@@ -13,6 +13,8 @@ from unittest.mock import patch
 
 import pytest
 from django.core.cache import CacheKeyWarning
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.urls import resolve
 from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.test import APIClient
@@ -29,6 +31,7 @@ from apps.core.models import (
     MarketIndex,
     Model,
     NotifierSettings,
+    PriceDropEvent,
     PriceObservation,
     Variant,
 )
@@ -792,6 +795,68 @@ def test_favorite_response_matches_saved_screen_contract(api_client, catalog):
     assert body["code"] == ad.code
     assert body["ad_title"] == ad.title
     assert body["ad_price"] == ad.current_price
+
+
+@pytest.mark.django_db
+def test_saved_cars_report_the_latest_price_cut(api_client, catalog):
+    """The newest drop, not merely the existence of one.
+
+    Two cuts on one ad, so a query that forgot its ordering would answer with
+    the older one — which on the saved screen reads as a car whose price moved
+    weeks ago when it moved yesterday.
+    """
+    user = User.objects.create_user(email="drops@example.com", password="StrongPass1!")
+    api_client.force_authenticate(user=user)
+    ad = catalog["ads"][0]
+    older = NOW - timedelta(days=9)
+    newest = NOW - timedelta(days=1)
+    for observed, old_price, new_price in (
+        (older, 900_000_000, 850_000_000),
+        (newest, 850_000_000, 800_000_000),
+    ):
+        PriceDropEvent.objects.create(
+            ad=ad, old_price=old_price, new_price=new_price,
+            drop_amount=old_price - new_price,
+            drop_pct=round((old_price - new_price) / old_price * 100, 2),
+            observed_at=observed,
+        )
+
+    api_client.post("/api/favorites/", {"code": ad.code}, format="json")
+    row = api_client.get("/api/favorites/").json()["results"][0]
+
+    assert row["previous_price"] == 850_000_000
+    assert row["price_changed_at"].startswith(newest.date().isoformat())
+
+
+@pytest.mark.django_db
+def test_reading_saved_cars_costs_the_same_whatever_the_count(api_client, catalog):
+    """The N+1 guard.
+
+    `previous_price` and `price_changed_at` used to be two SerializerMethodFields
+    that each ran their own lookup, so a page of saved cars cost two extra
+    queries per row and the price of opening the screen grew with how many cars
+    the user had saved. They are annotations on the list query now, so the count
+    is flat — which is the assertion, not the absolute number.
+    """
+    user = User.objects.create_user(email="many@example.com", password="StrongPass1!")
+    api_client.force_authenticate(user=user)
+    ads = catalog["ads"]
+    assert len(ads) >= 3, "the fixture must hold enough ads for this to mean anything"
+
+    def queries_for_the_list_screen() -> int:
+        with CaptureQueriesContext(connection) as captured:
+            api_client.get("/api/favorites/")
+        return len(captured.captured_queries)
+
+    api_client.post("/api/favorites/", {"code": ads[0].code}, format="json")
+    one_saved = queries_for_the_list_screen()
+
+    for ad in ads[1:3]:
+        api_client.post("/api/favorites/", {"code": ad.code}, format="json")
+    three_saved = queries_for_the_list_screen()
+
+    assert api_client.get("/api/favorites/").json()["count"] == 3
+    assert three_saved == one_saved
 
 
 # ---------------------------------------------------------------------------

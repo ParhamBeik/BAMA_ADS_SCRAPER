@@ -12,12 +12,11 @@ decide between the app shell and the login screen.
 
 from __future__ import annotations
 
-from datetime import datetime
-
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.sessions.models import Session
 from django.db import IntegrityError
+from django.db.models import OuterRef, Subquery
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import ensure_csrf_cookie
@@ -180,11 +179,20 @@ class LogoutEverywhereView(APIView):
 
 
 class FavoriteSerializer(serializers.ModelSerializer):
+    """One saved ad, plus its most recent price cut.
+
+    ``previous_price`` and ``price_changed_at`` are read off annotations the
+    viewset attaches (see ``_LATEST_DROP``), not looked up per row. They used to
+    be two ``SerializerMethodField``s that each ran their own query for the same
+    drop, so rendering a page of saved cars cost two queries per row on top of
+    the one that fetched them.
+    """
+
     code = serializers.CharField(source="ad_id")
     ad_title = serializers.CharField(source="ad.title", read_only=True)
     ad_price = serializers.IntegerField(source="ad.current_price", read_only=True)
-    previous_price = serializers.SerializerMethodField()
-    price_changed_at = serializers.SerializerMethodField()
+    previous_price = serializers.IntegerField(read_only=True)
+    price_changed_at = serializers.DateTimeField(read_only=True)
 
     class Meta:
         model = Favorite
@@ -192,19 +200,11 @@ class FavoriteSerializer(serializers.ModelSerializer):
                   "price_changed_at", "created_at"]
         read_only_fields = ["created_at"]
 
-    def _latest_drop(self, obj):
-        return (
-            PriceDropEvent.objects.filter(ad_id=obj.ad_id)
-            .order_by("-observed_at").values("old_price", "observed_at").first()
-        )
 
-    def get_previous_price(self, obj) -> int | None:
-        drop = self._latest_drop(obj)
-        return drop["old_price"] if drop else None
-
-    def get_price_changed_at(self, obj) -> datetime | None:
-        drop = self._latest_drop(obj)
-        return drop["observed_at"] if drop else None
+# The ad's newest price cut, as a correlated subquery. Served by
+# `PriceDropEvent`'s own (ad, -observed_at) index, so it is one index seek per
+# row inside the single list query rather than a round trip per row.
+_LATEST_DROP = PriceDropEvent.objects.filter(ad_id=OuterRef("ad_id")).order_by("-observed_at")
 
 
 class FavoriteViewSet(viewsets.ModelViewSet):
@@ -215,7 +215,14 @@ class FavoriteViewSet(viewsets.ModelViewSet):
     lookup_field = "ad__code"
     lookup_url_kwarg = "code"
     http_method_names = ["get", "post", "delete", "head", "options"]
-    queryset = Favorite.objects.select_related("ad").order_by("-created_at")
+    queryset = (
+        Favorite.objects.select_related("ad")
+        .annotate(
+            previous_price=Subquery(_LATEST_DROP.values("old_price")[:1]),
+            price_changed_at=Subquery(_LATEST_DROP.values("observed_at")[:1]),
+        )
+        .order_by("-created_at")
+    )
 
     def get_queryset(self):
         return super().get_queryset().filter(user=self.request.user)
@@ -226,6 +233,11 @@ class FavoriteViewSet(viewsets.ModelViewSet):
         favorite, _ = Favorite.objects.get_or_create(
             user=request.user, ad_id=serializer.validated_data["ad_id"]
         )
+        # Re-read through the annotated queryset: the serializer reads the two
+        # drop columns as attributes, and a freshly `get_or_create`d instance
+        # carries neither. One code path for both, rather than a serializer that
+        # has to cope with an un-annotated row.
+        favorite = self.get_queryset().get(pk=favorite.pk)
         return Response(self.get_serializer(favorite).data, status=status.HTTP_201_CREATED)
 
     def destroy(self, request, *args, **kwargs):

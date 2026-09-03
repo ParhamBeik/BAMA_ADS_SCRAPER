@@ -906,7 +906,8 @@ def _turnover_rates() -> dict[int, dict]:
         return {}
 
 
-def compute_deal_scores(*, model_id: int | None = None) -> dict:
+def compute_deal_scores(*, model_id: int | None = None,
+                        liquidity: dict[int, dict] | None = None) -> dict:
     """Value every eligible ad against its peers, or one model's.
 
     This used to write only bargains, and the name still says "deal" because
@@ -924,6 +925,12 @@ def compute_deal_scores(*, model_id: int | None = None) -> dict:
 
     Idempotent — a full refresh drops every row and rebuilds, a per-model
     refresh drops only that model's.
+
+    ``liquidity`` is the per-model turnover table, accepted from the caller
+    because it does not depend on ``model_id`` at all: it is one scan of the
+    whole episode history and the answer is identical for every model. The
+    incremental path rescores ~200 models a tick, and computing it here meant
+    ~200 identical full scans per tick — see ``refresh_cohort_deal_scores``.
     """
     outliers = flag_high_outliers(model_id=model_id)
     base = scorable_rows()
@@ -944,11 +951,11 @@ def compute_deal_scores(*, model_id: int | None = None) -> dict:
 
     # How fast each model's listings leave the feed, joined onto the score so a
     # card can say whether the discount is on something that actually moves.
-    # Imported locally: `research` imports this module for its own baselines, so
-    # a module-level import here would be a cycle. Empty until there is enough
-    # clean episode history, and a missing rate is left absent rather than
-    # defaulted — "we do not know how fast this sells" is not "it sells slowly".
-    liquidity = _turnover_rates()
+    # Empty until there is enough clean episode history, and a missing rate is
+    # left absent rather than defaulted — "we do not know how fast this sells"
+    # is not "it sells slowly".
+    if liquidity is None:
+        liquidity = _turnover_rates()
 
     # Group at every rung of the ladder in one pass, so a car whose exact cohort
     # is too thin is still compared against something rather than dropped. A
@@ -1133,11 +1140,22 @@ def compute_deal_scores(*, model_id: int | None = None) -> dict:
 
 
 def refresh_cohort_deal_scores(model_ids) -> dict:
-    """Rescore just the models a fetch touched."""
+    """Rescore just the models a fetch touched.
+
+    The turnover table is measured once for the whole pass, not once per model.
+    It is a scan of every clean episode joined to its ad, and it does not vary
+    with ``model_id`` — so computing it inside the loop ran the same full scan
+    once for each of the ~200 models a hot tick touches, and again on every
+    coverage tick, for an answer that was identical every time.
+    """
     totals = {"refreshed_models": 0, "total_scored": 0,
               "total_outliers_flagged": 0, "total_outliers_cleared": 0}
-    for mid in {m for m in model_ids if m is not None}:
-        result = compute_deal_scores(model_id=mid)
+    targets = {m for m in model_ids if m is not None}
+    if not targets:
+        return totals
+    liquidity = _turnover_rates()
+    for mid in targets:
+        result = compute_deal_scores(model_id=mid, liquidity=liquidity)
         totals["refreshed_models"] += 1
         totals["total_scored"] += result["scored"]
         totals["total_outliers_flagged"] += result["outliers_flagged"]

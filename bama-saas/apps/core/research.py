@@ -760,6 +760,14 @@ def kaplan_meier(observations: list[Observation]) -> SurvivalCurve:
     ``1 - delisted/at_risk``; the running product is the curve. A censored
     listing stays in ``at_risk`` up to when it was last seen and then simply
     leaves — which is what keeps still-listed cars from reading as instant sales.
+
+    One sorted pass rather than a scan of every observation per event day. The
+    obvious form of this — ``sum(1 for o in observations if o.days >= day)``
+    inside the loop — is O(event days x n), and both grow with the cohort: a
+    model with a few thousand episodes and nearly as many distinct tenures made
+    the liquidity endpoint quadratic in its own popularity. ``at_risk`` is just
+    the count of observations not yet passed, so walking the days downward keeps
+    it as a running total and the numbers come out identical.
     """
     curve = SurvivalCurve(n=len(observations))
     if not observations:
@@ -769,13 +777,28 @@ def kaplan_meier(observations: list[Observation]) -> SurvivalCurve:
     curve.censored = curve.n - curve.delisted
     curve.max_followup = max(o.days for o in observations)
 
+    events_by_day: dict[float, int] = defaultdict(int)
+    total_by_day: dict[float, int] = defaultdict(int)
+    for o in observations:
+        total_by_day[o.days] += 1
+        if o.delisted:
+            events_by_day[o.days] += 1
+
+    # Walk every distinct tenure from the longest down, accumulating how many
+    # listings were still being watched at that point. `at_risk` for day d is
+    # everything with `days >= d`, which is exactly this running total.
+    at_risk_by_day: dict[float, int] = {}
+    at_risk = 0
+    for day in sorted(total_by_day, reverse=True):
+        at_risk += total_by_day[day]
+        at_risk_by_day[day] = at_risk
+
     survival = 1.0
-    for day in sorted({o.days for o in observations if o.delisted}):
-        at_risk = sum(1 for o in observations if o.days >= day)
-        if at_risk == 0:
+    for day in sorted(events_by_day):
+        at_risk = at_risk_by_day[day]
+        if at_risk == 0:  # pragma: no cover - a day with an event has someone at risk
             continue
-        events = sum(1 for o in observations if o.delisted and o.days == day)
-        survival *= 1 - events / at_risk
+        survival *= 1 - events_by_day[day] / at_risk
         curve.times.append(day)
         curve.survival.append(survival)
         curve.at_risk.append(at_risk)

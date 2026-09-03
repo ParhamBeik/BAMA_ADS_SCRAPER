@@ -530,6 +530,29 @@ def test_censoring_is_what_makes_this_different():
     assert R.kaplan_meier(mostly_open).median_days() is None
 
 
+def test_several_listings_leaving_on_one_day_are_one_step():
+    """Ties, which is where a per-day estimator is easiest to get wrong.
+
+    Six listings; three leave on day 2 and one on day 5, the other two still up.
+    Day 2 has all six at risk, so survival is 1 - 3/6 = 1/2, and day 5 has the
+    three that outlived it, so it drops by 1/3 to 1/3. Counting a tied day once
+    per listing instead of once per day would produce three separate steps and a
+    curve that falls too far.
+    """
+    observations = (
+        [R.Observation(days=2, delisted=True) for _ in range(3)]
+        + [R.Observation(days=5, delisted=True)]
+        + [R.Observation(days=9, delisted=False) for _ in range(2)]
+    )
+
+    curve = R.kaplan_meier(observations)
+
+    assert curve.times == [2, 5]
+    assert curve.at_risk == [6, 3]
+    assert curve.survival == pytest.approx([0.5, 1 / 3])
+    assert curve.median_days() == 2
+
+
 def test_a_censored_listing_never_counts_as_a_delisting():
     only_open = [R.Observation(days=10, delisted=False) for _ in range(5)]
 

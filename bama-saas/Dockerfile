@@ -23,9 +23,16 @@ RUN apt-get update \
 # extra so a host that wants the web app without ~120MB of scikit-learn and
 # LightGBM can have it — `apps/ml` degrades to a refusal rather than an
 # ImportError when they are absent.
+#
+# `test` is deliberately NOT installed. config/settings.py selects the permissive
+# profile when `pytest` is in `sys.modules` — AllowAny on every endpoint,
+# ALLOWED_HOSTS `*`, no HTTPS redirect, no throttles — and this image never runs
+# the suite (CI runs it on the runner, against a service container). Shipping the
+# import here put the trigger for that switch one stray module-level `import
+# pytest` away from a live process, in an image that has no use for it.
 COPY pyproject.toml ./
 RUN pip install --upgrade pip \
-    && python -c "import tomllib, pathlib; p = tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']; x = p['optional-dependencies']; print('\n'.join(p['dependencies'] + x['test'] + x['ml']))" > /tmp/requirements.txt \
+    && python -c "import tomllib, pathlib; p = tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']; x = p['optional-dependencies']; print('\n'.join(p['dependencies'] + x['ml']))" > /tmp/requirements.txt \
     && pip install -r /tmp/requirements.txt
 
 COPY . /app/

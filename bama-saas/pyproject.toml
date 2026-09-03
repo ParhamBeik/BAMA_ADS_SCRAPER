@@ -57,6 +57,11 @@ DJANGO_SETTINGS_MODULE = "config.settings"
 python_files = ["test_*.py"]
 testpaths = ["tests"]
 filterwarnings = ["ignore::DeprecationWarning"]
+# Declared, or pytest treats every `@pytest.mark.slow` as a typo and warns —
+# which also means `-m "not slow"` silently selects nothing rather than skipping
+# the LightGBM fits, so the marker existed but could not be used for what it is
+# for. The tests that carry it actually train models.
+markers = ["slow: fits a real model; minutes rather than milliseconds"]
 
 # 100, not the default 88: the house style leans on long log-format strings and
 # ORM chains that read worse when broken, and reflowing them is pure churn.

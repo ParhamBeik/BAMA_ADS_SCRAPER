@@ -512,6 +512,32 @@ def test_refresh_cohort_deal_scores():
     assert res["refreshed_models"] == 2
 
 
+@pytest.mark.django_db
+def test_the_turnover_scan_happens_once_per_pass_not_once_per_model():
+    """The cost of the hot tick's incremental rescore.
+
+    Turnover is a scan of every clean episode joined to its ad and does not vary
+    with the model being rescored, so the answer is identical for all of them.
+    Measuring it inside the per-model loop ran that same scan once for each of
+    the ~200 models a fetch touches — every 15 minutes, and again on each
+    coverage tick.
+    """
+    with patch("apps.core.pricing._turnover_rates", return_value={}) as turnover:
+        refresh_cohort_deal_scores({1, 2, 3, 4, 5})
+
+    assert turnover.call_count == 1
+
+
+@pytest.mark.django_db
+def test_an_empty_rescore_does_no_work_at_all():
+    """Nothing to rescore must not still pay for the episode scan."""
+    with patch("apps.core.pricing._turnover_rates", return_value={}) as turnover:
+        res = refresh_cohort_deal_scores({None})
+
+    assert turnover.call_count == 0
+    assert res["refreshed_models"] == 0
+
+
 class _Resp:
     def __init__(self, headers=None):
         self.headers = headers or {}
