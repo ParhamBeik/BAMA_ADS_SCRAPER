@@ -16,7 +16,7 @@ from datetime import timedelta
 from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction
-from django.db.models import Count, Sum
+from django.db.models import Count, Q, Sum
 from django.utils import timezone
 
 from apps.core import research
@@ -296,8 +296,8 @@ def link_reposts(*, window_days: int = REPOST_WINDOW_DAYS) -> dict:
 
 
 @transaction.atomic
-def sync_episodes(*, limit: int | None = None) -> dict:
-    """Bring episodes in line with the current state of every ad.
+def sync_episodes(*, limit: int | None = None, full: bool = False) -> dict:
+    """Bring episodes in line with changed ads, or every ad for repair.
 
     Derived entirely from ``Ad``, so it is idempotent, re-runnable at any time,
     and back-fills history on first run. Deliberately a separate pass rather than
@@ -313,6 +313,15 @@ def sync_episodes(*, limit: int | None = None) -> dict:
     ads = Ad.objects.all().only(
         "code", "status", "first_seen_at", "last_seen_at", "removed_at", "current_price",
     )
+    last_sync = (
+        JobRun.objects.filter(name="episodes", status=JobRun.Status.OK)
+        .order_by("-finished_at").values_list("finished_at", flat=True).first()
+    )
+    if not full and last_sync:
+        ads = ads.filter(
+            Q(last_seen_at__gte=last_sync)
+            | Q(status__in=(Ad.Status.REMOVED, Ad.Status.UNVERIFIED))
+        )
     if limit:
         ads = ads[:limit]
 
