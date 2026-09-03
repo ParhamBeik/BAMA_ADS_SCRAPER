@@ -22,7 +22,20 @@ const server = createServer((request, response) => {
     return;
   }
 
-  const requested = normalize(decodeURIComponent((request.url ?? "/").split("?")[0]));
+  // Decode inside a guard. `decodeURIComponent` throws URIError on malformed
+  // percent-encoding, and an uncaught throw in a request handler takes the
+  // whole process down — which surfaces in CI as an opaque connection failure
+  // partway through the Lighthouse run rather than as a verdict. Decoding has
+  // to happen before the traversal check below, so it cannot simply be dropped
+  // in favour of `new URL().pathname`, which does not decode.
+  let requested;
+  try {
+    requested = normalize(decodeURIComponent(new URL(request.url ?? "/", "http://localhost").pathname));
+  } catch {
+    response.writeHead(400);
+    response.end("bad request");
+    return;
+  }
   const relative = requested === "/" ? "/index.html" : requested;
   const file = join(root, relative);
   if (!file.startsWith(root) || !existsSync(file) || !statSync(file).isFile()) {
