@@ -26,6 +26,8 @@ def backfill_search_text(apps, schema_editor):
 
 class Migration(migrations.Migration):
 
+    atomic = False
+
     dependencies = [
         ("core", "0029_alter_fetchrun_source"),
     ]
