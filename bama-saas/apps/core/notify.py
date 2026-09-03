@@ -173,6 +173,19 @@ def format_alert(row: DealScoreCache) -> str:
     return format_message(row)
 
 
+def format_delivery_alert(delivery) -> str:
+    """A retryable alert from its immutable delivery snapshot."""
+    ad = delivery.ad
+    lines = [
+        f"<b>{(delivery.discount_pct or 0):.0f}% below fair value</b>",
+        f"{ad.title or ''} — {ad.year_jalali or '?'}",
+        f"Asking {toman(ad.current_price)} toman (fair ~{toman(delivery.peer_median)})",
+    ]
+    if url := absolute_ad_url(ad.url or ad.canonical_path):
+        lines.append(url)
+    return "\n".join(lines)
+
+
 # One user's rules can only put this many cars in their feed per tick. A rule
 # written too loosely — 2% off anything — would otherwise deliver hundreds on
 # its first run and the feed would be useless from the moment it was created.
@@ -198,14 +211,18 @@ def deliver_alerts(*, dry_run: bool = False) -> dict:
     if not rules:
         return {"rules": 0, "delivered": 0, "telegram_sent": 0}
 
-    delivered = telegram_sent = 0
+    delivered = 0
+    seen_by_user: dict = defaultdict(set)
+    for user_id, ad_id in AlertDelivery.objects.filter(
+        user_id__in={rule.user_id for rule in rules}
+    ).values_list("user_id", "ad_id"):
+        seen_by_user[user_id].add(ad_id)
     # Per user, so two of one user's rules matching the same car deliver it
     # once. Loaded per user rather than per rule for the same reason.
     per_user: dict = defaultdict(int)
     for rule in rules:
         if per_user[rule.user_id] >= MAX_PER_USER_PER_RUN:
             continue
-        seen = AlertDelivery.objects.filter(user_id=rule.user_id).values("ad_id")
         rows = matching_deals(
             min_discount_pct=rule.min_discount_pct,
             min_peers=rule.min_peers,
@@ -217,7 +234,7 @@ def deliver_alerts(*, dry_run: bool = False) -> dict:
             variant_id=rule.variant_id,
             year_jalali=rule.year_jalali,
             exclude_review=rule.exclude_review,
-            already_sent=seen,
+            already_sent=seen_by_user[rule.user_id],
             limit=MAX_PER_USER_PER_RUN - per_user[rule.user_id],
         )
         for row in rows:
@@ -235,15 +252,28 @@ def deliver_alerts(*, dry_run: bool = False) -> dict:
                 continue
             delivered += 1
             per_user[rule.user_id] += 1
-            if rule.telegram_chat_id and send_telegram(
-                format_alert(row), rule.telegram_chat_id
-            ):
-                entry.telegram_sent = True
-                entry.save(update_fields=["telegram_sent"])
-                telegram_sent += 1
+            seen_by_user[rule.user_id].add(row.ad_id)
 
-    return {"rules": len(rules), "delivered": delivered,
-            "telegram_sent": telegram_sent, "dry_run": dry_run}
+    return {"rules": len(rules), "delivered": delivered, "dry_run": dry_run}
+
+
+def send_alerts(*, dry_run: bool = False) -> dict:
+    """Retry unsent per-user Telegram alerts without rebuilding the feed."""
+    from apps.accounts.models import AlertDelivery
+
+    pending = AlertDelivery.objects.filter(
+        telegram_sent=False, rule__telegram_chat_id__gt="",
+    ).select_related("ad", "rule")
+    pending_count = pending.count()
+    sent = 0
+    for delivery in pending:
+        if dry_run:
+            sent += 1
+        elif send_telegram(format_delivery_alert(delivery), delivery.rule.telegram_chat_id):
+            delivery.telegram_sent = True
+            delivery.save(update_fields=["telegram_sent"])
+            sent += 1
+    return {"pending": pending_count, "sent": sent, "dry_run": dry_run}
 
 
 def notify_deals(*, dry_run: bool = False) -> dict:

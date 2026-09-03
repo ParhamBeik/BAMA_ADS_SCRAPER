@@ -74,6 +74,7 @@ class Command(BaseCommand):
                 "episodes": ("limit",),
                 "notify": ("dry_run",),
                 "alerts": ("dry_run",),
+                "alerts_send": ("dry_run",),
                 "ml_train": ("only",),
                 "ml_score": ("limit",),
             }.get(job, ())

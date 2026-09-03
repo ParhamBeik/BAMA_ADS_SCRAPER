@@ -32,7 +32,7 @@ from apps.core.models import (
     MarketIndex,
     PageCoverage,
 )
-from apps.core.notify import deliver_alerts, notify_deals
+from apps.core.notify import deliver_alerts, notify_deals, send_alerts
 from apps.core.pricing import compute_deal_scores, deal_window, refresh_cohort_deal_scores
 from apps.core.quality import verified
 from apps.core.research import build_index
@@ -559,6 +559,10 @@ def alerts(*, dry_run: bool = False) -> dict:
     fail the other.
     """
     return deliver_alerts(dry_run=dry_run)
+
+
+def alerts_send(*, dry_run: bool = False) -> dict:
+    return send_alerts(dry_run=dry_run)
 
 
 def ml_train(*, only: str | None = None) -> dict:

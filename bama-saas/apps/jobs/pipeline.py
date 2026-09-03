@@ -48,6 +48,7 @@ JOBS: dict[str, Callable[..., dict]] = {
     "probe_sold": jobs.probe_sold,
     "notify": jobs.notify,
     "alerts": jobs.alerts,
+    "alerts_send": jobs.alerts_send,
     "ml_train": jobs.ml_train,
     "ml_score": jobs.ml_score,
     "coverage": jobs.coverage,
@@ -74,11 +75,11 @@ JOBS: dict[str, Callable[..., dict]] = {
 # matters: `ml_train` is in no other cadence, so nothing else is affected.
 STEP_ORDER = ("fetch", "mark_inactive", "link_reposts", "episodes", "snapshot",
               "market_index", "deal_scores", "ml_train", "ml_score", "probe_sold",
-              "notify", "alerts", "coverage", "backfill_images", "prune", "health")
+              "notify", "alerts", "alerts_send", "coverage", "backfill_images", "prune", "health")
 
 CADENCES = {
     "hot": ("fetch", "mark_inactive", "deal_scores", "ml_score", "probe_sold",
-            "notify", "alerts"),
+            "notify", "alerts", "alerts_send"),
     "warm": ("link_reposts", "episodes", "snapshot", "market_index"),
     "coverage": ("coverage",),
     # Training is its own cadence and its own container. It is the one step here
@@ -97,7 +98,7 @@ CADENCES = {
     # they stop running. `bama train` is one keystroke away.
     "full": ("fetch", "mark_inactive", "link_reposts", "episodes", "snapshot",
              "market_index", "deal_scores", "ml_score", "probe_sold", "notify",
-             "alerts"),
+             "alerts", "alerts_send"),
 }
 
 # A failed *fetch* deliberately does not cascade: the local steps are idempotent
@@ -118,6 +119,7 @@ DEPENDS_ON = {
     # would have corrected — and an alert is the most acted-upon thing this app
     # emits, so it is the one place stale is not good enough.
     "alerts": ("deal_scores",),
+    "alerts_send": ("alerts",),
     # The prediction and the peer median are printed on one card. Scoring
     # against a board the rebuild has since replaced makes the two disagree, and
     # the reader has no way to tell which half is stale.

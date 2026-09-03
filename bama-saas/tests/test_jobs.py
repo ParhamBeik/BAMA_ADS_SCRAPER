@@ -179,6 +179,7 @@ def test_hot_cadence_skips_warm_steps(stub_jobs):
     # container, on its own `train` cadence.
     assert [s.name for s in report.steps] == [
         "mark_inactive", "deal_scores", "ml_score", "probe_sold", "notify", "alerts",
+        "alerts_send",
     ]
     assert "ml_train" not in seen
 

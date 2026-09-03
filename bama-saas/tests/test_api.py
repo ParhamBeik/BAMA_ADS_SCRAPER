@@ -1870,6 +1870,23 @@ def test_an_alert_keeps_what_was_true_when_it_fired(member, catalog):
 
 
 @pytest.mark.django_db
+def test_alert_telegram_delivery_retries_separately(member, catalog, monkeypatch):
+    from apps.core.notify import deliver_alerts, send_alerts
+
+    _, user = member
+    AlertRule.objects.create(
+        user=user, min_discount_pct=5.0, min_peers=8, telegram_chat_id="123",
+    )
+    compute_deal_scores()
+    deliver_alerts()
+    assert AlertDelivery.objects.filter(user=user, telegram_sent=False).exists()
+
+    monkeypatch.setattr("apps.core.notify.send_telegram", lambda *_: True)
+    assert send_alerts()["sent"] > 0
+    assert not AlertDelivery.objects.filter(user=user, telegram_sent=False).exists()
+
+
+@pytest.mark.django_db
 def test_marking_the_feed_read_clears_the_badge(member, catalog):
     from apps.core.notify import deliver_alerts
 
