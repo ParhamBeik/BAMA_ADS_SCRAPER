@@ -16,7 +16,16 @@
 // and none of it is reachable. Registering exactly what the option below uses
 // drops the chart chunk by roughly 80% and makes adding a chart type a
 // deliberate act rather than a free one.
-import ReactEChartsCore from "echarts-for-react/lib/core";
+// `esm/core`, not `lib/core`. The package has no `exports` map, so a deep
+// specifier bypasses the `module` field and resolves to `lib/`, which is
+// CommonJS — and the interop synthesised `default` as the whole exports object
+// rather than honouring its `__esModule` marker, so this binding was
+// `{default: EChartsReactCore, __esModule: true}`. Rendering that is React error
+// #130, "element type is invalid: got object", and it took down every
+// authenticated screen from the moment the chart first rendered. The bare
+// `echarts-for-react` this replaced resolved through `module` to real ESM,
+// which is why the deep path was the change that broke it.
+import ReactEChartsCore from "echarts-for-react/esm/core";
 import { BarChart, LineChart } from "echarts/charts";
 import {
   GridComponent,
@@ -169,7 +178,11 @@ export function Chart({
       // when data arrives and shove the page around.
       style={{ height, width: "100%" }}
       notMerge
-      opts={{ renderer: "svg" }}
+      // No `opts={{renderer:"svg"}}`. It was correct when this imported the
+      // umbrella `echarts`, which registers both renderers; the modular
+      // registration above declares Canvas only, so asking for SVG now names a
+      // renderer that is not loaded. Canvas is the choice the registration above
+      // argues for anyway — dropping the option is what makes the two agree.
     />
   );
 }
