@@ -54,6 +54,11 @@ include = ["apps*", "config*"]
 
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "config.settings"
+# Imported during pre-parse, ahead of pytest-django's settings import.
+# See testenv.py for why a conftest cannot do this. `pythonpath` is what puts
+# the project root on sys.path so the plugin is importable by name.
+pythonpath = ["."]
+addopts = "-p testenv"
 python_files = ["test_*.py"]
 testpaths = ["tests"]
 filterwarnings = ["ignore::DeprecationWarning"]

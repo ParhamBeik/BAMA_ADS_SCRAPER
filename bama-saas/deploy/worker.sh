@@ -44,8 +44,23 @@ fi
 log() { echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] worker: $*"; }
 
 # flock is a Linux util; on a macOS dev host we run unlocked.
+#
+# `hot` and `coverage` share one lock because they both fetch, and the database
+# already refuses the second one: `fetcher._fetch_lease` is a single advisory
+# lock, so a coverage tick starting while hot is mid-sweep raised FetchLeaseBusy
+# and was recorded SKIPPED. It had already paid for Django startup and its gap
+# arithmetic by then, and the skip was invisible on the health page — measured
+# over 24h production, coverage runs to 432s at its worst against a 600s
+# cadence, so the overlap is routine rather than exceptional. Sharing the lock
+# makes the collision a scheduling fact settled in the shell, before any work.
+#
+# Every other cadence keeps its own lock: `warm` and `maintenance` touch no
+# network and must not be held up behind a slow sweep.
 tick() {  # <cadence>
-    lock="/tmp/bama-$1.lock"
+    case "$1" in
+        hot|coverage) lock="/tmp/bama-fetch.lock" ;;
+        *)            lock="/tmp/bama-$1.lock" ;;
+    esac
     if command -v flock >/dev/null 2>&1; then
         flock -n "$lock" "$PYTHON_BIN" manage.py bama "$@"
     else

@@ -1151,6 +1151,59 @@ def check_reject_spike(now=None) -> Check:
                  {"spikes": [{"rule": r, "count": c, "expected": e} for r, c, e in spikes]})
 
 
+# Coverage runs on a ~10 minute cadence, so a couple of hours of silence is
+# twelve missed turns — far past anything a slow sweep explains, and short
+# enough to notice inside one working day.
+COVERAGE_STARVED_AFTER = timedelta(hours=2)
+
+
+def check_coverage_progress(now=None) -> Check:
+    """Is rolling coverage still getting a turn on the worker?
+
+    Its own check because coverage failing *silently* is the specific way
+    removal detection dies. There is no full sweep any more — coverage
+    accumulates from bounded chunks — so a coverage job that stops running
+    leaves the deep tail unread, the feed never reads as fully covered, and
+    `mark_inactive` refuses to mark anything. Every symptom of that shows up on
+    `check_sweep_freshness` as uncovered ranges, with nothing saying why.
+
+    Watches for *absence*, not for failure. Coverage shares the fetch lock with
+    the hot tick (`deploy/worker.sh`), and a cadence that loses that race never
+    reaches Python at all — so there is no JobRun row to inspect, failed or
+    otherwise. A check looking for SKIPPED rows would see a clean history and
+    report everything fine while coverage had not run for a day.
+    """
+    now = now or timezone.now()
+    runs = JobRun.objects.filter(name="coverage")
+    latest = runs.order_by("-started_at").values_list("started_at", flat=True).first()
+    if latest is None:
+        return Check("coverage_progress", False,
+                     "The coverage job has never run. Removal detection cannot "
+                     "prove an ad is gone until the feed is covered end to end.",
+                     {"last_run_at": None})
+
+    age = now - latest
+    recent = runs.filter(started_at__gte=now - timedelta(hours=RECENT_HOURS))
+    skipped = recent.filter(status=JobRun.Status.SKIPPED).count()
+    data = {
+        "last_run_at": latest.isoformat(),
+        "age_hours": round(age.total_seconds() / 3600, 1),
+        "runs_24h": recent.count(),
+        "skipped_24h": skipped,
+    }
+    if age > COVERAGE_STARVED_AFTER:
+        return Check(
+            "coverage_progress", False,
+            f"Coverage last ran {data['age_hours']:.1f}h ago. It is starved — most "
+            f"likely losing the shared fetch lock to a long hot tick. Removal "
+            f"detection stays paused while the deep tail goes unread.",
+            data,
+        )
+    return Check("coverage_progress", True,
+                 f"Coverage ran {data['age_hours']:.1f}h ago; {data['runs_24h']} run(s) "
+                 f"in {RECENT_HOURS:.0f}h ({skipped} skipped).", data)
+
+
 def check_ingest_progress(now=None) -> Check:
     """A crawler that runs but stores nothing is worse than one that crashes.
 
@@ -1179,8 +1232,11 @@ def check_ingest_progress(now=None) -> Check:
 
 # Source block first: when it is active it is the cause of everything below, and
 # reading the consequences before the cause wastes the operator's time.
-CHECKS = (check_source_block, check_sweep_freshness, check_failed_runs,
-          check_reject_spike, check_ingest_progress)
+# Coverage progress sits directly after sweep freshness: when coverage is
+# starved, the uncovered ranges that check reports are the symptom and this one
+# is the cause, so they read in that order.
+CHECKS = (check_source_block, check_sweep_freshness, check_coverage_progress,
+          check_failed_runs, check_reject_spike, check_ingest_progress)
 
 
 def run_checks(now=None) -> list[Check]:

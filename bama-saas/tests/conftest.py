@@ -7,11 +7,7 @@ part of what the test is saying.
 
 from __future__ import annotations
 
-import os
 from datetime import datetime, timezone
-
-os.environ.setdefault("DJANGO_DEBUG", "1")
-os.environ.setdefault("API_PUBLIC_READS", "1")
 
 import pytest
 from django.conf import settings

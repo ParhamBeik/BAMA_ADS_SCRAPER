@@ -29,7 +29,9 @@ from apps.jobs import fetcher
 from apps.jobs import pipeline as P
 from apps.jobs.fetcher import known_feed_depth
 from apps.jobs.jobs import (
+    COVERAGE_STARVED_AFTER,
     REJECT_SPIKE_MIN_COUNT,
+    check_coverage_progress,
     check_failed_runs,
     check_ingest_progress,
     check_reject_spike,
@@ -637,9 +639,42 @@ def test_ingest_progress_passes_on_a_normal_run():
 
 
 @pytest.mark.django_db
+def test_coverage_progress_fails_when_coverage_has_never_run():
+    assert check_coverage_progress(NOW).ok is False
+
+
+@pytest.mark.django_db
+def test_coverage_progress_fails_on_silence_not_on_failure():
+    """Starvation leaves no row at all, which is what makes it hard to see.
+
+    Coverage shares the fetch lock with the hot tick, so a cadence that loses
+    that race never reaches Python — there is no JobRun to mark failed or
+    skipped. A check that looked for bad rows would read this clean history and
+    report everything fine while the deep tail went unread for a day.
+    """
+    JobRun.objects.create(
+        name="coverage", status=JobRun.Status.OK,
+        started_at=NOW - COVERAGE_STARVED_AFTER - timedelta(minutes=1),
+    )
+
+    check = check_coverage_progress(NOW)
+
+    assert check.ok is False
+    assert check.data["skipped_24h"] == 0, "nothing failed; it simply stopped running"
+    assert "starved" in check.detail
+
+
+@pytest.mark.django_db
+def test_coverage_progress_passes_while_it_is_still_getting_a_turn():
+    JobRun.objects.create(name="coverage", status=JobRun.Status.OK,
+                          started_at=NOW - timedelta(minutes=11))
+    assert check_coverage_progress(NOW).ok is True
+
+
+@pytest.mark.django_db
 def test_run_checks_returns_every_check():
     results = run_checks(NOW)
     assert {c.name for c in results} == {
-        "source_block", "sweep_freshness", "failed_runs", "reject_spike",
-        "ingest_progress",
+        "source_block", "sweep_freshness", "coverage_progress", "failed_runs",
+        "reject_spike", "ingest_progress",
     }

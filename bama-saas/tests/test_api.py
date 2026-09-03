@@ -2037,4 +2037,3 @@ def test_public_reads_permission_boundary(anonymous_client, catalog):
     for url in endpoints:
         resp = anonymous_client.get(url)
         assert resp.status_code == expected, f"{url} returned {resp.status_code}, expected {expected}"
-
