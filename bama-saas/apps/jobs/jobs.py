@@ -108,6 +108,7 @@ def _expiry_threshold_days() -> float | None:
         (ended - started).total_seconds() / 86400.0
         for started, ended in ListingEpisode.objects
         .filter(ended_at__isnull=False, started_at__isnull=False)
+        .order_by("-ended_at")
         .values_list("started_at", "ended_at")[:MAX_TENURE_SAMPLE]
     ]
     if len(tenures) < MIN_TENURE_SAMPLE:
@@ -568,7 +569,7 @@ def ml_train(*, only: str | None = None) -> dict:
     return train_all(only=only)
 
 
-def ml_score(*, limit: int | None = None) -> dict:
+def ml_score(*, limit: int | None = None, incremental: bool = False) -> dict:
     """Rescore the live catalogue with whatever models are ACTIVE.
 
     Must follow ``deal_scores`` for the same reason ``alerts`` does — the two
@@ -578,7 +579,10 @@ def ml_score(*, limit: int | None = None) -> dict:
     """
     from apps.ml.inference import score_all
 
-    return score_all(limit=limit)
+    model_ids = _models_from_latest_fetch() if incremental else None
+    if incremental and not model_ids:
+        return {"skipped": True, "detail": "no affected models in latest fetch"}
+    return score_all(limit=limit, model_ids=model_ids)
 
 
 SOLD_PROBE_BATCH = int(os.environ.get("BAMA_SOLD_PROBE_ADS", "20"))

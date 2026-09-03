@@ -71,8 +71,8 @@ def scorable():
     )
 
 
-def score_all(*, limit: int | None = None) -> dict:
-    """Rescore every active listing with whatever models are live.
+def score_all(*, limit: int | None = None, model_ids=None) -> dict:
+    """Rescore every active listing, or the models whose board rows changed.
 
     Idempotent: an ad's row is replaced wholesale, so a run that scores with
     three models after a run that scored with four leaves the fourth's columns
@@ -87,6 +87,8 @@ def score_all(*, limit: int | None = None) -> dict:
         return {"scored": 0, "reason": "no_active_models"}
 
     qs = scorable().order_by("code")
+    if model_ids is not None:
+        qs = qs.filter(model_id__in=model_ids)
     if limit:
         qs = qs[:limit]
     rows = list(qs.values(*features.QUERY_FIELDS, "title", "trim", "model__name_fa"))
@@ -115,6 +117,7 @@ def score_all(*, limit: int | None = None) -> dict:
 
     return {
         "scored": len(objs),
+        "incremental": model_ids is not None,
         "models": {name: art[name]["record"].version for name in art},
         "priced": sum(1 for p in objs if p.price_p50 is not None),
         "candidates": sum(1 for p in objs

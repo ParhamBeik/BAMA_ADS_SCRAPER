@@ -288,6 +288,8 @@ def run(*, cadence: str | None = None, steps=None, skip_fetch: bool = False,
         step_opts = dict(job_opts.get(name, {}))
         if name == "deal_scores":
             step_opts.setdefault("incremental", incremental_deals)
+        if name == "ml_score":
+            step_opts.setdefault("incremental", incremental_deals)
         # A prerequisite only blocks when it was actually part of this run:
         # `warm` has no fetch, and its steps must not be skipped for one that
         # never ran.

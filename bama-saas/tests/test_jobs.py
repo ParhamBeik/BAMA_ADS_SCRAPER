@@ -184,6 +184,17 @@ def test_hot_cadence_skips_warm_steps(stub_jobs):
 
 
 @pytest.mark.django_db
+def test_hot_cadence_scopes_ml_scoring_to_the_latest_fetch(stub_jobs):
+    options = {}
+    stub_jobs()
+    P.JOBS["ml_score"] = lambda **kwargs: options.update(kwargs) or {}
+
+    P.run(cadence="hot", skip_fetch=True)
+
+    assert options["incremental"] is True
+
+
+@pytest.mark.django_db
 def test_train_cadence_fits_before_it_scores(stub_jobs):
     """Order, not membership, and it shipped backwards once.
 
