@@ -962,3 +962,29 @@ def test_a_confirmed_misfiling_is_dropped_from_the_next_fit(catalog):
     settled = ReviewDecision.objects.filter(
         verdict=ReviewDecision.Verdict.CONFIRMED).count()
     assert settled == 1
+
+
+@pytest.mark.django_db
+def test_the_model_card_page_does_not_grow_without_bound(staff_client):
+    """Five rows land in this table every night and nothing was dropping off.
+    The active version is always shown — it produced the numbers on every other
+    screen — and only a few recent attempts join it."""
+    from apps.ml.views import HISTORY_PER_MODEL
+
+    for v in range(1, 12):
+        MLModel.objects.create(
+            name=MLModel.Name.PRICE, version=v, algorithm="lgbm",
+            status=MLModel.Status.SHADOW, trained_at=djtz.now(),
+            training_rows=1000, feature_spec={}, metrics={}, artifact_path=f"p{v}")
+    MLModel.objects.create(
+        name=MLModel.Name.PRICE, version=99, algorithm="lgbm",
+        status=MLModel.Status.ACTIVE, trained_at=djtz.now(),
+        training_rows=1000, feature_spec={}, metrics={}, artifact_path="live")
+
+    body = staff_client.get("/api/ml/models/").json()
+
+    assert body["trained_total"] == 12
+    assert body["shown"] == HISTORY_PER_MODEL + 1
+    versions = [m["version"] for m in body["models"]]
+    assert 99 in versions, "the live model is never dropped from the page"
+    assert 1 not in versions, "the oldest refused attempt is"

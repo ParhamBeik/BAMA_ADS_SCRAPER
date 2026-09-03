@@ -23,6 +23,8 @@ returns, and it is what the UI renders when no model has been promoted.
 
 from __future__ import annotations
 
+from collections import defaultdict
+
 from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -38,6 +40,11 @@ from apps.ml.models import AdPrediction, MLModel, ReviewDecision
 # not a dataset — a thousand suspected misfilings is the same signal as fifty
 # and nobody works through either in one sitting.
 REVIEW_LIMIT = 100
+
+# How many non-active versions of each model the methodology page shows. Four
+# is enough to see whether a line of challengers is improving or thrashing,
+# which is the only question the history answers.
+HISTORY_PER_MODEL = 4
 
 
 def _card(record: MLModel) -> dict:
@@ -69,7 +76,18 @@ def _card(record: MLModel) -> dict:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def models_view(request):
-    """Every trained model, newest first — the methodology page's data."""
+    """What is live per model, plus a bounded history of what was refused.
+
+    Bounded, because this table grows by five rows every night and nothing was
+    ever dropping off. At 65 records the page was already emitting 5,190 DOM
+    elements; left alone it becomes a document that gets slower every day and
+    that nobody scrolls to the bottom of.
+
+    The active version is always included whatever its age — it is the one the
+    numbers on every other screen came from — and the most recent attempts join
+    it, because "the last four challengers all lost to the incumbent" is the
+    interesting shape and the forty before them are not.
+    """
     if not registry.ML_AVAILABLE:
         return envelope({"available": False, "reason": "ml_unavailable",
                          "detail": registry.ML_UNAVAILABLE_REASON, "models": []})
@@ -77,9 +95,22 @@ def models_view(request):
     if not records:
         return envelope({"available": False, "reason": "no_models_trained",
                          "models": []})
+
+    kept, seen = [], defaultdict(int)
+    for record in records:
+        if record.status == MLModel.Status.ACTIVE:
+            kept.append(record)
+        elif seen[record.name] < HISTORY_PER_MODEL:
+            seen[record.name] += 1
+            kept.append(record)
+    kept.sort(key=lambda r: (r.name, -r.version))
+
     return envelope({
         "available": True,
-        "models": [_card(r) for r in records],
+        "models": [_card(r) for r in kept],
+        "shown": len(kept),
+        "trained_total": len(records),
+        "history_per_model": HISTORY_PER_MODEL,
         "active": {r.name: r.version for r in records
                    if r.status == MLModel.Status.ACTIVE},
         "scored_ads": AdPrediction.objects.count(),

@@ -417,7 +417,7 @@ td.num, th.num {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   padding: 2px 7px;
   border-radius: 999px;
@@ -494,7 +494,16 @@ td.num, th.num {
 button.ghost { background: none; border-color: transparent; color: var(--muted); }
 button.ghost:hover { background: var(--panel-2); color: var(--text); }
 code, .inspect-table { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
-code { font-size: 0.92em; background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+/* A floor, not a size. `0.92em` alone is fine next to body text and lands at
+   10.1px inside an 11px caption — half the methodology page was below the
+   legibility threshold for that reason, on the one page whose whole job is to
+   be read carefully. */
+code {
+  font-size: max(12px, 0.92em);
+  background: var(--panel-2);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
 .inspect-table tr.selected { background: var(--accent-soft); }
 .badge.ok { background: color-mix(in srgb, var(--up) 18%, var(--panel)); color: var(--up); border-color: transparent; }
 .badge.fail { background: color-mix(in srgb, var(--down) 18%, var(--panel)); color: var(--down); border-color: transparent; }
@@ -563,7 +572,7 @@ code { font-size: 0.92em; background: var(--panel-2); padding: 1px 5px; border-r
 
 /* Sample size as three dots. A "medium" badge needs reading; ●●○ is grasped at
    a glance, which is the point of putting it on a card at all. */
-.dots { letter-spacing: 1px; font-size: 10px; }
+.dots { letter-spacing: 1px; font-size: 12px; }
 .dots.high { color: var(--up); }
 .dots.medium { color: var(--accent); }
 .dots.low { color: var(--warn); }
@@ -631,7 +640,7 @@ code { font-size: 0.92em; background: var(--panel-2); padding: 1px 5px; border-r
   border: 1px solid var(--border);
   background: var(--panel-2);
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
 }
@@ -697,7 +706,7 @@ code { font-size: 0.92em; background: var(--panel-2); padding: 1px 5px; border-r
   cursor: pointer;
 }
 .combo-option:hover, .combo-option[aria-selected="true"] { background: var(--accent-soft); color: var(--accent); }
-.combo-count { color: var(--muted); font-family: var(--font-mono); font-size: 11.5px; }
+.combo-count { color: var(--muted); font-family: var(--font-mono); font-size: 12px; }
 .combo-option:hover .combo-count { color: inherit; }
 
 /* --- freshness bands ------------------------------------------------------- */
@@ -758,7 +767,7 @@ code { font-size: 0.92em; background: var(--panel-2); padding: 1px 5px; border-r
 .price-bar-median { background: var(--muted); }
 .price-bar-you { width: 3px; background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
 .price-bar-you.good { background: var(--up); box-shadow: 0 0 0 3px color-mix(in srgb, var(--up) 22%, transparent); }
-.price-bar-scale { display: flex; justify-content: space-between; color: var(--muted); font-size: 11.5px; }
+.price-bar-scale { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; }
 .price-bar-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; }
 .price-bar-legend b { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
@@ -899,7 +908,7 @@ code { font-size: 0.92em; background: var(--panel-2); padding: 1px 5px; border-r
 .auth-facts dt {
   margin: 0 0 4px;
   color: rgb(255 255 255 / 70%);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: .06em;
   text-transform: uppercase;
@@ -942,7 +951,7 @@ code { font-size: 0.92em; background: var(--panel-2); padding: 1px 5px; border-r
 }
 .auth-field input[aria-invalid="true"] { border-color: var(--down); }
 .auth-field small,
-.auth-inline-hint { margin-top: -2px; font-size: 11px; font-weight: 600; }
+.auth-inline-hint { margin-top: -2px; font-size: 12px; font-weight: 600; }
 .auth-inline-hint { display: block; margin-top: -10px; }
 .auth-input-wrap { position: relative; }
 .auth-input-wrap input { padding-inline-end: 46px; }
@@ -985,7 +994,7 @@ code { font-size: 0.92em; background: var(--panel-2); padding: 1px 5px; border-r
   gap: 10px;
   margin-top: -8px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
 }
 .auth-strength-bar {
