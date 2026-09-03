@@ -63,6 +63,13 @@ interface ModelsResponse extends Envelope {
   models: ModelCard[];
   active?: Record<string, number>;
   scored_ads?: number;
+  /** How many cards are on the page, and how many versions exist behind them.
+      Both are rendered: this is the one page whose argument is that the numbers
+      can be checked, so a page that silently showed five of sixty-three trained
+      versions without saying so would be undercutting its own claim. */
+  shown?: number;
+  trained_total?: number;
+  history_per_model?: number;
 }
 
 /**
@@ -440,6 +447,23 @@ export function Methodology() {
               <p className="muted">
                 در حال حاضر <b>{fa(data.scored_ads)}</b> آگهی با مدل‌های فعال
                 امتیازدهی شده‌اند.
+              </p>
+            )}
+            {/* Say what is not shown. The page keeps the live version of each
+                model plus its few most recent challengers; without this line a
+                reader has no way to tell that the list is a window rather than
+                the whole training history. */}
+            {typeof data.shown === "number"
+              && typeof data.trained_total === "number"
+              && data.trained_total > data.shown && (
+              <p className="muted">
+                <Info size={13} /> از مجموع <b>{fa(data.trained_total)}</b> نسخه‌ی
+                آموزش‌دیده، <b>{fa(data.shown)}</b> نسخه نمایش داده می‌شود: نسخه‌ی
+                فعال هر مدل، به‌همراه{" "}
+                {typeof data.history_per_model === "number"
+                  ? <>{fa(data.history_per_model)} تلاش اخیرِ</>
+                  : <>چند تلاش اخیرِ</>}{" "}
+                آن.
               </p>
             )}
             {data.models.map((card) => (

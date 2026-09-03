@@ -127,8 +127,16 @@ function AuthRoutes() {
             It publishes how every number on the site is produced, including
             the models the promotion gate refused and why — a claim like that
             is worth nothing if a reader has to make an account to check it.
-            It carries no user data and no listing data, only model metrics. */}
-        <Route path="/methodology" element={<Lazy><Methodology /></Lazy>} />
+            It carries no user data and no listing data, only model metrics:
+            the endpoint drops the coverage block precisely so that stays true.
+
+            It gets the same header as the other two, because a signed-out
+            reader arrives here from the landing page and otherwise has no way
+            on to the product except the browser's back button. */}
+        <Route
+          path="/methodology"
+          element={<><AuthHeader to="/login" label="ورود" /><Lazy><Methodology /></Lazy></>}
+        />
         <Route path="*" element={<RememberThenLogin />} />
       </Routes>
     </div>
