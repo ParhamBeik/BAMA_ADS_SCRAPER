@@ -281,10 +281,28 @@ BAMA_TELEGRAM_TOKEN = os.environ.get("BAMA_TELEGRAM_TOKEN", "")
 
 # Console handler only: the worker's stdout is the log, which is
 # environment-agnostic across host and Docker.
+#
+# `django.request` and `django.security` are here because without them a
+# deployed 500 is logged NOWHERE. Django's own default config attaches two
+# handlers to them: a console one filtered by `RequireDebugTrue`, which cannot
+# fire in production, and `AdminEmailHandler` filtered by `RequireDebugFalse`,
+# which fires and then mails `ADMINS` — and `ADMINS` is empty. Verified on the
+# deployed settings, and the cost is not theoretical: three endpoints were
+# raising ValueError on a bad query parameter and the container logs held no
+# trace of whether that had ever happened to a real caller, because gunicorn is
+# also started without an access log.
+#
+# ERROR on `django.request` rather than WARNING: WARNING there is every Http404,
+# which on a public site is mostly bots. `django.security` stays at WARNING —
+# DisallowedHost and the SuspiciousOperation family are rare and worth seeing.
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {"worker": {"format": "%(asctime)s %(levelname)s %(name)s: %(message)s"}},
     "handlers": {"console": {"class": "logging.StreamHandler", "formatter": "worker"}},
-    "loggers": {"bama": {"handlers": ["console"], "level": "INFO", "propagate": False}},
+    "loggers": {
+        "bama": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "django.request": {"handlers": ["console"], "level": "ERROR", "propagate": False},
+        "django.security": {"handlers": ["console"], "level": "WARNING", "propagate": False},
+    },
 }

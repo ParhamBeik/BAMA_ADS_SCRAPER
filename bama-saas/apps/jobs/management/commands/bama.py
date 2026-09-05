@@ -23,6 +23,34 @@ from django.core.management.base import BaseCommand, CommandError
 
 from apps.jobs import pipeline
 
+# Which command-line flags each job actually accepts. Module level rather than a
+# literal inside `handle` so it can be checked against the job signatures —
+# `tests/test_jobs.py::test_every_routed_option_is_one_its_job_accepts` does
+# exactly that. The failure it guards is quiet and remote: a flag routed to a
+# job whose signature no longer has it is a TypeError raised on a scheduled
+# tick, in a container, hours after the edit that caused it.
+#
+# A job absent from this map takes no options, which is most of them.
+JOB_OPTIONS: dict[str, tuple[str, ...]] = {
+    "fetch": ("mode", "max_ads", "start_page", "end_page",
+              "page_pause", "request_timeout"),
+    "coverage": ("since_hours", "max_pages", "page_pause",
+                 "request_timeout", "dry_run"),
+    "deal_scores": ("model",),
+    "prune": ("days", "dry_run"),
+    "mark_inactive": ("days",),
+    "episodes": ("limit",),
+    "notify": ("dry_run",),
+    "alerts": ("dry_run",),
+    "alerts_send": ("dry_run",),
+    "ml_train": ("only",),
+    "ml_score": ("limit",),
+}
+
+# Targets that are reports or housekeeping: they run bare rather than being
+# recorded as a JobRun, because a report of a bad state is not a failed job.
+BARE_TARGETS = ("health", "reap_orphans", "probe_depth")
+
 
 class Command(BaseCommand):
     help = "Run a scheduled cadence (hot/warm/coverage/maintenance/full) or one job."
@@ -63,21 +91,11 @@ class Command(BaseCommand):
 
         def opts_for(job: str) -> dict:
             """Only the flags this job actually accepts, and only if given."""
-            wanted = {
-                "fetch": ("mode", "max_ads", "start_page", "end_page",
-                          "page_pause", "request_timeout"),
-                "coverage": ("since_hours", "max_pages", "page_pause",
-                             "request_timeout", "dry_run"),
-                "deal_scores": ("model",),
-                "prune": ("days", "dry_run"),
-                "mark_inactive": ("days",),
-                "episodes": ("limit",),
-                "notify": ("dry_run",),
-                "alerts": ("dry_run",),
-                "alerts_send": ("dry_run",),
-                "ml_train": ("only",),
-                "ml_score": ("limit",),
-            }.get(job, ())
+            wanted = JOB_OPTIONS.get(job, ())
+            # `is not False` and not a falsy test: the store_true flags default
+            # to False rather than None, so they survive the `given` filter and
+            # have to be dropped here — while `--max-ads 0` and `--limit 0` are
+            # values the caller typed and must be passed through.
             picked = {k: given[k] for k in wanted if k in given and given[k] is not False}
             if job == "fetch":
                 picked.setdefault("max_ads", settings.BAMA_WORKER_FETCH_ADS)
@@ -109,7 +127,7 @@ class Command(BaseCommand):
 
         # A single job. `health` and `reap_orphans` are reports/housekeeping and
         # run bare; everything else is recorded as a JobRun like a scheduled tick.
-        if what in ("health", "reap_orphans", "probe_depth"):
+        if what in BARE_TARGETS:
             result = pipeline.JOBS[what]()
             if options["as_json"]:
                 self.stdout.write(json.dumps(result, indent=2, default=str))

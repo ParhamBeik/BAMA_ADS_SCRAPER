@@ -12,6 +12,8 @@ decide between the app shell and the login screen.
 
 from __future__ import annotations
 
+import logging
+
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.sessions.models import Session
@@ -32,6 +34,8 @@ from apps.core import images
 from apps.core.models import PriceDropEvent
 from apps.core.pricing import MIN_PEERS
 from apps.jobs.parsing import absolute_ad_url
+
+log = logging.getLogger("bama.accounts")
 
 
 def _user_payload(user) -> dict:
@@ -174,6 +178,7 @@ class LogoutEverywhereView(APIView):
             if row.get_decoded().get("_auth_user_id") == uid:
                 row.delete()
                 killed += 1
+        tokens_revoked = 0
         try:
             from rest_framework_simplejwt.token_blacklist.models import (
                 BlacklistedToken,
@@ -181,11 +186,23 @@ class LogoutEverywhereView(APIView):
             )
 
             for token in OutstandingToken.objects.filter(user=request.user):
-                BlacklistedToken.objects.get_or_create(token=token)
-        except Exception:  # noqa: BLE001
-            pass
-        logout(request)
-        return Response({"sessions_ended": killed})
+                _, created = BlacklistedToken.objects.get_or_create(token=token)
+                tokens_revoked += int(created)
+        except Exception:  # noqa: BLE001 — reported, not swallowed; see below
+            # Broad on purpose: the blacklist app is optional and this must not
+            # be the reason a user cannot end their sessions. But it used to be
+            # `pass`, so a failure here left the caller a 200 saying
+            # "sessions_ended" while their bearer tokens stayed valid until
+            # expiry — a revocation endpoint reporting success for a revocation
+            # that did not happen. Logged at exception level, and the response
+            # says which half worked.
+            log.exception("logout-everywhere: token revocation failed for user %s",
+                          request.user.pk)
+            return Response({"sessions_ended": killed, "tokens_revoked": None})
+        finally:
+            # Whatever happened above, this request's own session goes.
+            logout(request)
+        return Response({"sessions_ended": killed, "tokens_revoked": tokens_revoked})
 
 
 class FavoriteSerializer(serializers.ModelSerializer):

@@ -154,3 +154,46 @@ def test_database_verification_expression_names_every_hard_rule():
 
     assert expression
     assert all(rule in expression for rule in HARD_RULE_IDS)
+
+
+@pytest.mark.django_db
+def test_the_search_index_covers_the_expression_the_search_actually_emits():
+    """The filter and its index have to agree on the *expression*, not the column.
+
+    `filter_q` uses `__icontains`, which Django compiles to
+    `UPPER(search_text) LIKE UPPER(%s)`. A `gin_trgm_ops` index on the bare
+    column cannot serve a call over the column, so for the life of the table the
+    index was unusable rather than merely unused: measured on production
+    2026-09-04 it held 40 MB at zero scans while `EXPLAIN` showed a Seq Scan of
+    all 79,741 rows for every text search.
+
+    Pinned as agreement between the two sides rather than by asserting a query
+    plan, because a test database has too few rows for the planner to choose an
+    index and the assertion would pass for the wrong reason. Either side moving
+    alone — dropping `UPPER` from the filter, or rebuilding the index on the raw
+    column — fails this.
+    """
+    from django.db import connection
+
+    from apps.core.filters import AdFilter
+    from apps.core.models import Ad
+
+    sql, _ = AdFilter().filter_q(Ad.objects.all(), "q", "پژو").query.sql_with_params()
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT indexdef FROM pg_indexes WHERE indexname = %s", ["ad_search_text_trgm"]
+        )
+        row = cursor.fetchone()
+
+    assert row, "the ad search index is missing"
+    indexdef = row[0].lower()
+    # The compiled predicate is `UPPER("catalog_ad"."search_text"::text) LIKE ...`
+    # when the filter is case-insensitive, and the bare column when it is not.
+    filter_wraps_in_upper = 'upper("catalog_ad"."search_text"' in sql.lower()
+    index_is_on_upper = "upper(search_text)" in indexdef
+
+    assert index_is_on_upper == filter_wraps_in_upper, (
+        f"search filter and index disagree: filter UPPER={filter_wraps_in_upper}, "
+        f"index={indexdef}"
+    )
+    assert "gin_trgm_ops" in indexdef, "trigram opclass is what makes LIKE '%x%' indexable"

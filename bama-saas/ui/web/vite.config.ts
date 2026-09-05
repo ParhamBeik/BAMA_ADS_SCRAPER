@@ -3,7 +3,11 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import type { Plugin } from "vite";
-import { robotsTxt, sitemapXml } from "./scripts/seo";
+// Extension included deliberately. Vite's `configLoader: 'native'` — planned to
+// become the default — cannot resolve an extensionless relative import here and
+// warns on every config load; `allowImportingTsExtensions` in tsconfig is what
+// makes the explicit `.ts` typecheck.
+import { robotsTxt, sitemapXml } from "./scripts/seo.ts";
 
 // The public origin: the sitemap's `<loc>`s and the `Sitemap:` line in
 // robots.txt both come from here, because a crawler discards a sitemap

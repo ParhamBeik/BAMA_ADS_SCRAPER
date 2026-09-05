@@ -262,62 +262,9 @@ def exclude_unclear_price(qs, prefix: str = ""):
     return qs.exclude(**{f"{prefix}price_basis_unclear": True})
 
 
-if __name__ == "__main__":
-    # Real strings from the audited rows, so a regex edit that stops catching
-    # them fails here rather than on the front page.
-    assert price_basis_unclear(description="مبلغ فوق، پیش پرداخت است")
-    assert price_basis_unclear(description="فروش خودرو به صورت نقد و اقساط")
-    assert price_basis_unclear(title="پیش فروش ام وی ام، X55 PRO")
-    assert price_basis_unclear(description="ثبت نام محدود خودرو ۲۱۲")
-    assert price_basis_unclear(description="پرداخت ۳ مرحله ای", price_type="lumpsum")
-    assert price_basis_unclear(description="", price_type="installment")
-    assert price_basis_unclear(description="", prepayment=500_000_000)
-    # The false-positive side, which is the one that costs the product real deals.
-    assert not price_basis_unclear(description="بسیار تمیز، فنی سالم، فوری فروشی")
-    assert not price_basis_unclear(title="پژو، 207", description="")
-
-    assert condition_discounted(description="مدل ۹۷ تصادفی که قبل تصادف رنگی نداشت")
-    assert condition_discounted(description="احتیاج به صافکاری دارد")
-    assert condition_discounted(description="دوررنگ به دلیل زیبایی")
-    assert not condition_discounted(description="بسیار تمیز، فنی سالم")
-    # The structured column is the strong signal — a clean description with a
-    # painted body_status must still badge.
-    assert condition_discounted(body_status="کامل رنگ")
-    assert condition_discounted(body_status="کاپوت تعویض")
-    assert not condition_discounted(body_status="بدون رنگ")
-    # Damage is a reason to look harder, never a reason to be hidden.
-    assert not price_basis_unclear(description="لوکانو L7 تصادفی")
-
-    # All 19 `body_status` values present in production, with their counts, so a
-    # rule reordering that silently reclassifies 55k clean cars fails here.
-    for value, expected in (
-        ("بدون رنگ", CLEAN),                 # 55,535
-        ("یک لکه رنگ", COSMETIC),            #  3,482
-        ("چند لکه رنگ", COSMETIC),           #  3,055
-        ("دو لکه رنگ", COSMETIC),            #  2,770
-        ("صافکاری بدون رنگ", COSMETIC),      #  1,711 — contains "بدون رنگ"
-        ("خط و خش جزئی", COSMETIC),          #  1,594
-        ("دور رنگ", PAINTED),                #  1,703
-        ("گلگیر رنگ", PAINTED),              #    767
-        ("کامل رنگ", PAINTED),               #    530
-        ("یک درب رنگ", PAINTED),             #    327
-        ("کاپوت رنگ", PAINTED),              #    302
-        ("دو درب رنگ", PAINTED),             #    198
-        ("کاپوت تعویض", STRUCTURAL),         #    622 — paint word absent
-        ("گلگیر تعویض", STRUCTURAL),         #    592
-        ("درب تعویض", STRUCTURAL),           #    355
-        ("اتاق تعویض", STRUCTURAL),          #     90
-        ("تصادفی", STRUCTURAL),              #    108
-        ("سوخته", STRUCTURAL),               #     16
-        ("اوراقی", STRUCTURAL),              #     10
-    ):
-        assert condition_band(value) == expected, f"{value} -> {condition_band(value)}"
-
-    # A value Bama has not shipped yet still lands in the right band.
-    assert condition_band("سه لکه رنگ") == COSMETIC
-    assert condition_band("سپر تعویض") == STRUCTURAL
-    # Unknown must be "no opinion", never "clean".
-    assert condition_band("") is None
-    assert condition_band(None) is None
-    assert condition_band("نامشخص") is None
-    print("ok")
+# The band table and the finance/condition vocabularies used to be asserted
+# again in an `if __name__ == "__main__"` block here. Nothing ran it, so it
+# drifted until it contradicted the ladder above: it called the three multi-spot
+# values COSMETIC where `_BAND_RULES` calls them PAINTED. Those checks now live
+# in `tests/test_pricing.py`, where CI executes them — `BODY_STATUS_BANDS` is
+# the 19 production values with their row counts and expected bands.

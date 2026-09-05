@@ -630,6 +630,253 @@ def test_input_drift_does_not_report_the_passage_of_time_as_drift(fitted):
 
 
 # ===========================================================================
+# The training run's own error handling
+#
+# `train_all` is orchestration: which trainers to call, and what a failure in
+# one of them means for the rest. None of that needs a fit, so it is tested
+# against stub trainers — which is also the only way to reach the branch that
+# matters, since a real trainer raising is by definition a bug you cannot ask
+# for on demand.
+# ===========================================================================
+
+
+@pytest.fixture
+def trainers(monkeypatch):
+    """Replace the trainer table so the run can be steered without fitting."""
+    def install(table):
+        monkeypatch.setattr("apps.ml.train.TRAINERS", table)
+    return install
+
+
+def _raises(message="boom"):
+    def trainer():
+        raise ValueError(message)
+    return trainer
+
+
+def test_an_unknown_model_name_is_refused_not_silently_skipped(db, trainers):
+    from apps.ml.train import train_all
+
+    trainers({"price": lambda: {"trained": True}})
+    assert train_all(only="nosuchmodel")["refused"] == {"nosuchmodel": "unknown_model"}
+
+
+def test_one_trainer_raising_does_not_stop_the_others(db, trainers):
+    """The same independence the pipeline gives its steps. Five artifacts that
+    are unrelated to each other should not share a fate."""
+    from apps.ml.train import train_all
+
+    trainers({"good": lambda: {"trained": True, "promoted": True},
+              "bad": _raises("no rows")})
+    result = train_all()
+    assert result["trained"] == ["good"]
+    assert result["promoted"] == ["good"]
+    assert result["errored"] == ["bad"]
+    assert result["refused"] == {"bad": "error"}
+
+
+def test_every_trainer_failing_is_raised_rather_than_reported_as_a_finished_run(db, trainers):
+    """When all of them raise, the cause is shared — an unmigrated table, an
+    artifact volume that is not mounted. Returning ok with the tracebacks nested
+    in a detail string is how that goes unnoticed for a week."""
+    from apps.ml.train import train_all
+
+    trainers({"a": _raises("volume not mounted"), "b": _raises("volume not mounted")})
+    with pytest.raises(RuntimeError, match="every ml trainer failed"):
+        train_all()
+
+
+def test_a_trainer_that_refuses_is_a_result_and_not_a_failed_run(db, trainers):
+    """A refusal — too few rows, gate not met — is the system working. Only an
+    exception is a bug, so a run of nothing but refusals must still return."""
+    from apps.ml.train import train_all
+
+    trainers({"a": lambda: {"trained": False, "reason": "insufficient_rows"},
+              "b": lambda: {"trained": False, "reason": "insufficient_rows"}})
+    result = train_all()
+    assert result["errored"] == []
+    assert result["refused"] == {"a": "insufficient_rows", "b": "insufficient_rows"}
+
+
+def test_the_verdict_is_read_off_the_registry_row_not_off_what_the_trainer_said(db, trainers):
+    """`promote` writes the decision onto the record, so the record is the
+    authoritative copy. A trainer naming a version the registry does not have
+    reports no verdict rather than an invented one."""
+    from apps.ml.train import train_all
+
+    MLModel.objects.create(name=MLModel.Name.PRICE, version=3, algorithm="lgbm",
+                           status=MLModel.Status.ACTIVE,
+                           metrics={"promotion": {"reason": "beat_incumbent"}})
+    trainers({"price": lambda: {"trained": True, "version": 3}})
+    assert train_all()["verdicts"] == {
+        "price": {"version": 3, "status": "active", "gate": "beat_incumbent"}
+    }
+
+    trainers({"price": lambda: {"trained": True, "version": 4}})
+    assert train_all()["verdicts"] == {}
+
+
+# ===========================================================================
+# Anomaly precedence — pure Python, no artifact
+#
+# `_classify_anomaly_kind` decides which of two models gets to name a listing,
+# and its own docstring says the order is load-bearing. It reached here through
+# the fitted tests only in the branch that never fires on synthetic data, so the
+# rule it exists to enforce was the part not being checked.
+# ===========================================================================
+
+
+def _classify(price, p10, is_outlier):
+    from apps.ml.inference import _classify_anomaly_kind
+
+    pred = AdPrediction(price_p10=p10)
+    pred._is_outlier = is_outlier
+    _classify_anomaly_kind([{"code": "x", "current_price": price}], {"x": pred})
+    return pred.anomaly_kind
+
+
+def test_an_ask_materially_under_the_models_own_p10_is_a_candidate():
+    assert _classify(900, 1000, False) == AdPrediction.Anomaly.UNDERPRICED
+
+
+def test_an_ask_only_just_under_p10_is_not_flagged_at_all():
+    """p10 alone would flag a tenth of the catalogue by construction. The margin
+    is what makes the flag mean something."""
+    assert _classify(980, 1000, False) == ""
+
+
+def test_a_suspect_record_is_a_data_anomaly_even_when_it_looks_like_a_bargain():
+    """The precedence rule. A row that is both far below p10 *and* strange in
+    feature space is the case where the price is computed from the least
+    trustworthy input — putting it at the top of a buyer's board is the exact
+    failure the review band exists to prevent."""
+    assert _classify(900, 1000, True) == AdPrediction.Anomaly.DATA
+
+
+def test_a_listing_the_price_model_refused_cannot_be_called_underpriced():
+    """No p10 means no band to be under. Without the null guard this is a
+    comparison against None."""
+    assert _classify(900, None, False) == ""
+
+
+# ===========================================================================
+# Live monitoring — the readings that need no fit
+#
+# `prediction_drift` and `report` are pure ORM: they read what scoring already
+# wrote. They were the untested half of the Control page's ML panel, which is
+# the wrong half to leave untested — a monitor that raises instead of reporting
+# takes the page down with it, and the whole point of these numbers is to be
+# read on a day when something is already wrong.
+# ===========================================================================
+
+
+def test_an_unmeasurable_feature_has_no_band_rather_than_a_reassuring_one():
+    """PSI is None for a constant feature. Banding that as "stable" would put
+    the most reassuring word on screen for the case where nothing was measured
+    at all."""
+    from apps.ml.monitoring import psi_band
+
+    assert psi_band(None) is None
+    assert psi_band(0.05) == "stable"
+    assert psi_band(0.2) == "watch"
+    assert psi_band(0.4) == "unstable"
+
+
+def test_prediction_drift_refuses_before_anything_is_promoted(db):
+    from apps.ml.monitoring import prediction_drift
+
+    assert prediction_drift() == {"available": False, "reason": "no_active_model"}
+
+
+def _active_price_model(**over):
+    fields = {"name": MLModel.Name.PRICE, "version": 1, "algorithm": "lgbm",
+              "status": MLModel.Status.ACTIVE, "metrics": {"mape": 0.05}}
+    return MLModel.objects.create(**{**fields, **over})
+
+
+def test_prediction_drift_reports_how_few_rows_it_had_rather_than_a_number(catalog):
+    """Under `MIN_EVAL_ROWS` the honest answer is the row count, not a median of
+    four residuals rendered on the Control page as if it meant something."""
+    from apps.ml.monitoring import prediction_drift
+
+    _active_price_model()
+    for i in range(3):
+        AdPrediction.objects.create(ad=_ad(catalog, f"few{i}"),
+                                    price_p50=1_000_000_000, residual_pct=0.1)
+    report = prediction_drift()
+    assert report == {"available": False, "reason": "insufficient_scored_rows",
+                      "scored_rows": 3}
+
+
+def test_live_error_is_reported_as_a_ratio_against_the_holdout_that_promoted_it(catalog):
+    """The number that says "worse in production than on the holdout" without
+    the reader having to know what a good MAPE is for this catalogue."""
+    from apps.ml.monitoring import prediction_drift
+
+    _active_price_model(metrics={"mape": 0.05})
+    # 16 rows 10% over, 15 rows 20% under: the absolute median is 0.10, so the
+    # model is doing twice as badly live as the 0.05 it was promoted on.
+    residuals = [0.10] * 16 + [-0.20] * 15
+    AdPrediction.objects.bulk_create([
+        AdPrediction(ad=_ad(catalog, f"drift{i}"), price_p50=1_000_000_000,
+                     residual_pct=r)
+        for i, r in enumerate(residuals)
+    ])
+    report = prediction_drift()
+    assert report["available"] is True
+    assert report["scored_rows"] == 31
+    assert report["live_median_abs_residual_pct"] == 0.1
+    assert report["ratio"] == 2.0
+    # Signed and absolute are both reported because they disagree here: the
+    # typical listing reads 10% underpriced while the tail is 20% the other way.
+    assert report["signed_median_pct"] == 0.1
+
+
+def test_a_model_promoted_without_a_mape_gets_no_ratio_instead_of_a_zero_divide(catalog):
+    from apps.ml.monitoring import prediction_drift
+
+    _active_price_model(metrics={})
+    AdPrediction.objects.bulk_create([
+        AdPrediction(ad=_ad(catalog, f"nomape{i}"), price_p50=1_000_000_000,
+                     residual_pct=0.1)
+        for i in range(31)
+    ])
+    report = prediction_drift()
+    assert report["available"] is True
+    assert report["holdout_mape"] is None
+    assert report["ratio"] is None
+
+
+def test_the_control_panel_report_answers_on_an_empty_database(db):
+    """Every nested reading refuses separately. One of them being unavailable
+    must not remove the others from the payload the page renders."""
+    from apps.ml.monitoring import report
+
+    body = report()
+    assert body["models"] == []
+    assert body["active"] == {} and body["shadow"] == []
+    assert body["scored_ads"] == 0
+    assert body["input_drift"]["available"] is False
+    assert body["prediction_drift"]["available"] is False
+
+
+def test_the_report_separates_the_model_being_served_from_the_one_being_watched(db):
+    """A shadow model that read as active on this page is how a rollback gets
+    believed to have happened when it has not."""
+    from apps.ml.monitoring import report
+
+    _active_price_model(version=2)
+    MLModel.objects.create(name=MLModel.Name.PRICE, version=3, algorithm="lgbm",
+                           status=MLModel.Status.SHADOW)
+    MLModel.objects.create(name=MLModel.Name.SELL_FAST, version=1, algorithm="lgbm",
+                           status=MLModel.Status.RETIRED)
+    body = report()
+    assert body["active"] == {"price": 2}
+    assert body["shadow"] == ["price v3"]
+    assert len(body["models"]) == 3
+
+
+# ===========================================================================
 # The API
 # ===========================================================================
 

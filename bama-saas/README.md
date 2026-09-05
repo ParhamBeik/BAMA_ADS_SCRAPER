@@ -275,7 +275,15 @@ cd ui/web && npm install
 npm run dev        # proxies /api to http://localhost:8001
 npm run build      # tsc -b && vite build
 npm run typecheck
+npm test           # vitest, pure logic only
+npm run check:contrast
 ```
+
+`npm test` covers the functions something *outside* the component tree depends
+on, not rendering: `scopeKey` mirrors `ScopedToACar.build_scope_key` on the
+server, and `toman` has to agree with the Telegram notifier quoting the same
+price. Both tables are asserted on the Python side too, so a drift fails one
+suite or the other rather than going unnoticed until a button reads wrong.
 
 Persian throughout, RTL from `<html>`. Vazirmatn and JetBrains Mono are
 bundled, never fetched from Google Fonts — that host is unreliable from Iran and

@@ -37,11 +37,41 @@ x-django-env: &django-env
   ML_ARTIFACT_DIR: /artifacts
 
 services:
+  # Tuned, because it was running on stock settings. Measured 2026-09-04: the
+  # database is 2,370 MB against the 128 MB default `shared_buffers`, and the
+  # block cache hit ratio was 85.9% where an OLTP workload wants >99%. That is
+  # not just a ratio — `EXPLAIN (BUFFERS)` on the population count came back
+  # `read=5684 written=1740`, a *read* query evicting dirty pages to make room.
+  #
+  # 512 MB, not the usual "25% of RAM": the host has 15 GB but runs three other
+  # stacks beside this one, and 512 MB already covers the hot set. The exact
+  # command below was started against this same `postgres:16-alpine` tag on the
+  # VPS before being written here, and all four settings plus the preload were
+  # read back from a live `SHOW` — a wrong parameter here means the database
+  # does not come back, so it is verified rather than reasoned about.
+  #
+  # `pg_stat_statements` is preloaded because it was available and unloaded, so
+  # there was no way to ask "which statement is costing us" without a restart —
+  # and that question came up immediately. It needs one statement after the
+  # first restart, and then survives every later one:
+  #
+  #   docker exec bama-postgres psql -U postgres -d bama_saas \
+  #     -c 'CREATE EXTENSION IF NOT EXISTS pg_stat_statements'
+  #
+  # NOTE: applying this restarts the database. It is a few seconds, `django`
+  # waits on the healthcheck below, and the worker retries its tick — but it is
+  # a restart, and a push to main deploys itself.
   postgres:
     image: postgres:16-alpine
     container_name: bama-postgres
     restart: unless-stopped
     logging: *logging
+    command: >
+      postgres -c shared_buffers=512MB
+               -c effective_cache_size=2GB
+               -c work_mem=16MB
+               -c maintenance_work_mem=256MB
+               -c shared_preload_libraries=pg_stat_statements
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-bama_saas}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
@@ -92,13 +122,34 @@ services:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
     # No account seeding. Staff is granted by createsuperuser, not by signup.
+    # `--access-logfile -` keeps request-level evidence in `docker logs`. Without
+    # it this container logged only its own boot, so "is that endpoint used?" and
+    # "did that error reach a user?" had no answer. Django's own 500s reach the
+    # same stdout via the `django.request` logger in config/settings.py — by
+    # default they reach nothing at all in production.
     command: >
       sh -c "python manage.py migrate --noinput &&
              python manage.py collectstatic --noinput &&
              gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3
-             --worker-class gthread --threads 8"
+             --worker-class gthread --threads 8 --access-logfile -"
+    # `X-Forwarded-Proto: https` is not decoration — without it this check was
+    # passing without ever reaching Django. The hardened profile sets
+    # `SECURE_SSL_REDIRECT`, so a plain HTTP request is answered 301 by
+    # SecurityMiddleware *before* routing, before any view and before the
+    # database is touched. `curl -f` does not treat a 3xx as an error and does
+    # not follow it without `-L`, so the probe got `http_code=301`, an empty
+    # body and exit 0 — reporting healthy for anything that merely accepts a
+    # connection on port 8000. `frontend`, `worker` and `ml` all gate their
+    # start on this condition, so they were gating on the port being open.
+    # Measured against the running container before the header was added.
+    #
+    # Still `/api/health/` and not `/api/db/health/`: this decides whether the
+    # container is restarted, and a brief database blip should not cycle the web
+    # tier. The deploy smoke-test in .github/workflows/deploy.yml probes both,
+    # through Caddy, which sets this header itself.
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health/"]
+      test: ["CMD", "curl", "-fsS", "-H", "X-Forwarded-Proto: https",
+             "http://localhost:8000/api/health/"]
       interval: 10s
       timeout: 5s
       retries: 12

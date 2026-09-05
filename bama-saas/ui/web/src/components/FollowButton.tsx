@@ -6,13 +6,19 @@
  * car I want to buy", which outlives any single listing on it — and until this
  * existed, the app could not answer it at all.
  *
- * Whether a scope is already followed is decided by comparing `scope_key`, which
- * the API derives server-side (`accounts.models.ScopedToACar.build_scope_key`).
- * Re-deriving that comparison here would be a second definition of "the same
- * car", and the two would disagree the first time either changed — the button
- * would then read "follow" for something already followed, and pressing it
- * would return the existing row rather than a new one, which looks like a bug
- * with no error to explain it.
+ * Whether a scope is already followed is decided by comparing `scope_key`. The
+ * server is where that key is authoritative — `ScopedToACar.save()` derives it
+ * and the unique constraint is on it, because a constraint over the four
+ * nullable columns would not stop a user following «all of Peugeot» twice
+ * (`NULL != NULL` in a unique index). `scopeKey` below deliberately mirrors that
+ * derivation so the button can render the right state without a round trip per
+ * scope change.
+ *
+ * That mirror is the thing to be careful with: it is a second definition of
+ * "the same car", so the two have to be changed together. If they drift, the
+ * button reads "follow" for something already followed and pressing it returns
+ * the existing row rather than a new one — a bug with no error to explain it.
+ * Keep the field order narrowest-last, and keep the `market` fallback.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, BellRing } from "lucide-react";
@@ -49,11 +55,39 @@ export function scopeKey(scope: Scope): string {
   return parts.join("/") || "market";
 }
 
+/**
+ * Every scope this user follows, not the first page of them.
+ *
+ * `/api/watchlists/` is paginated at the DRF default of 50, and the only
+ * question asked of the answer is "is the scope on screen in here" — so a
+ * caller who read one page got a wrong answer for everything after the 50th
+ * follow. The button then read "follow" for a car already followed, and
+ * pressing it hit the idempotent POST, which returns 200 and the existing row:
+ * no error, no visible change, no way to tell what went wrong.
+ *
+ * Followed through to exhaustion rather than fixed by unpaginating the endpoint,
+ * because the response shape is public API (`README.md` documents it) and this
+ * is its only consumer. `next` is an absolute URL, so it is passed to `api.get`
+ * as a path only after the origin is stripped.
+ */
+async function fetchAllWatchlists(signal?: AbortSignal): Promise<WatchlistEntry[]> {
+  const entries: WatchlistEntry[] = [];
+  let path: string | null = "/api/watchlists/";
+  while (path) {
+    const page: Paginated<WatchlistEntry> = await api.get<Paginated<WatchlistEntry>>(
+      path,
+      signal,
+    );
+    entries.push(...page.results);
+    path = page.next ? new URL(page.next).pathname + new URL(page.next).search : null;
+  }
+  return entries;
+}
+
 export function useWatchlist() {
   return useQuery({
     queryKey: ["watchlists"],
-    queryFn: ({ signal }) =>
-      api.get<Paginated<WatchlistEntry>>("/api/watchlists/", signal),
+    queryFn: ({ signal }) => fetchAllWatchlists(signal),
   });
 }
 
@@ -61,7 +95,7 @@ export function FollowButton({ scope }: { scope: Scope }) {
   const client = useQueryClient();
   const watchlist = useWatchlist();
   const key = scopeKey(scope);
-  const existing = watchlist.data?.results?.find((w) => w.scope_key === key);
+  const existing = watchlist.data?.find((w) => w.scope_key === key);
 
   const invalidate = () => {
     client.invalidateQueries({ queryKey: ["watchlists"] });

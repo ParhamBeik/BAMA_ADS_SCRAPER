@@ -85,6 +85,25 @@ jobs:
       - run: pip install -e ".[test,ml]"
       - run: pytest -q
 
+      # The suite cannot cover this: `testenv.py` sets DJANGO_DEBUG=1 before
+      # Django is configured, so every test runs the *local* profile and the
+      # hardened one — HTTPS redirect, HSTS, secure cookies, nosniff — is
+      # asserted by nothing. It currently passes Django's whole deployment
+      # checklist with zero warnings, and that is worth pinning: the failure
+      # mode is silent, ships straight to the VPS on a push to main, and is
+      # invisible until somebody looks for a header that stopped being sent.
+      #
+      # DJANGO_DEBUG is cleared for this step alone. The key is generated rather
+      # than hardcoded because settings.py refuses the dev key outright and
+      # check --deploy separately rejects a weak one (W009).
+      - name: Django deployment checklist against the hardened profile
+        env:
+          DJANGO_DEBUG: ""
+          ALLOWED_HOSTS: example.com
+        run: |
+          SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(64))')" \
+            python manage.py check --deploy --fail-level WARNING
+
   frontend:
     runs-on: ubuntu-latest
     defaults:
@@ -99,6 +118,16 @@ jobs:
           cache-dependency-path: bama-saas/ui/web/package-lock.json
       - run: npm ci
       - run: npm run typecheck
+      # Vitest over the pure logic — no DOM, no component rendering. It exists
+      # for the things something *else* depends on: `scopeKey` mirrors
+      # `ScopedToACar.build_scope_key` on the server and `toman` has to agree
+      # with the Telegram notifier quoting the same price. Both tables are
+      # asserted on the Python side too, so a drift fails one job or the other.
+      - run: npm test
+      # The palette's own test: it parses the tokens out of styles.css and fails
+      # on a broken contrast ratio or hue gap. Cheap, and the failure it catches
+      # is invisible in a screenshot.
+      - run: npm run check:contrast
       # The prod image runs this exact build; a broken import must fail here,
       # not halfway through a deploy.
       - run: npm run build

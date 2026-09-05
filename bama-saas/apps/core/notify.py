@@ -12,6 +12,7 @@ the deal board still showing the car.
 
 from __future__ import annotations
 
+import html
 import logging
 from collections import defaultdict
 from datetime import timedelta
@@ -131,6 +132,26 @@ def _candidates(cfg: NotifierSettings, limit: int = MAX_PER_RUN):
     )
 
 
+def title_of(ad) -> str:
+    """An ad's title, safe to drop into a ``parse_mode=HTML`` message.
+
+    Hardening, not a fix for something observed — measured against production on
+    2026-09-04, 0 of 82,700 stored titles contain ``<``, ``>`` or ``&``, the
+    operator notifier is disabled, and no message has ever been sent. Recorded
+    that way so nobody re-derives an urgency this does not have.
+
+    It is still the right shape. The title is scraped from bama.ir, so it is
+    third-party text going into markup — the one place in this module where that
+    happens — and the two failure modes are bad enough to be worth one call:
+    Telegram answers 400 "can't parse entities" to an unrecognised ``<``, and
+    since neither channel records a delivery it did not confirm, one such
+    listing on the board would make the operator feed retry the same doomed
+    message every tick. A seller who chose the title would also be choosing the
+    markup, so ``<a href=...>`` would be their link inside our alert.
+    """
+    return html.escape(ad.title or "")
+
+
 def format_message(row: DealScoreCache) -> str:
     """One listing as a Telegram HTML message."""
     ad = row.ad
@@ -139,7 +160,7 @@ def format_message(row: DealScoreCache) -> str:
     url = absolute_ad_url(ad.url or ad.canonical_path)
     lines = [
         f"<b>{row.discount_pct:.0f}% below fair value</b>",
-        f"{ad.title or ''} — {ad.year_jalali or '?'}",
+        f"{title_of(ad)} — {ad.year_jalali or '?'}",
         f"Asking {toman(ad.current_price)} toman (fair ~{toman(fair)})",
         f"{(ad.mileage or 0):,} km · {components.get('peer_count', '?')} peers "
         f"· {components.get('confidence', '?')} confidence",
@@ -170,17 +191,12 @@ def send_telegram(text: str, chat_id: str) -> bool:
         return False
 
 
-def format_alert(row: DealScoreCache) -> str:
-    """Same message shape as the operator's, so both channels read alike."""
-    return format_message(row)
-
-
 def format_delivery_alert(delivery) -> str:
     """A retryable alert from its immutable delivery snapshot."""
     ad = delivery.ad
     lines = [
         f"<b>{(delivery.discount_pct or 0):.0f}% below fair value</b>",
-        f"{ad.title or ''} — {ad.year_jalali or '?'}",
+        f"{title_of(ad)} — {ad.year_jalali or '?'}",
         f"Asking {toman(ad.current_price)} toman (fair ~{toman(delivery.peer_median)})",
     ]
     if url := absolute_ad_url(ad.url or ad.canonical_path):

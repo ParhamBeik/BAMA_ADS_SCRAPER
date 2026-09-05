@@ -6,10 +6,11 @@ how the Python is organised.
 
 import uuid
 
-from django.contrib.postgres.indexes import GinIndex
+from django.contrib.postgres.indexes import GinIndex, OpClass
 from django.db import models
 from django.db.models import Q
 from django.db.models.expressions import RawSQL
+from django.db.models.functions import Upper
 from django.utils import timezone
 
 from apps.core.rules import HARD_RULE_IDS
@@ -318,8 +319,26 @@ class Ad(models.Model):
                 name="ad_list_active_idx",
                 condition=Q(current_price__gt=0),
             ),
+            # On `Upper(search_text)`, not on the column. `filters.filter_q` is
+            # the only reader and it uses `__icontains`, which Django compiles to
+            # `UPPER(search_text) LIKE UPPER(%s)` — and a trigram index on the
+            # bare column cannot serve a call over it. Measured on production:
+            # the plain-column version of this index took 40 MB and had served
+            # **zero** scans across the table's entire life, while `EXPLAIN` on
+            # the query the code actually emits showed a Seq Scan of all 79,741
+            # rows (568 MB). The same query written case-sensitively used the
+            # index, which is what identified the mismatch.
+            #
+            # Indexing the expression rather than switching the filter to
+            # `__contains` keeps the search case-insensitive. That matters for
+            # the Latin half of the corpus — «X55 PRO», «MVM» — because
+            # `normalization.normalize_text` deliberately does not fold case, so
+            # `__contains` would silently stop matching a lowercase query. The
+            # alternative (fold case in `search_document`) would need a backfill
+            # of every row to stay consistent.
             GinIndex(
-                fields=["search_text"], opclasses=["gin_trgm_ops"], name="ad_search_text_trgm",
+                OpClass(Upper("search_text"), name="gin_trgm_ops"),
+                name="ad_search_text_trgm",
             ),
             models.Index(
                 fields=("status", "publish_at"), name="ad_scorable_idx",

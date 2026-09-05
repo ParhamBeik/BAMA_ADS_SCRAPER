@@ -1171,13 +1171,20 @@ def liquidity_view(request, model_id: int):
 
     Never described as "sold": the feed cannot distinguish a sale from an expiry
     or a withdrawal.
+
+    ``?variant=`` and ``?year=`` go through ``_opt`` like every other numeric
+    parameter on this module. Cast inline they raised straight out of the view,
+    so ``?year=abc`` was a 500 — the same shape as the ``?limit=abc`` crash
+    ``_leaderboard_limit`` exists to prevent, on the two endpoints that were
+    still hand-rolling the cast.
     """
-    year = request.query_params.get("year")
-    variant = request.query_params.get("variant")
+    try:
+        variant = _opt(request.query_params, "variant", int)
+        year = _opt(request.query_params, "year", int)
+    except ValueError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
     return envelope(research.survival(
-        model_id=model_id,
-        variant_id=int(variant) if variant else None,
-        year_jalali=int(year) if year else None,
+        model_id=model_id, variant_id=variant, year_jalali=year,
     ))
 
 
@@ -1202,11 +1209,15 @@ def fair_price_view(request, code: str):
 
 @api_view(["GET"])
 def depreciation_view(request, model_id: int):
-    """Median asking price by model year, and retention against the newest."""
-    variant = request.query_params.get("variant")
-    return envelope(research.depreciation_curve(
-        model_id, variant_id=int(variant) if variant else None,
-    ))
+    """Median asking price by model year, and retention against the newest.
+
+    ``?variant=`` is parsed by ``_opt`` for the reason given on ``liquidity_view``.
+    """
+    try:
+        variant = _opt(request.query_params, "variant", int)
+    except ValueError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    return envelope(research.depreciation_curve(model_id, variant_id=variant))
 
 
 @api_view(["GET"])

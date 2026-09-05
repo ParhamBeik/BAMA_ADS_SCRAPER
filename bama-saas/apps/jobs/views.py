@@ -8,8 +8,10 @@ network boundary is defence in depth, not the authorization model.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import threading
+from contextlib import contextmanager
 from datetime import timedelta
 
 from django.conf import settings
@@ -32,6 +34,62 @@ logger = logging.getLogger("bama.jobs")
 FETCH_BOUNDS = {"max_ads": (1, None), "page_pause": (0.0, 60.0), "request_timeout": (1, 120)}
 
 
+# Advisory-lock namespace for admin-triggered jobs, offset from `fetcher`'s
+# FETCH_LEASE_KEY (0x42414D41) so the two can never collide. The key must be the
+# same number in every process, which is why it is a SHA-256 prefix and not
+# `hash()` — Python randomises string hashes per interpreter, so `hash()` would
+# give each gunicorn worker its own private lock and guard nothing.
+_JOB_LEASE_NAMESPACE = 0x42414D42
+
+
+def _lease_key(label: str) -> int:
+    digest = hashlib.sha256(label.encode()).digest()
+    return _JOB_LEASE_NAMESPACE ^ int.from_bytes(digest[:6], "big")
+
+
+@contextmanager
+def _job_lease(label: str):
+    """Hold a cross-process lease on one admin job, or yield False.
+
+    ``_RUNNING`` and the ``JobRun`` pre-check in ``_already_running`` are both
+    real, and neither is sufficient. The set is per *process* and production
+    runs ``gunicorn --workers 3`` (see the Dockerfile CMD and
+    docker-compose.prod.yml), so it never sees a click that landed on a sibling
+    worker. The JobRun check closes most of that, but it reads a row the spawned
+    thread has not written yet: between the 202 and ``pipeline.run_step``
+    inserting its RUNNING row there is a window in which a second request checks,
+    finds nothing, and starts a second rebuild.
+
+    This is not hypothetical — it happened with the pre-check already in place.
+    On 2026-08-28 at 19:37:48–49 UTC three admin-triggered `deal_scores` runs
+    started inside 0.9s (JobRun 8741, 8742, 8743) and all three overlapped. 8742
+    died on::
+
+        duplicate key value violates unique constraint
+        "analytics_dealscorecache_ad_id_key"  DETAIL: Key (ad_id)=(n01i4oq6)
+
+    which is one rebuild's ``bulk_create`` landing on rows another had just
+    written after deleting the board. `deal_scores` DELETEs every row before it
+    writes, so the benign version of this leaves the board empty for as long as
+    the slower run takes.
+
+    One PostgreSQL advisory lock closes it, the same mechanism and for the same
+    reason as ``fetcher._fetch_lease``. Session-scoped, so the ``connection
+    .close()`` in ``_spawn`` releases it even if the thread dies mid-write; no
+    stale row can wedge the button.
+    """
+    key = _lease_key(label)
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_try_advisory_lock(%s)", [key])
+        acquired = bool(cursor.fetchone()[0])
+    try:
+        yield acquired
+    finally:
+        if acquired:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_advisory_unlock(%s)", [key])
+
+
 def _spawn(label: str, work) -> None:
     """Run ``work()`` in a daemon thread, always closing the DB connection.
 
@@ -40,10 +98,28 @@ def _spawn(label: str, work) -> None:
     through the pipeline, so an operator-triggered job leaves the same JobRun
     trace as a scheduled one — without that these threads returned 202 and then
     vanished, and a job that died was indistinguishable from one that finished.
+
+    A run that loses the race for the lease records itself SKIPPED rather than
+    returning quietly. The caller already has its 202 — the lease is checked
+    inside the thread because an advisory lock lives on the connection that took
+    it, and the request thread's connection is not the one doing the work — so
+    the overview page is the only place that can say the second click did
+    nothing, and "skipped" is the word this pipeline already uses for it.
     """
     def _run() -> None:
         try:
-            work()
+            with _job_lease(label) as acquired:
+                if not acquired:
+                    logger.warning("admin job %s skipped: another run holds the lease", label)
+                    now = timezone.now()
+                    JobRun.objects.create(
+                        name=label, status=JobRun.Status.SKIPPED,
+                        triggered_by=JobRun.Trigger.ADMIN, started_at=now,
+                        finished_at=now, duration_s=0.0,
+                        detail="another run already holds the lease",
+                    )
+                    return
+                work()
         except Exception:  # noqa: BLE001 — already recorded on the JobRun
             logger.exception("admin job %s failed", label)
         finally:
@@ -54,9 +130,11 @@ def _spawn(label: str, work) -> None:
     threading.Thread(target=_run, daemon=True).start()
 
 
-# Jobs this process has in flight. A `set` is enough: these threads are spawned
-# here and only here, and there is one web process — the same assumption the
-# module docstring already makes about the worker loop being the scheduler.
+# Jobs this process has in flight. This is the fast path only: it turns a
+# double-click into a 409 before any row exists, which is the common case and
+# the one worth a good error message. It cannot be the guard — there are three
+# gunicorn workers and this set is private to one of them. `_job_lease` is the
+# guard.
 _RUNNING: set[str] = set()
 
 
@@ -71,7 +149,10 @@ def _already_running(label: str, *steps: str) -> Response | None:
 
     Both halves are needed: the in-process set catches the double-click before
     any row exists, and the JobRun check catches a job started by the worker
-    loop or by a web process that has since been replaced.
+    loop or by a web process that has since been replaced. Neither is the actual
+    guarantee — both read state a concurrent request may not have written yet.
+    `_job_lease` is what makes overlap impossible; this pair is what makes the
+    ordinary case a 409 with a sentence in it instead of a silent skip.
 
     ``steps`` names the pipeline steps to look for when they are not the label
     itself — `refresh-analytics` runs several and writes a JobRun under each of

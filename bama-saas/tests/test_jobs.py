@@ -7,6 +7,8 @@ observable from a unit test of the function alone.
 
 from __future__ import annotations
 
+import hashlib
+import time
 from datetime import timedelta
 from unittest.mock import Mock
 
@@ -678,3 +680,281 @@ def test_run_checks_returns_every_check():
         "source_block", "sweep_freshness", "coverage_progress", "failed_runs",
         "reject_spike", "ingest_progress",
     }
+
+
+# ---------------------------------------------------------------------------
+# The admin job lease
+# ---------------------------------------------------------------------------
+#
+# `_RUNNING` is a per-process set and production runs `gunicorn --workers 3`, so
+# it cannot see a click that landed on a sibling worker; the `JobRun` pre-check
+# reads a row the spawned thread has not written yet. The advisory lock is the
+# only part that actually makes two concurrent rebuilds impossible, and
+# `deal_scores` DELETEs the whole board before writing it.
+
+
+def test_the_lease_key_is_stable_across_processes():
+    """It must be the same number in every worker, so `hash()` cannot be used.
+
+    Python randomises string hashes per interpreter unless PYTHONHASHSEED is
+    pinned, so a `hash()`-derived key would give each gunicorn worker a private
+    lock — the guard would look present and protect nothing. Pinned to literals
+    here because "deterministic" is not observable from a single process.
+    """
+    from apps.jobs.fetcher import FETCH_LEASE_KEY
+    from apps.jobs.views import _lease_key
+
+    assert _lease_key("deal_scores") == _lease_key("deal_scores")
+    assert _lease_key("deal_scores") == 0x42414D42 ^ int.from_bytes(
+        hashlib.sha256(b"deal_scores").digest()[:6], "big"
+    )
+    # Distinct jobs must not serialise against each other, and none of them may
+    # collide with the fetch lease in `fetcher`.
+    keys = {_lease_key(n) for n in
+            ("fetch", "deal_scores", "refresh-analytics", "backfill-images")}
+    assert len(keys) == 4
+    assert FETCH_LEASE_KEY not in keys
+    # pg_try_advisory_lock takes a signed bigint.
+    assert all(0 < k < 2 ** 63 for k in keys)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_second_connection_cannot_take_a_held_lease():
+    """The real guarantee, exercised across two connections.
+
+    Django gives each thread its own connection, which is the same separation
+    two gunicorn workers have — so a lock that holds here is a lock that holds
+    between processes. A same-connection retry would prove nothing: PostgreSQL
+    advisory locks are re-entrant within one session.
+    """
+    import threading
+
+    from django.db import connection as conn
+
+    from apps.jobs.views import _job_lease
+
+    held = threading.Event()
+    release = threading.Event()
+    outcome = {}
+
+    def holder():
+        try:
+            with _job_lease("deal_scores") as acquired:
+                outcome["holder"] = acquired
+                held.set()
+                release.wait(timeout=10)
+        finally:
+            conn.close()
+
+    thread = threading.Thread(target=holder)
+    thread.start()
+    try:
+        assert held.wait(timeout=10), "holder thread never acquired the lease"
+        assert outcome["holder"] is True
+        with _job_lease("deal_scores") as acquired:
+            assert acquired is False, "two runs took the same lease"
+        # A different job is not blocked by it.
+        with _job_lease("backfill-images") as acquired:
+            assert acquired is True
+    finally:
+        release.set()
+        thread.join(timeout=10)
+
+    # Released on exit, so the next trigger is not wedged.
+    with _job_lease("deal_scores") as acquired:
+        assert acquired is True
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_run_that_loses_the_lease_records_itself_skipped(monkeypatch):
+    """Not silence: the operator page has to be able to say the click did nothing.
+
+    The caller already holds a 202 by the time the lease is tried — an advisory
+    lock lives on the connection that took it, and the request thread's
+    connection is not the one doing the work — so the JobRun row is the only
+    place this is visible. `skipped` is the word the pipeline already uses.
+    """
+    from contextlib import contextmanager
+
+    from apps.jobs import views as V
+
+    @contextmanager
+    def busy(_label):
+        yield False
+
+    monkeypatch.setattr(V, "_job_lease", busy)
+    ran = []
+    V._spawn("deal_scores", lambda: ran.append(1))
+
+    for _ in range(100):
+        if JobRun.objects.filter(name="deal_scores").exists():
+            break
+        time.sleep(0.02)
+
+    assert ran == [], "work ran despite losing the lease"
+    row = JobRun.objects.get(name="deal_scores")
+    assert row.status == JobRun.Status.SKIPPED
+    assert "lease" in row.detail
+
+
+# ---------------------------------------------------------------------------
+# `manage.py bama` — the one command
+# ---------------------------------------------------------------------------
+#
+# Every scheduled tick in production goes through this: `deploy/worker.sh` runs
+# `manage.py bama <cadence>` and branches on the exit code. It had no tests at
+# all, which is why these start with the exit code and the option routing rather
+# than with output formatting.
+
+
+def test_every_routed_option_is_one_its_job_accepts():
+    """The flag -> job map is hand-maintained and nothing checked it.
+
+    `JOB_OPTIONS` says which command-line flags reach which job. If a job's
+    signature loses a parameter the map still names, the mismatch is not a
+    failed import or a broken test — it is a TypeError raised inside a container
+    on the next scheduled tick, and the only trace is a FAILED JobRun.
+    """
+    import inspect
+
+    from apps.jobs.management.commands.bama import JOB_OPTIONS
+
+    for job, options in JOB_OPTIONS.items():
+        assert job in P.JOBS, f"{job!r} is routed options but is not a job"
+        params = inspect.signature(P.JOBS[job]).parameters
+        takes_kwargs = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+        for option in options:
+            assert option in params or takes_kwargs, (
+                f"bama routes --{option.replace('_', '-')} to {job}(), "
+                f"which does not accept it"
+            )
+
+
+def test_bare_targets_are_real_jobs():
+    """`health`, `reap_orphans` and `probe_depth` bypass JobRun recording."""
+    from apps.jobs.management.commands.bama import BARE_TARGETS
+
+    for target in BARE_TARGETS:
+        assert target in P.JOBS, f"{target!r} runs bare but is not a job"
+
+
+@pytest.mark.django_db
+def test_a_failed_job_exits_non_zero(monkeypatch):
+    """`worker.sh` decides whether to retry purely on this exit code.
+
+    If the command stopped signalling failure, a broken tick would be logged as
+    `ok` by the scheduler and retried never.
+    """
+    from django.core.management import call_command
+
+    monkeypatch.setattr(
+        P, "run_step",
+        lambda name, **kw: P.StepResult(name, False, "boom", 0.1),
+    )
+    with pytest.raises(SystemExit) as exc:
+        call_command("bama", "prune")
+    assert exc.value.code == 1
+
+
+@pytest.mark.django_db
+def test_a_successful_job_exits_zero(monkeypatch):
+    from django.core.management import call_command
+
+    monkeypatch.setattr(
+        P, "run_step",
+        lambda name, **kw: P.StepResult(name, True, "done", 0.1),
+    )
+    call_command("bama", "prune")  # must not raise SystemExit
+
+
+@pytest.mark.django_db
+def test_an_unknown_target_names_the_valid_ones(monkeypatch):
+    """A typo must not be silently treated as a no-op tick."""
+    from django.core.management import call_command
+    from django.core.management.base import CommandError
+
+    with pytest.raises(CommandError) as exc:
+        call_command("bama", "snapshsot")
+    message = str(exc.value)
+    assert "snapshsot" in message
+    assert "hot" in message and "prune" in message
+
+
+@pytest.mark.django_db
+def test_only_flags_the_caller_gave_are_forwarded(monkeypatch):
+    """An unpassed flag must not arrive as None and override a job's own default.
+
+    `--days` defaults to None in argparse; forwarding that would turn
+    `prune(days=PRUNE_DEFAULT_DAYS)` into `prune(days=None)`.
+    """
+    from django.core.management import call_command
+
+    seen = {}
+
+    def fake(name, **kw):
+        seen[name] = kw
+        return P.StepResult(name, True, "", 0.0)
+
+    monkeypatch.setattr(P, "run_step", fake)
+    call_command("bama", "prune")
+    assert seen["prune"] == {}, "flags the caller never gave were forwarded"
+
+    seen.clear()
+    call_command("bama", "prune", "--days", "7", "--dry-run")
+    assert seen["prune"] == {"days": 7, "dry_run": True}
+
+
+@pytest.mark.django_db
+def test_a_store_true_flag_is_dropped_when_absent_but_a_zero_is_kept(monkeypatch):
+    """`--dry-run` defaults to False, and False means "not asked for".
+
+    `0` is a different case: `--limit 0` is a number the caller typed, and the
+    filter that drops the unset booleans must not drop it too.
+    """
+    from django.core.management import call_command
+
+    seen = {}
+
+    def fake(name, **kw):
+        seen[name] = kw
+        return P.StepResult(name, True, "", 0.0)
+
+    monkeypatch.setattr(P, "run_step", fake)
+    call_command("bama", "episodes", "--limit", "0")
+    assert seen["episodes"] == {"limit": 0}
+
+
+@pytest.mark.django_db
+def test_fetch_always_carries_its_own_defaults(monkeypatch):
+    """A bare `bama fetch` must still be a bounded delta, not an unbounded run."""
+    from django.conf import settings
+    from django.core.management import call_command
+
+    seen = {}
+
+    def fake(name, **kw):
+        seen[name] = kw
+        return P.StepResult(name, True, "", 0.0)
+
+    monkeypatch.setattr(P, "run_step", fake)
+    call_command("bama", "fetch")
+    assert seen["fetch"]["mode"] == "delta"
+    assert seen["fetch"]["max_ads"] == settings.BAMA_WORKER_FETCH_ADS
+
+
+@pytest.mark.django_db
+def test_a_cadence_runs_the_pipeline_and_fails_the_process_if_any_step_did(monkeypatch):
+    from django.core.management import call_command
+
+    called = {}
+
+    def fake_run(**kw):
+        called.update(kw)
+        return P.Report(steps=[P.StepResult("fetch", False, "no", 0.1)],
+                        started_at=timezone.now(), finished_at=timezone.now())
+
+    monkeypatch.setattr(P, "run", fake_run)
+    with pytest.raises(SystemExit) as exc:
+        call_command("bama", "hot")
+    assert exc.value.code == 1
+    assert called["cadence"] == "hot"

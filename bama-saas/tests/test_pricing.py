@@ -27,7 +27,15 @@ from apps.core.models import (
     Variant,
 )
 from apps.core.pricing import compute_deal_scores
-from apps.core.quality import condition_discounted, price_basis_unclear
+from apps.core.quality import (
+    CLEAN,
+    COSMETIC,
+    PAINTED,
+    STRUCTURAL,
+    condition_band,
+    condition_discounted,
+    price_basis_unclear,
+)
 
 NOW = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
 
@@ -104,14 +112,82 @@ def test_condition_is_flagged_but_never_excluded(text):
 # than the label on the screen claims. These 19 strings are every `body_status`
 # value present in production, so the agreement is checked on real data.
 
-ALL_BODY_STATUSES = (
-    "بدون رنگ", "یک لکه رنگ", "چند لکه رنگ", "دو لکه رنگ", "صافکاری بدون رنگ",
-    "خط و خش جزئی", "دور رنگ", "گلگیر رنگ", "کامل رنگ", "یک درب رنگ",
-    "کاپوت رنگ", "دو درب رنگ", "کاپوت تعویض", "گلگیر تعویض", "درب تعویض",
-    "اتاق تعویض", "تصادفی", "سوخته", "اوراقی",
-    # Two Bama has not shipped yet, and one it never will.
-    "سه لکه رنگ", "سپر تعویض", "نامشخص",
+# The value, the band it must land in, and the production row count behind it.
+# Carrying the expected band here rather than only the string is what makes this
+# a statement of the classification instead of a list of inputs: `quality.py`
+# used to assert the same table in an `if __name__ == "__main__"` block that
+# nothing ever ran, and by the time it was found it claimed COSMETIC for the
+# three multi-spot values the shipped ladder calls PAINTED. A rule table with no
+# executed check drifts into describing code that no longer exists.
+#
+# Counts re-measured against production 2026-09-04 (82,700 ads): still exactly
+# these 19 values and no twentieth, so nothing is falling through to "unknown".
+# The counts are context for how much each rule is worth, not assertions — they
+# move every crawl tick, and a test that pinned them would fail nightly.
+BODY_STATUS_BANDS = (
+    ("بدون رنگ", CLEAN),             # 61,315
+    ("یک لکه رنگ", COSMETIC),        #  3,962
+    ("صافکاری بدون رنگ", COSMETIC),  #  1,958 — contains "بدون رنگ"
+    ("خط و خش جزئی", COSMETIC),      #  1,936
+    ("چند لکه رنگ", PAINTED),        #  3,636
+    ("دو لکه رنگ", PAINTED),         #  3,217
+    ("دور رنگ", PAINTED),            #  2,103
+    ("گلگیر رنگ", PAINTED),          #    887
+    ("کامل رنگ", PAINTED),           #    658
+    ("یک درب رنگ", PAINTED),         #    377
+    ("کاپوت رنگ", PAINTED),          #    355
+    ("دو درب رنگ", PAINTED),         #    242
+    ("کاپوت تعویض", STRUCTURAL),     #    714 — paint word absent
+    ("گلگیر تعویض", STRUCTURAL),     #    681
+    ("درب تعویض", STRUCTURAL),       #    409
+    ("اتاق تعویض", STRUCTURAL),      #    106
+    ("تصادفی", STRUCTURAL),          #    116
+    ("سوخته", STRUCTURAL),           #     18
+    ("اوراقی", STRUCTURAL),          #     10
+    # Two Bama has not shipped yet — the bands are derived from keywords rather
+    # than an exact list precisely so these land somewhere sensible — and one it
+    # never will, which must read as "no opinion" and never as CLEAN.
+    ("سه لکه رنگ", PAINTED),
+    ("سپر تعویض", STRUCTURAL),
+    ("نامشخص", None),
 )
+
+ALL_BODY_STATUSES = tuple(value for value, _ in BODY_STATUS_BANDS)
+
+
+@pytest.mark.parametrize(("body_status", "expected"), BODY_STATUS_BANDS)
+def test_every_production_body_status_lands_in_its_measured_band(body_status, expected):
+    """The ladder, pinned on real data.
+
+    The market prices these monotonically — a full respray trades ~16.5% under
+    its cohort, دور رنگ ~9%, a single spot ~1.4% — so a reordering that moves
+    55k clean cars into PAINTED changes every price on the site.
+    """
+    assert condition_band(body_status) == expected
+
+
+@pytest.mark.parametrize("body_status", ["", None])
+def test_a_missing_body_status_is_no_opinion_never_clean(body_status):
+    """Guessing CLEAN on an unknown value is the bug the bands exist to fix."""
+    assert condition_band(body_status) is None
+
+
+@pytest.mark.parametrize(("body_status", "flagged"), [
+    ("کامل رنگ", True),
+    ("کاپوت تعویض", True),
+    ("یک لکه رنگ", True),
+    ("بدون رنگ", False),
+    ("", False),
+])
+def test_the_structured_field_alone_decides_the_condition_badge(body_status, flagged):
+    """`body_status` is the strong signal and the description regex is the weak one.
+
+    Bama populates this column on 100% of ads and sellers mostly do not repeat
+    themselves in the prose, so a clean description with a painted body_status
+    must still badge — measured, the regex fires on only 2,133 of the 7,907
+    active ads whose column already declares damage.
+    """
+    assert condition_discounted(body_status=body_status) is flagged
 
 
 @pytest.mark.django_db
@@ -896,6 +972,32 @@ def test_message_names_the_evidence(notifier_catalog, cfg, _no_real_telegram):
     assert "30% below fair value" in text
     assert "20 peers" in text
     assert "high confidence" in text
+
+
+@pytest.mark.django_db
+def test_a_scraped_title_cannot_write_markup_into_the_message(
+    notifier_catalog, cfg, _no_real_telegram,
+):
+    """Titles come from bama.ir and the message is sent `parse_mode=HTML`.
+
+    Two failures in one. Telegram answers 400 "can't parse entities" to an
+    unrecognised tag and neither channel records a delivery it did not confirm,
+    so a single such listing on the board makes the operator feed retry the same
+    doomed message every tick. And the seller who wrote the title chose the
+    markup — `<a href=...>` in a title was their link inside our alert.
+    """
+    row = make_scored(notifier_catalog, "deal0001", discount=30.0, peers=20)
+    row.ad.title = '<a href="https://evil.example">پژو 206</a> & کم کارکرد'
+    row.ad.save(update_fields=["title"])
+
+    N.notify_deals()
+
+    text = _no_real_telegram[0]
+    assert "<a href=" not in text
+    assert "&lt;a href=" in text
+    assert "&amp; کم کارکرد" in text
+    # The <b> the message itself writes is still real markup.
+    assert text.startswith("<b>30% below fair value</b>")
 
 
 @pytest.mark.django_db

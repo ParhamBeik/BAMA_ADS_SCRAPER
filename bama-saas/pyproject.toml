@@ -37,7 +37,12 @@ dependencies = [
 ml = [
     "numpy>=1.26",
     "scikit-learn>=1.5",
-    "lightgbm>=4.5",
+    # >=4.7 because `train.py` passes `eval_X`/`eval_y` to `fit`. 4.7.0 warns
+    # LGBMDeprecationWarning on the `eval_set=[(x, y)]` form those replace and
+    # accepts the new keywords; whether 4.5 or 4.6 also accept them was not
+    # checked, so the floor moves to the version the call site is verified
+    # against rather than to a guess about when they landed.
+    "lightgbm>=4.7",
     "joblib>=1.4",
 ]
 #

@@ -110,6 +110,22 @@ def fetch(url: str) -> tuple[str, bytes] | None:
     if consecutive_blocks() or cache.get(failed_key):
         return None
 
+    def failed() -> None:
+        """Mark this URL as not worth asking for again just yet.
+
+        Every ``return None`` below has to come through here, not just the
+        transport error. ``listing_image`` is ``@throttle_classes([])`` — one
+        scroll of a card grid outruns the shared rate — so an address that
+        answers but does not answer with an image was re-fetched from the CDN on
+        every single request to it, forever. Both of the branches that did that
+        are stable properties of the URL rather than transient: Bama's addresses
+        are content-addressed, so a body that is over ``IMAGE_MAX_BYTES`` or is
+        an HTML error page will still be that on the next request. Left unmarked
+        they turned an unthrottled endpoint into an amplifier pointed at the one
+        host whose blocks are already this crawler's main operational risk.
+        """
+        cache.set(failed_key, True, FAILED_IMAGE_CACHE_SECONDS)
+
     try:
         # `with`, because both early returns below abandon a half-read stream:
         # while Bama is blocking us it answers every one of these with an HTML
@@ -128,6 +144,7 @@ def fetch(url: str) -> tuple[str, bytes] | None:
             if content_type not in ALLOWED_IMAGE_TYPES:
                 log.warning("images: %s answered %s, not an allowed image type",
                             url, content_type or "?")
+                failed()
                 return None
 
             # Read with a ceiling rather than trusting Content-Length, which a
@@ -137,10 +154,11 @@ def fetch(url: str) -> tuple[str, bytes] | None:
                 body.extend(chunk)
                 if len(body) > settings.IMAGE_MAX_BYTES:
                     log.warning("images: %s exceeded %d bytes", url, settings.IMAGE_MAX_BYTES)
+                    failed()
                     return None
     except requests.RequestException as exc:
         log.warning("images: %s failed: %s", url, exc)
-        cache.set(failed_key, True, FAILED_IMAGE_CACHE_SECONDS)
+        failed()
         return None
 
     value = (content_type, bytes(body))

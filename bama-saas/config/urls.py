@@ -1,11 +1,15 @@
 """Root URL configuration."""
 
+import logging
+
 from django.contrib import admin
 from django.db import connection
 from django.http import JsonResponse
 from django.urls import include, path
 
 from apps.jobs import views as jobs_views
+
+log = logging.getLogger("bama.health")
 
 
 def health(_request):
@@ -18,6 +22,14 @@ def db_health(_request):
             cursor.execute("SELECT 1")
         return JsonResponse({"status": "ok"})
     except Exception:
+        # Logged, not just answered. The body stays a bare "error" — this is
+        # unauthenticated and a connection string in a probe response is a leak
+        # — but the deploy smoke test and the operator both learn only that the
+        # database is unreachable, and the reason has to survive somewhere. It
+        # cannot reach `django.request`: that logger fires on an *unhandled*
+        # exception, and this one is handled in order to return a 500 body at
+        # all, so without this line the cause reaches nothing.
+        log.exception("db health check failed")
         return JsonResponse({"status": "error"}, status=500)
 
 

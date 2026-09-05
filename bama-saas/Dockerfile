@@ -37,5 +37,35 @@ RUN pip install --upgrade pip \
 
 COPY . /app/
 
+# Not root. The application never needs to write anywhere except the two named
+# volumes, so nothing here has a reason to hold uid 0 — and this VPS runs three
+# other stacks beside this one.
+#
+# The uid is pinned rather than left to `useradd` because it has to match what
+# the volumes are owned by. Docker fixes a named volume's ownership once, when
+# it first creates it from the image's directory, and does **not** re-chown an
+# existing one on `up` — so the two volumes on the VPS were chowned to
+# 10001:10001 ahead of this change (2026-09-04). Root can write into a
+# 10001-owned directory, so the then-running root containers were unaffected and
+# the switch takes effect only on the next deploy. Reversing means `chown -R
+# 0:0` on both, in the same way.
+#
+#   docker run --rm -v bama-saas_staticfiles:/v alpine chown -R 10001:10001 /v
+#   docker run --rm -v bama-saas_ml_artifacts:/v alpine chown -R 10001:10001 /v
+#
+# `--create-home` is load-bearing: gunicorn opens a control socket under
+# `$HOME/.gunicorn/`, which was `/root/.gunicorn/gunicorn.ctl` before this and
+# has nowhere to go for a user without a home directory.
+#
+# The source stays root-owned and world-readable — the app reads it and must not
+# be able to rewrite the code it is running.
+RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin app
+USER app
+
 EXPOSE 8000
-CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3", "--worker-class", "gthread", "--threads", "8"]
+# `--access-logfile -` because without it there is no record that a request ever
+# happened. "Has anyone ever called this endpoint?" and "did that 500 hit a real
+# user?" were both unanswerable on the deployed stack — the container held 39
+# lines, all of them boot messages. Traffic here is tens of requests a day, so
+# the volume is nothing against the compose logging cap (20m x 5).
+CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3", "--worker-class", "gthread", "--threads", "8", "--access-logfile", "-"]

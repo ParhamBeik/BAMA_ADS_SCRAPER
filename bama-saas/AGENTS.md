@@ -8,7 +8,7 @@ of these decisions changes.
 
 One module per concern, no `services/` packages, no per-command modules:
 
-- `apps/core/` — `models.py` (all 15 models, four commented sections),
+- `apps/core/` — `models.py` (all 20 models, four commented sections),
   `views.py`, `serializers.py`, `filters.py`, plus the analytics:
   `pricing.py` (fair price + deal board + the board's dynamic window),
   `quality.py` (the read-side filters *and* the one condition-band rule ladder),
@@ -26,7 +26,8 @@ One module per concern, no `services/` packages, no per-command modules:
 - `apps/jobs/` — `parsing.py` (no Django import), `fetcher.py` (HTTP + crawl
   gate + coverage arithmetic), `ingest.py`, `verify.py`, `jobs.py` (one function
   per job, each returning a dict), `pipeline.py` (which jobs, in what order),
-  `management/commands/bama.py` (the only command).
+  `management/commands/bama.py` (the only scheduled-job command; the one other
+  command in the project is `accounts/…/wipe_users.py`, a guarded manual reset).
 - `config/settings.py` — one file. `DJANGO_DEBUG=1` selects the local profile;
   the default is hardened, so a missing env var cannot fail open.
 - `ui/web/` — Tailwind v4 + shadcn/ui. Five destinations behind one floating
@@ -368,6 +369,50 @@ schema is independent of the Python layout. Do not remove those pins.
   at "unstable" permanently, which is how a monitor gets ignored. Each side's
   features are also built against its own clock, or the passage of time itself
   reads as drift.
+- **Third-party text is escaped before it becomes markup.** Ad titles are
+  scraped and the Telegram messages are sent `parse_mode=HTML`, so `title_of`
+  escapes. Hardening, not an incident: measured 2026-09-04, 0 of 82,700 titles
+  hold `<`, `>` or `&`, the notifier is disabled and nothing has ever been sent.
+  Worth the one call because an unrecognised `<` makes Telegram answer 400 and
+  neither channel records a delivery it did not confirm, so the message would be
+  retried forever — and `<a href=...>` in a title would be the seller's link
+  inside our alert.
+- **A cross-language mirror is asserted on both sides.** `scopeKey` in
+  `FollowButton.tsx` reproduces `ScopedToACar.build_scope_key` so the follow
+  button needs no round trip, and `ui.tsx:toman` reproduces `notify.toman` so a
+  message and the board agree about a price. Each pair is pinned by the same
+  literal table in `tests/test_api.py` and `src/logic.test.ts`, so drift fails a
+  build instead of mislabelling a button. `npm test` is in CI for this.
+- **The admin job guard is the advisory lock, not the in-process set.**
+  `views._RUNNING` is per *process* and production runs `gunicorn --workers 3`,
+  and the `JobRun` pre-check reads a row the spawned thread has not written yet
+  — so both are fast paths for a good 409, and neither prevents overlap.
+  `views._job_lease` (a `pg_try_advisory_lock`, the same mechanism as
+  `fetcher._fetch_lease` and in its own key namespace) is what does. It matters
+  because `deal_scores` DELETEs the whole board before rebuilding it, and it has
+  already bitten with the pre-check in place: on 2026-08-28 19:37:48–49 three
+  admin runs (JobRun 8741–8743) overlapped and 8742 died on a duplicate-key
+  violation on `analytics_dealscorecache_ad_id_key`. Its key is a SHA-256 prefix
+  and must never become `hash()`: Python randomises string hashes per
+  interpreter, so each worker would get a private lock and guard nothing.
+- **`pg_stat_*` counters are lifetime, so read a rate before grading one.**
+  `catalog_ad` shows ~170k sequential scans totalling 4.75 billion rows, which
+  reads like an emergency and is not one. Measured 2026-09-04: a full seq scan
+  of the table costs 126 ms, the worker does ~9 per tick, and ticks are 10-15
+  minutes apart — about one second per tick, and `last_seq_scan` (PostgreSQL 16)
+  confirms they arrive in tick-shaped bursts rather than continuously. Most of
+  the historical total predates migration `0030`, which replaced the
+  un-indexable `NOT quality_flags @> ...` predicates with generated boolean
+  columns; before it, *every* analytical read scanned the table. The counter has
+  never been reset, so it still shows the old regime. Get the per-tick rate and
+  the per-scan cost before treating a big cumulative number as a finding.
+- **A failed image answer is marked, not just a failed connection.** The
+  `img:failed:` marker used to be set only on a transport error, so a URL
+  answering 200 with an HTML error page or an oversize body was re-fetched from
+  the CDN on every request — and `listing_image` is `@throttle_classes([])`,
+  which made it an unthrottled amplifier pointed at the host whose blocks are
+  this crawler's main operational risk. Both are stable properties of a
+  content-addressed URL. `images.fetch`'s `failed()` is the single exit.
 - **Append-only provenance.** `AdVersion` dedups on the *semantic* hash
   (volatile payload paths excluded), `AdObservation` is one row per run per ad,
   `PriceObservation` is one row per actual price change, not per sighting.
@@ -479,3 +524,34 @@ take minutes.
 The artifact volume is mounted **read-write by `ml` alone** and read-only
 everywhere else. A web worker that can overwrite a model file can change what
 every reader is told without a deploy, a migration, or a registry row.
+
+## Observability
+
+Django's `DEFAULT_LOGGING` attaches the console handler behind a
+`RequireDebugTrue` filter and routes production errors to `AdminEmailHandler`
+instead. With `ADMINS` empty — it is — an unhandled exception on the deployed
+stack produced **no line anywhere**. That is why `django.request` and
+`django.security` are given their own console handlers in `config/settings.py`,
+and why gunicorn runs with `--access-logfile -` in both the Dockerfile and
+compose: without it the container logged only its own boot, so "is that endpoint
+used?" and "did that error reach a caller?" had no answer at all.
+
+Two rules follow, and both have already been needed:
+
+- **`django.request` only fires on an *unhandled* exception.** A view that
+  catches in order to return a response — `db_health` is the one that does —
+  reaches no logger unless it logs itself. Handling an exception and returning a
+  status is not reporting it.
+- **A handler that cannot run reads as covered.** Assert that a logger has a
+  handler *and* that the handler is not debug-filtered; reading the settings
+  dict back proves neither. `tests/test_api.py` does it that way for exactly
+  this reason.
+
+Health endpoints are two different questions and are kept separate on purpose:
+`/api/health/` is liveness and touches no database, because it decides whether
+the container is restarted and a brief database blip should not cycle the web
+tier; `/api/db/health/` is readiness and issues a real query. The compose
+healthcheck must send `X-Forwarded-Proto: https` — the hardened profile answers
+plain HTTP with a 301 from `SecurityMiddleware` before routing, and `curl -f`
+treats a 3xx as success, so without the header the probe passed for anything
+that merely accepted a connection on port 8000.

@@ -24,6 +24,8 @@ graphify-out/
 
 # SaaS runtime and container outputs
 bama-saas/.venv/
+bama-saas/.coverage
+bama-saas/htmlcov/
 bama-saas/.pytest_cache/
 bama-saas/.mypy_cache/
 bama-saas/.ruff_cache/

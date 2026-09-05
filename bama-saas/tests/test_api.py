@@ -1235,6 +1235,34 @@ def test_logout_everywhere_blacklists_jwt_tokens():
     resp = client.post("/api/auth/logout-everywhere/")
     assert resp.status_code == 200
     assert BlacklistedToken.objects.filter(token__token=str(refresh)).exists()
+    assert resp.json()["tokens_revoked"] == 1
+
+
+@pytest.mark.django_db
+def test_a_failed_revocation_is_reported_not_claimed_as_success(monkeypatch):
+    """This endpoint's whole promise is revocation, so it must not overstate it.
+
+    The token half used to be wrapped in `except Exception: pass`, which meant a
+    blacklist failure still answered 200 with a `sessions_ended` count — the
+    caller was told they had logged out everywhere while their bearer tokens
+    stayed valid until they expired. Sessions still die (that half worked);
+    `tokens_revoked: null` is how the answer says the other half did not.
+    """
+    from rest_framework_simplejwt.token_blacklist.models import OutstandingToken
+
+    user = User.objects.create_user(email="jwt_fail@example.com", password="StrongPass1!")
+    client = APIClient()
+    client.force_authenticate(user)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("blacklist table is gone")
+
+    monkeypatch.setattr(OutstandingToken.objects, "filter", boom)
+
+    resp = client.post("/api/auth/logout-everywhere/")
+    assert resp.status_code == 200
+    assert resp.json()["tokens_revoked"] is None
+    assert "sessions_ended" in resp.json()
 
 
 @pytest.mark.django_db
@@ -1404,6 +1432,62 @@ def test_svg_image_is_refused(monkeypatch):
     assert images.fetch(_SMALL) is None
 
 
+def _answering_with(content_type: str, chunks: list[bytes]):
+    """A `requests.get` stand-in that returns a 200 nobody can use."""
+
+    class FakeResponse:
+        headers = {"Content-Type": content_type}
+
+        def raise_for_status(self):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def iter_content(self, chunk_size):
+            return list(chunks)
+
+    return FakeResponse
+
+
+@pytest.mark.parametrize(("content_type", "chunks"), [
+    # What Bama's CDN answers while it is refusing us: a 200 carrying an HTML
+    # error page. `consecutive_blocks` does not cover it — that reads the *feed*
+    # crawler's run log, and the image host can refuse independently of it.
+    ("text/html", [b"<html>blocked</html>"]),
+    # And a body past IMAGE_MAX_BYTES, which is a stable property of the URL:
+    # Bama's addresses are content-addressed, so this one will be oversize on
+    # every future request too.
+    ("image/jpeg", [b"x" * (1024 * 1024)] * 4),
+])
+def test_an_unusable_image_answer_is_not_re_fetched_on_every_request(
+    monkeypatch, content_type, chunks,
+):
+    """A 200 that is not an image must set the failure marker, like a 500 does.
+
+    `listing_image` is `@throttle_classes([])` because one scroll of a card grid
+    outruns the shared rate, so an address that always fails but is never marked
+    is an outbound request per inbound request, forever — an unthrottled
+    amplifier pointed at the one host whose blocks are this crawler's main
+    operational risk.
+    """
+    monkeypatch.setattr(images, "consecutive_blocks", lambda: 0)
+    calls = []
+
+    def get(*args, **kwargs):
+        calls.append(args)
+        return _answering_with(content_type, chunks)()
+
+    monkeypatch.setattr(images.requests, "get", get)
+
+    assert images.fetch(_LARGE[1]) is None
+    assert images.fetch(_LARGE[1]) is None
+    assert len(calls) == 1
+
+
 @pytest.mark.django_db
 def test_listing_image_endpoint_has_csp(member, catalog, monkeypatch):
     client, _ = member
@@ -1523,6 +1607,45 @@ def test_distribution_rejects_an_unparseable_scope(api_client):
     front of someone who asked about one car."""
     assert api_client.get("/api/analytics/distribution/?model=abc").status_code == 400
     assert api_client.get("/api/analytics/distribution/?year=abc").status_code == 400
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("query", ["variant=abc", "year=abc", "variant=&year=x"])
+def test_research_endpoints_refuse_an_unparseable_scope_rather_than_500(
+    api_client, catalog, query,
+):
+    """The two research endpoints cast their own query parameters.
+
+    Every other numeric parameter in `core.views` goes through `_opt`, which
+    raises a ValueError the view turns into a 400. These two called `int()`
+    inline, so the ValueError left the view uncaught and `?year=abc` was a 500 —
+    the same crash `_leaderboard_limit` was written to stop `?limit=abc` causing.
+    """
+    model_id = catalog["model"].pk
+    assert api_client.get(f"/api/research/liquidity/{model_id}/?{query}").status_code == 400
+
+
+@pytest.mark.django_db
+def test_depreciation_refuses_an_unparseable_variant_rather_than_500(api_client, catalog):
+    model_id = catalog["model"].pk
+    assert api_client.get(f"/api/research/depreciation/{model_id}/?variant=abc").status_code == 400
+
+
+@pytest.mark.django_db
+def test_research_endpoints_still_accept_an_absent_or_valid_scope(api_client, catalog):
+    """The 400 above must not have been bought by refusing the normal call."""
+    model_id = catalog["model"].pk
+    variant_id = catalog["variant"].pk
+    for url in (
+        f"/api/research/liquidity/{model_id}/",
+        f"/api/research/liquidity/{model_id}/?variant={variant_id}&year=1400",
+        # An empty parameter is what a cleared picker sends, and it means
+        # "no scope", not "unparseable".
+        f"/api/research/liquidity/{model_id}/?variant=&year=",
+        f"/api/research/depreciation/{model_id}/",
+        f"/api/research/depreciation/{model_id}/?variant={variant_id}",
+    ):
+        assert api_client.get(url).status_code == 200, url
 
 
 @pytest.mark.django_db
@@ -1804,6 +1927,36 @@ def test_a_scope_key_makes_the_same_car_the_same_row(member, catalog):
     assert Watchlist.objects.get(user=user).scope_key == f"model:{catalog['model'].pk}"
 
 
+# The exact strings `build_scope_key` must produce. The client mirrors this
+# derivation in `ui/web/src/components/FollowButton.tsx:scopeKey` so it can draw
+# the follow button without a round trip per scope change, and the same table is
+# asserted there (`src/logic.test.ts`). Two derivations of "the same car" is a
+# drift risk; asserting one literal table on both sides is what makes the drift
+# fail a build instead of quietly mislabelling the button.
+SCOPE_KEYS = [
+    ({}, "market"),
+    ({"brand_slug": "peugeot"}, "brand:peugeot"),
+    ({"model_id": 12}, "model:12"),
+    ({"brand_slug": "peugeot", "model_id": 12}, "brand:peugeot/model:12"),
+    ({"brand_slug": "peugeot", "model_id": 12, "variant_id": 7},
+     "brand:peugeot/model:12/variant:7"),
+    ({"brand_slug": "peugeot", "model_id": 12, "variant_id": 7, "year_jalali": 1401},
+     "brand:peugeot/model:12/variant:7/year:1401"),
+    ({"brand_slug": "peugeot", "year_jalali": 1401}, "brand:peugeot/year:1401"),
+    ({"model_id": 12, "year_jalali": 1401}, "model:12/year:1401"),
+]
+
+
+@pytest.mark.parametrize(("fields", "expected"), SCOPE_KEYS)
+def test_the_scope_key_format_is_the_one_the_client_mirrors(fields, expected):
+    """No database: this is pure string derivation, and the format is the contract.
+
+    Narrowest-last ordering is load-bearing twice over — it is why a prefix match
+    finds everything under a brand, and it is what the client reproduces.
+    """
+    assert Watchlist(**fields).build_scope_key() == expected
+
+
 @pytest.mark.django_db
 def test_a_watchlist_is_invisible_to_another_account(member, other_member, catalog):
     client, _ = member
@@ -2037,3 +2190,81 @@ def test_public_reads_permission_boundary(anonymous_client, catalog):
     for url in endpoints:
         resp = anonymous_client.get(url)
         assert resp.status_code == expected, f"{url} returned {resp.status_code}, expected {expected}"
+
+
+# ---------------------------------------------------------------------------
+# Where a production error goes
+# ---------------------------------------------------------------------------
+
+
+def test_server_errors_reach_a_handler_that_can_fire_in_production():
+    """Django's default config logs a deployed 500 nowhere, and this pins the fix.
+
+    `DEFAULT_LOGGING` attaches two handlers to `django.request`: a console one
+    filtered by `RequireDebugTrue`, which cannot fire when DEBUG is off, and
+    `AdminEmailHandler` filtered by `RequireDebugFalse`, which fires and then
+    mails `ADMINS` — empty here. So on the deployed stack an unhandled exception
+    produced no log line anywhere, which is why "did that 500 ever hit a real
+    caller?" was unanswerable for the three endpoints that were raising
+    ValueError on a bad query parameter.
+
+    Asserted as "no handler is debug-filtered" rather than by reading the
+    settings dict back, because the filter is the actual defect — a handler that
+    is attached and can never run reads as covered and is not.
+    """
+    import logging
+
+    for name in ("django.request", "django.security"):
+        logger = logging.getLogger(name)
+        assert logger.handlers, f"{name} has no handler of its own"
+        for handler in logger.handlers:
+            names = {type(f).__name__ for f in handler.filters}
+            assert "RequireDebugTrue" not in names, (
+                f"{name} is routed to a handler that only fires under DEBUG"
+            )
+
+
+# ==========================================================================
+# The two health endpoints
+#
+# Untested until now, and they are what everything else waits on: the compose
+# healthcheck gates `frontend`, `worker` and `ml` on `/api/health/`, and the
+# deploy smoke test probes both through Caddy. A regression here does not fail
+# loudly — it leaves the stack never becoming healthy.
+# ==========================================================================
+
+
+def test_liveness_answers_without_touching_the_database(client):
+    """Deliberately no query. This decides whether the container is restarted,
+    and a brief database blip should not cycle the web tier.
+
+    The missing `db` fixture *is* the assertion: pytest-django raises on any
+    query from a test that did not ask for a database, which is a stricter check
+    than counting queries — counting needs a connection to count against."""
+    response = client.get("/api/health/")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_readiness_actually_queries_the_database(db, client):
+    with CaptureQueriesContext(connection) as queries:
+        response = client.get("/api/db/health/")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+    assert any("SELECT 1" in q["sql"] for q in queries)
+
+
+def test_an_unreachable_database_is_a_500_with_the_reason_in_the_log(client, caplog):
+    """The body stays bare — this endpoint is unauthenticated and a connection
+    string in a probe response is a leak. The cause has to survive somewhere
+    else, and it cannot be `django.request`: that logger fires on an *unhandled*
+    exception, and this one is handled in order to return a 500 body at all."""
+    import logging
+
+    with patch("config.urls.connection.cursor", side_effect=OSError("no route to host")):
+        with caplog.at_level(logging.ERROR, logger="bama.health"):
+            response = client.get("/api/db/health/")
+
+    assert response.status_code == 500
+    assert response.json() == {"status": "error"}
+    assert "no route to host" in caplog.text

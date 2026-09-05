@@ -294,6 +294,83 @@ def test_brand_scope_isolates_its_own_cohorts(cohorts):
     assert pride.return_pct == pytest.approx(20.0, abs=1e-6)
 
 
+# ---------------------------------------------------------------------------
+# Which scopes get an index at all
+#
+# `build_index` above is asked for one scope by name. The job decides *which*
+# scopes to ask for, and that decision is a threshold: below MIN_SCOPE_COHORTS
+# an "index" is one or two cars pretending to be a market. Every series on the
+# index page exists because this returned its key, so the bar is worth pinning.
+# ---------------------------------------------------------------------------
+
+
+def _brand_with_cohorts(slug: str, n: int):
+    """One brand carrying `n` distinct cohorts, priced flat across two days."""
+    brand = Brand.objects.create(slug=slug, name_fa=slug)
+    model = Model.objects.create(brand=brand, name_fa=f"{slug} model")
+    for i in range(n):
+        variant = Variant.objects.create(model=model, name_fa=f"{slug}-{i}")
+        for day in (D0, D1):
+            _snap(model, variant, day, price=500_000_000 + i, count=10)
+    return brand
+
+
+@pytest.mark.django_db
+def test_a_brand_with_too_few_cohorts_gets_no_series_of_its_own():
+    """Four cohorts is not a market. The market-wide series still includes the
+    cars — they are just not given a brand index that would read as a claim
+    about a brand."""
+    from apps.jobs.jobs import MIN_SCOPE_COHORTS, market_index
+
+    _brand_with_cohorts("thin", MIN_SCOPE_COHORTS - 1)
+    result = market_index()
+
+    assert result["scopes"] == 1                      # the market, and nothing else
+    assert not MarketIndex.objects.filter(scope=MarketIndex.Scope.BRAND).exists()
+    assert not MarketIndex.objects.filter(scope=MarketIndex.Scope.MODEL).exists()
+    assert MarketIndex.objects.filter(scope=MarketIndex.Scope.MARKET).exists()
+
+
+@pytest.mark.django_db
+def test_a_brand_at_the_bar_gets_its_own_series():
+    from apps.jobs.jobs import MIN_SCOPE_COHORTS, market_index
+
+    _brand_with_cohorts("broad", MIN_SCOPE_COHORTS)
+    result = market_index()
+
+    # Market, brand, the one model those cohorts belong to, and whichever
+    # segment axes the same cohorts filled — the count is not asserted because
+    # it depends on how the segments carve up this fixture, but the brand and
+    # model series are the ones the bar was being tested for.
+    assert result["scopes"] >= 3
+    assert result["points"] > 0
+    assert MarketIndex.objects.filter(
+        scope=MarketIndex.Scope.BRAND, scope_id="broad", date=D1
+    ).exists()
+    assert MarketIndex.objects.filter(scope=MarketIndex.Scope.MODEL).exists()
+
+
+@pytest.mark.django_db
+def test_eligibility_is_read_off_the_latest_day_not_the_whole_history():
+    """A brand that has shrunk below the bar stops getting a series. Counting
+    every row ever written would keep publishing an index for a scope that no
+    longer has the breadth to support one — and the reader has no way to tell a
+    stale series from a live one."""
+    from apps.jobs.jobs import MIN_SCOPE_COHORTS, market_index
+
+    brand = Brand.objects.create(slug="shrinking", name_fa="shrinking")
+    model = Model.objects.create(brand=brand, name_fa="m")
+    variants = [Variant.objects.create(model=model, name_fa=f"v{i}")
+                for i in range(MIN_SCOPE_COHORTS)]
+    for variant in variants:                       # broad yesterday
+        _snap(model, variant, D0, price=500_000_000, count=10)
+    for variant in variants[:2]:                   # two cohorts left today
+        _snap(model, variant, D1, price=500_000_000, count=10)
+
+    market_index()
+    assert not MarketIndex.objects.filter(scope=MarketIndex.Scope.BRAND).exists()
+
+
 @pytest.mark.django_db
 def test_market_index_endpoint(cohorts, api_client):
     """Integration: the endpoint's scope contract and change_pct summary."""

@@ -333,7 +333,11 @@ def train_price() -> dict:
         )
         model.fit(
             x_fit, y_fit, categorical_feature=spec.categorical_indices,
-            eval_set=[(x_valid, y_valid)], eval_metric="quantile",
+            # `eval_X`/`eval_y` rather than `eval_set=[(x, y)]`, which LightGBM
+            # 4.7 deprecates. This is the only fit here with a validation set,
+            # so it was the only line warning. One set, not a list — early
+            # stopping needs exactly one metric to watch.
+            eval_X=x_valid, eval_y=y_valid, eval_metric="quantile",
             callbacks=[lgb.early_stopping(EARLY_STOPPING_ROUNDS, verbose=False)],
         )
         boosters[str(alpha)] = model
