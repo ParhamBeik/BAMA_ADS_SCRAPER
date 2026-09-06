@@ -37,6 +37,8 @@ from apps.core.notify import (
     deliver_alerts,
     notify_deals,
     send_alerts,
+)
+from apps.core.notify import (
     send_health_alert as deliver_health_alert,
 )
 from apps.core.pricing import compute_deal_scores, deal_window, refresh_cohort_deal_scores
