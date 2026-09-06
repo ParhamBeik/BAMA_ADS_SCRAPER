@@ -128,7 +128,10 @@ class Command(BaseCommand):
         # A single job. `health` and `reap_orphans` are reports/housekeeping and
         # run bare; everything else is recorded as a JobRun like a scheduled tick.
         if what in BARE_TARGETS:
-            result = pipeline.JOBS[what]()
+            # `health` as a report must not page: it writes no JobRun, so a
+            # transition would re-fire on every `bama health` until warm ran.
+            result = (pipeline.JOBS[what](alert=False) if what == "health"
+                      else pipeline.JOBS[what]())
             if options["as_json"]:
                 self.stdout.write(json.dumps(result, indent=2, default=str))
             elif what == "health":

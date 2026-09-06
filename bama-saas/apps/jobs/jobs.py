@@ -1403,7 +1403,10 @@ def _previous_red() -> set[str] | None:
         if token.startswith("red="):
             names = token[len("red="):]
             return set(names.split(",")) if names and names != "-" else set()
-    return set()
+    # Pre-upgrade rows are `ok=True` / `ok=False` with no `red=` token.
+    # An empty set here would mean "everything was green", so every currently
+    # red check would page as breaking news on the first warm tick after deploy.
+    return None
 
 
 def health(*, alert: bool = True, dry_run: bool = False) -> dict:

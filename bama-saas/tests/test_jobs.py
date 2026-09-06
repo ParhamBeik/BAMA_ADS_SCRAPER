@@ -845,6 +845,37 @@ def test_a_failing_alert_channel_never_takes_the_health_job_down(monkeypatch):
 
 
 @pytest.mark.django_db
+def test_a_pre_upgrade_health_row_is_not_a_green_baseline(_health_alerts):
+    """Old rows say `ok=False` with no `red=` token. Treating that as
+    'nothing was red' would page the standing backlog on the first warm
+    tick after deploy."""
+    from apps.jobs import jobs as J
+
+    JobRun.objects.create(name="health", status=JobRun.Status.OK, detail="ok=False")
+    red = J.Check("upstream_outage", False, "bama.ir failed 3 fetch(es).")
+    with patch.object(J, "run_checks", return_value=[red]):
+        P.run(steps=["health"])
+    assert _health_alerts == []
+
+
+@pytest.mark.django_db
+def test_a_read_does_not_page_even_after_a_real_transition(_health_alerts):
+    """Control polls and `bama health` write no JobRun. If they alerted,
+    the same 'went red' message would repeat until the next warm tick."""
+    from apps.jobs import jobs as J
+
+    green = J.Check("upstream_outage", True, "bama.ir is answering.")
+    red = J.Check("upstream_outage", False, "bama.ir failed 3 fetch(es).")
+    with patch.object(J, "run_checks", return_value=[green]):
+        P.run(steps=["health"])
+    with patch.object(J, "run_checks", return_value=[red]):
+        result = J.health(alert=False)
+    assert result["ok"] is False
+    assert result["alerts_sent"] == 0
+    assert _health_alerts == []
+
+
+@pytest.mark.django_db
 def test_run_checks_returns_every_check():
     results = run_checks(NOW)
     assert {c.name for c in results} == {

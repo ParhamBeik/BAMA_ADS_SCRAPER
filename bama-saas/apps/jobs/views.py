@@ -304,7 +304,7 @@ def crawl_health(request):
 
     503 when unhealthy, so an uptime monitor can watch this URL directly.
     """
-    result = jobs.health()
+    result = jobs.health(alert=False)
     return Response(result, status=status.HTTP_200_OK if result["ok"]
                     else status.HTTP_503_SERVICE_UNAVAILABLE)
 
@@ -387,5 +387,5 @@ def system_health(request):
             "coverage_gap_count": len(gaps),
             "coverage_window_hours": COVERAGE_WINDOW_HOURS,
         },
-        "crawl": jobs.health()["checks"],
+        "crawl": jobs.health(alert=False)["checks"],
     })
