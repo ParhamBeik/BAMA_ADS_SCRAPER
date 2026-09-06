@@ -35,6 +35,12 @@ REQUEST_TIMEOUT = 10
 # is worse than truncating and picking the rest up next tick.
 MAX_PER_RUN = 10
 
+# Below this, a band median is one or two cars and quoting it as "what these go
+# for" would be inventing precision. Same bar the fair-value engine uses before
+# it will quote any median, so the message and the site cannot disagree about
+# when a number is sayable.
+MIN_BAND_PEERS = 8
+
 
 def toman(value: int | None) -> str:
     """Same thresholds as ``ui.tsx:toman``, so a message and the board agree.
@@ -152,21 +158,59 @@ def title_of(ad) -> str:
     return html.escape(ad.title or "")
 
 
+# English labels for the four condition bands, so a message reads without
+# knowing the codebase's vocabulary. The Persian `body_status` is printed beside
+# it because that is the string the listing page itself shows.
+BAND_LABELS = {
+    "clean": "no paintwork",
+    "cosmetic": "minor marks",
+    "painted": "repainted",
+    "structural": "panel replaced",
+}
+
+
 def format_message(row: DealScoreCache) -> str:
-    """One listing as a Telegram HTML message."""
+    """One listing as a Telegram HTML message.
+
+    Written to be acted on from the phone: the top line is the claim, the middle
+    is the evidence for it, and the last line is the listing. The evidence block
+    carries the *band* median as well as the cohort median because they answer
+    different questions and the gap between them is usually the whole story — a
+    repainted car 30% under its cohort is often only 5% under other repainted
+    cars, and that is the difference between a find and a waste of an evening.
+    """
     ad = row.ad
     components = row.components or {}
     fair = components.get("fair_value") or row.peer_median or 0
-    url = absolute_ad_url(ad.url or ad.canonical_path)
+    band = components.get("condition_band")
+    band_median = components.get("condition_band_median")
+    band_peers = components.get("condition_band_peers") or 0
+
     lines = [
         f"<b>{row.discount_pct:.0f}% below fair value</b>",
         f"{title_of(ad)} — {ad.year_jalali or '?'}",
-        f"Asking {toman(ad.current_price)} toman (fair ~{toman(fair)})",
-        f"{(ad.mileage or 0):,} km · {components.get('peer_count', '?')} peers "
-        f"· {components.get('confidence', '?')} confidence",
+        # The whole clause is bold, not just the number: `2.20B toman` has to
+        # stay one contiguous string, because the regression test for the 10x
+        # magnitude bug asserts on exactly that substring.
+        f"<b>Asking {toman(ad.current_price)} toman</b> (fair ~{toman(fair)})",
+        "",
+        f"Peers  {components.get('peer_count', '?')} cars · same model+variant+year",
+        f"       median {toman(row.peer_median)} · {components.get('confidence', '?')} confidence",
     ]
-    if url:
-        lines.append(url)
+    if band:
+        label = BAND_LABELS.get(band, band)
+        status = html.escape(components.get("body_status") or "")
+        lines.append(f"Band   {status} ({label})".rstrip())
+        # Only quote a band median that has enough peers to mean anything — the
+        # same bar the board applies before it will quote any median at all.
+        if band_median and band_peers >= MIN_BAND_PEERS:
+            lines.append(f"       {band_peers} similar · median {toman(band_median)}")
+        else:
+            lines.append(f"       {band_peers} similar · too few to quote a median")
+    if ad.mileage:
+        lines.append(f"Km     {ad.mileage:,}")
+    if url := absolute_ad_url(ad.url or ad.canonical_path):
+        lines += ["", url]
     return "\n".join(lines)
 
 
@@ -295,6 +339,58 @@ def send_alerts(*, dry_run: bool = False, max_send: int = MAX_PER_RUN) -> dict:
             delivery.save(update_fields=["telegram_sent"])
             sent += 1
     return {"pending": pending_count, "sent": sent, "dry_run": dry_run}
+
+
+# ---------------------------------------------------------------------------
+# Health alerts
+# ---------------------------------------------------------------------------
+#
+# On 2026-09-06 removal detection had been dead for 14 hours, four ML models had
+# been frozen for five days, and bama.ir had had a two-and-a-half hour outage.
+# Every one of those was detectable from data this system already stored, and
+# none of them reached a human, because the health report's only consumer was a
+# log line that said `health=ok` next to `ok=False`.
+#
+# On state change only. A check that is red today and red tomorrow is one piece
+# of news, and a monitor that repeats itself every half hour is a monitor that
+# gets muted — which is the same as not having one.
+
+
+def format_health_alert(newly_red: list, recovered: list[str]) -> str:
+    """The state change, with the failing checks' own explanations."""
+    lines: list[str] = []
+    if newly_red:
+        lines.append(f"<b>⚠️ {len(newly_red)} check(s) went red</b>")
+        for check in newly_red:
+            lines.append(f"\n<b>{html.escape(check['name'])}</b>")
+            lines.append(html.escape(check["detail"]))
+    if recovered:
+        if lines:
+            lines.append("")
+        lines.append(f"<b>✅ recovered:</b> {html.escape(', '.join(recovered))}")
+    return "\n".join(lines)
+
+
+def send_health_alert(*, newly_red: list, recovered: list[str],
+                      dry_run: bool = False) -> dict:
+    """Tell the operator chat that crawl health changed state.
+
+    Routed to the operator singleton's chat and gated on `enabled`, the same
+    switch the deal feed uses: one place to go quiet, not two. Unlike a deal, a
+    health alert is not recorded as delivered — there is nothing to de-duplicate
+    against, because the transition itself only happens once.
+    """
+    if not (newly_red or recovered):
+        return {"changed": 0, "sent": 0}
+    cfg = NotifierSettings.load()
+    if not cfg.enabled or not cfg.telegram_chat_id:
+        return {"changed": len(newly_red) + len(recovered), "sent": 0,
+                "enabled": False}
+    if dry_run:
+        return {"changed": len(newly_red) + len(recovered), "sent": 0, "dry_run": True}
+    sent = send_telegram(format_health_alert(newly_red, recovered),
+                         cfg.telegram_chat_id)
+    return {"changed": len(newly_red) + len(recovered), "sent": int(sent)}
 
 
 def notify_deals(*, dry_run: bool = False) -> dict:

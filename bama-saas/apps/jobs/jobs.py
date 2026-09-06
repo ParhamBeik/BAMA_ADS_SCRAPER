@@ -7,6 +7,7 @@ management commands, stdout capture or cadences.
 
 from __future__ import annotations
 
+import logging
 import os
 import statistics
 from collections import Counter, defaultdict
@@ -32,11 +33,17 @@ from apps.core.models import (
     MarketIndex,
     PageCoverage,
 )
-from apps.core.notify import deliver_alerts, notify_deals, send_alerts
+from apps.core.notify import (
+    deliver_alerts,
+    notify_deals,
+    send_alerts,
+    send_health_alert as deliver_health_alert,
+)
 from apps.core.pricing import compute_deal_scores, deal_window, refresh_cohort_deal_scores
 from apps.core.quality import verified
 from apps.core.research import build_index
 from apps.jobs.fetcher import (
+    COVERAGE_REFRESH_HOURS,
     COVERAGE_WINDOW_HOURS,
     FIRST_PAGE,
     PAGE_SIZE,
@@ -56,6 +63,10 @@ from apps.jobs.fetcher import (
     warmup,
 )
 from apps.jobs.parsing import absolute_ad_url
+
+# Same channel the fetcher and the pipeline write to, so one `docker logs` is
+# the whole story of a tick rather than three interleaved ones.
+logger = logging.getLogger("bama.worker")
 
 # ---------------------------------------------------------------------------
 # Removal detection
@@ -742,9 +753,14 @@ def _budgeted(ranges: list[tuple[int, int]], budget: int) -> list[tuple[int, int
     return out
 
 
-def coverage(*, since_hours: float = 24.0, max_pages: int | None = None,
+def coverage(*, since_hours: float = COVERAGE_REFRESH_HOURS, max_pages: int | None = None,
              dry_run: bool = False, **fetch_opts) -> dict:
-    """Refetch the feed ranges nobody covered in the recent window."""
+    """Refetch the feed ranges nobody covered in the recent window.
+
+    The default horizon is the *refresh* one, deliberately shorter than the
+    ``COVERAGE_WINDOW_HOURS`` that removal detection is judged over, so repair
+    starts with hours to spare instead of at the deadline.
+    """
     from django.conf import settings
 
     if max_pages is None:
@@ -1230,13 +1246,126 @@ def check_ingest_progress(now=None) -> Check:
                  {"runs": runs, "pages": pages, "fetched": fetched})
 
 
+def check_upstream_outage(now=None) -> Check:
+    """Is bama.ir failing us, and are we backing off rather than hammering it?
+
+    Separate from ``failed_runs`` because they answer different questions.
+    ``failed_runs`` is a 24h count and stays red for a day after a two-hour
+    outage that already healed — useful history, useless for "is it broken right
+    now". This one is instantaneous, and it is the one that gets alerted on.
+    """
+    from apps.jobs.fetcher import consecutive_failures, upstream_cooldown_until
+
+    now = now or timezone.now()
+    streak = consecutive_failures()
+    until = upstream_cooldown_until()
+    # The breaker, not the raw streak: one failed fetch is ordinary and is
+    # already on `failed_runs`. Going red here on a single blip pages someone
+    # for a host that answered on the next tick, and the copy used to say
+    # "backing off" even when `until` was None.
+    if until is None:
+        return Check("upstream_outage", True, "bama.ir is answering.")
+    remaining = max(0.0, (until - now).total_seconds())
+    if remaining > 0:
+        detail = (
+            f"bama.ir failed {streak} consecutive fetch(es). Backing off; next "
+            f"attempt in {remaining / 60:.1f} min. Stored data and the deal "
+            f"board are unaffected — only new listings are delayed."
+        )
+    else:
+        detail = (
+            f"bama.ir failed {streak} consecutive fetch(es). The cooldown has "
+            f"lapsed; the next tick will retry. Stored data and the deal board "
+            f"are unaffected."
+        )
+    return Check(
+        "upstream_outage", False, detail,
+        {"consecutive_failures": streak, "next_attempt_at": until.isoformat()},
+    )
+
+
+def check_removal_detection(now=None) -> Check:
+    """Can the system still prove an ad has left the feed?
+
+    The check that did not exist while the thing it watches was broken. On
+    2026-09-06 removal detection had been unable to conclude anything for 14
+    hours, 918 ads were sitting in UNVERIFIED with nothing able to adjudicate
+    them, and every other check on this page was green — because each one was
+    watching an input to removal detection rather than removal detection itself.
+
+    `sweep_freshness` and `coverage_progress` remain the *causes* to read once
+    this is red. This is the effect, and the effect is what has a user-visible
+    consequence: a car the app still shows as for sale.
+    """
+    now = now or timezone.now()
+    cutoff, windows = sweep_cutoff()
+    unverified = Ad.objects.filter(status=Ad.Status.UNVERIFIED).count()
+    oldest = (Ad.objects.filter(status=Ad.Status.UNVERIFIED)
+              .order_by("last_seen_at").values_list("last_seen_at", flat=True).first())
+    stuck_hours = (now - oldest).total_seconds() / 3600 if oldest else 0.0
+    data = {"windows_complete": windows, "required": REQUIRED_MISSED_WINDOWS,
+            "unverified": unverified, "stuck_hours": round(stuck_hours, 1)}
+    if cutoff is not None:
+        return Check("removal_detection", True,
+                     f"Both {COVERAGE_WINDOW_HOURS:.0f}h windows are covered; absence "
+                     f"is provable and {unverified} ad(s) await adjudication.", data)
+    return Check(
+        "removal_detection", False,
+        f"Cannot prove any ad is gone: only {windows} of {REQUIRED_MISSED_WINDOWS} "
+        f"consecutive {COVERAGE_WINDOW_HOURS:.0f}h windows are fully covered. "
+        f"{unverified} ad(s) are stranded in UNVERIFIED"
+        + (f", the oldest unseen for {stuck_hours:.0f}h" if oldest else "")
+        + ". Sold cars keep showing as for sale until coverage closes.",
+        data,
+    )
+
+
+# A model refused every night for this long is not a run of bad luck; either the
+# challenger really is worse and somebody should look, or the gate is asking a
+# question the trainer cannot answer. Both need a human, and neither announces
+# itself — four models sat frozen for five days with the trainer reporting
+# success every night, because "trained" and "promoted" are different words and
+# only the first one was on the page.
+MODEL_STALE_AFTER = timedelta(days=4)
+
+
+def check_model_staleness(now=None) -> Check:
+    """Is anything still serving predictions from a model nobody can replace?"""
+    from apps.ml.models import MLModel
+
+    now = now or timezone.now()
+    stale = []
+    for record in MLModel.objects.filter(status=MLModel.Status.ACTIVE):
+        if not record.trained_at or now - record.trained_at <= MODEL_STALE_AFTER:
+            continue
+        newest = (MLModel.objects.filter(name=record.name)
+                  .order_by("-version").values("version", "metrics").first()) or {}
+        reason = ((newest.get("metrics") or {}).get("promotion") or {}).get("reason", "?")
+        stale.append({"name": record.name, "serving": record.version,
+                      "age_days": round((now - record.trained_at).total_seconds() / 86400, 1),
+                      "latest": newest.get("version"), "refused_because": reason})
+    if not stale:
+        return Check("model_staleness", True, "Every active model is current.")
+    detail = "; ".join(
+        f"{m['name']} serving v{m['serving']} ({m['age_days']:.0f}d old), "
+        f"v{m['latest']} refused: {m['refused_because']}" for m in stale
+    )
+    return Check("model_staleness", False,
+                 f"{len(stale)} model(s) stuck on a stale version. {detail}",
+                 {"stale": stale})
+
+
 # Source block first: when it is active it is the cause of everything below, and
 # reading the consequences before the cause wastes the operator's time.
-# Coverage progress sits directly after sweep freshness: when coverage is
-# starved, the uncovered ranges that check reports are the symptom and this one
-# is the cause, so they read in that order.
-CHECKS = (check_source_block, check_sweep_freshness, check_coverage_progress,
-          check_failed_runs, check_reject_spike, check_ingest_progress)
+# `upstream_outage` sits beside it for the same reason: both say "the problem is
+# not us", and reading that first stops an operator debugging their own crawler.
+#
+# `removal_detection` is the effect that `sweep_freshness` and
+# `coverage_progress` are the causes of, so it reads immediately after them.
+CHECKS = (check_source_block, check_upstream_outage,
+          check_sweep_freshness, check_coverage_progress, check_removal_detection,
+          check_failed_runs, check_reject_spike, check_ingest_progress,
+          check_model_staleness)
 
 
 def run_checks(now=None) -> list[Check]:
@@ -1251,10 +1380,75 @@ def run_checks(now=None) -> list[Check]:
     return results
 
 
-def health() -> dict:
-    """Crawl health as a job. ``ok`` is False if any check failed."""
+def _previous_red() -> set[str] | None:
+    """Which checks were red last time this job ran, or None if it never has.
+
+    Read back out of the previous ``JobRun``'s detail rather than kept in the
+    cache, because Redis here is capped and LRU-evicting: a monitor whose memory
+    can be evicted under load is a monitor that re-announces an ongoing incident
+    at the worst possible moment. The detail string is written by this same
+    function one run earlier, so the format has exactly one author.
+
+    None, not an empty set, when there is no previous run — a first run must not
+    read as "everything just broke" and alert on a steady state it never saw.
+    """
+    previous = (JobRun.objects.filter(name="health")
+                .exclude(status=JobRun.Status.RUNNING)
+                .order_by("-started_at").values_list("detail", flat=True).first())
+    if previous is None:
+        return None
+    for token in (previous or "").split():
+        if token.startswith("red="):
+            names = token[len("red="):]
+            return set(names.split(",")) if names and names != "-" else set()
+    return set()
+
+
+def health(*, alert: bool = True, dry_run: bool = False) -> dict:
+    """Crawl health as a job. ``ok`` is False if any check failed.
+
+    Also the thing that *tells somebody*. This used to be a pure report whose
+    only reader was a log line, which is why three separate multi-hour failures
+    on 2026-09-05/06 went unannounced. Alerting on the transition rather than on
+    the state keeps it quiet enough to stay switched on.
+    """
     checks = run_checks()
+    red = {c.name for c in checks if not c.ok}
+    was_red = _previous_red()
+
+    delivery: dict = {"changed": 0, "sent": 0}
+    newly_red = [asdict(c) for c in checks if not c.ok and c.name not in (was_red or ())]
+    recovered = sorted((was_red or set()) - red)
+    # `was_red is None` is a first run: there is no transition, only a state,
+    # and announcing a standing backlog as breaking news is how a fresh deploy
+    # would page somebody about a problem that predates it.
+    if alert and was_red is not None and (newly_red or recovered):
+        try:
+            delivery = deliver_health_alert(newly_red=newly_red, recovered=recovered,
+                                            dry_run=dry_run)
+        except Exception as exc:  # noqa: BLE001 — a monitor must not crash
+            logger.warning("event=health_alert_failed error=%r", exc)
+            delivery = {"changed": len(newly_red) + len(recovered), "sent": 0,
+                        "error": repr(exc)[:200]}
+
+    logger.info(
+        "event=health_report ok=%s red=%s new=%s recovered=%s alerts_sent=%s",
+        not red, ",".join(sorted(red)) or "-",
+        ",".join(sorted(c["name"] for c in newly_red)) or "-",
+        ",".join(recovered) or "-", delivery.get("sent", 0),
+    )
+    # One line per failing check, so "why is it red" is answerable from the
+    # worker log alone. The checks already carry their own explanation; nothing
+    # was reading it because the only thing printed was the aggregate boolean.
+    for check in checks:
+        if not check.ok:
+            logger.warning("event=health_check_red name=%s detail=%s",
+                           check.name, check.detail)
     return {
-        "ok": all(c.ok for c in checks),
+        "ok": not red,
+        # `red=` is the durable half: `_previous_red` parses it back next run.
+        # "-" rather than "" so the token survives whitespace-splitting.
+        "red": ",".join(sorted(red)) or "-",
+        "alerts_sent": delivery.get("sent", 0),
         "checks": [asdict(c) for c in checks],
     }

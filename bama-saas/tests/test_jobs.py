@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import time
 from datetime import timedelta
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 import requests
@@ -37,7 +37,10 @@ from apps.jobs.jobs import (
     check_failed_runs,
     check_ingest_progress,
     check_reject_spike,
+    check_removal_detection,
     check_sweep_freshness,
+    check_upstream_outage,
+    health,
     prune,
     run_checks,
 )
@@ -221,7 +224,7 @@ def test_warm_cadence_skips_fetch_and_deals(stub_jobs):
 
     assert "fetch" not in seen and "deal_scores" not in seen
     assert [s.name for s in report.steps] == [
-        "link_reposts", "episodes", "snapshot", "market_index",
+        "link_reposts", "episodes", "snapshot", "market_index", "health",
     ]
 
 
@@ -673,12 +676,181 @@ def test_coverage_progress_passes_while_it_is_still_getting_a_turn():
     assert check_coverage_progress(NOW).ok is True
 
 
+# ---------------------------------------------------------------------------
+# The checks that did not exist while the things they watch were broken
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_removal_detection_reports_itself_red_when_it_cannot_conclude():
+    """On 2026-09-06 this had been unable to prove anything for 14 hours and
+    918 ads were stranded in UNVERIFIED, while every check on the page was
+    green — each one watched an *input* to removal detection, none watched
+    removal detection. This is the effect, and the effect is the thing with a
+    user-visible consequence: a sold car still showing as for sale."""
+    check = check_removal_detection(NOW)
+    assert check.ok is False
+    assert check.data["windows_complete"] < check.data["required"]
+    assert "UNVERIFIED" in check.detail
+
+
+@pytest.mark.django_db
+def test_removal_detection_counts_the_ads_it_cannot_adjudicate():
+    """The number that makes it actionable rather than abstract."""
+    Ad.objects.create(code="stuck0001", status=Ad.Status.UNVERIFIED,
+                      last_seen_at=NOW - timedelta(days=3))
+    check = check_removal_detection(NOW)
+    assert check.data["unverified"] == 1
+    assert check.data["stuck_hours"] >= 71
+
+
+@pytest.mark.django_db
+def test_upstream_outage_is_reported_separately_from_the_24h_failure_count():
+    """`failed_runs` is a day-long count and stays red long after a two-hour
+    outage healed. "Is it broken right now" needs its own answer, because that
+    is the one worth waking somebody for."""
+    assert check_upstream_outage(NOW).ok is True
+
+    run = FetchRun.objects.create(
+        source=FetchRun.Source.LIVE_FETCH, status=FetchRun.Status.FAILED,
+        stop_reason=FetchRun.StopReason.ERROR,
+    )
+    at = timezone.now() - timedelta(minutes=1)
+    FetchRun.objects.filter(pk=run.pk).update(created_at=at, started_at=at,
+                                              finished_at=at)
+    # Same bar as the fetch gate: one failure is not an outage, and must not
+    # claim we are backing off when the breaker is still open.
+    assert check_upstream_outage(NOW).ok is True
+
+    for minute in (2, 1):
+        run = FetchRun.objects.create(
+            source=FetchRun.Source.LIVE_FETCH, status=FetchRun.Status.FAILED,
+            stop_reason=FetchRun.StopReason.ERROR,
+        )
+        at = timezone.now() - timedelta(minutes=minute)
+        FetchRun.objects.filter(pk=run.pk).update(created_at=at, started_at=at,
+                                                  finished_at=at)
+
+    check = check_upstream_outage(NOW)
+    assert check.ok is False
+    assert check.data["consecutive_failures"] == 3
+    assert "Backing off" in check.detail or "retry" in check.detail.lower()
+
+
+# ---------------------------------------------------------------------------
+# Health alerting
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _health_alerts(monkeypatch):
+    """Record what the health job would have sent, without a network call."""
+    sent = []
+    monkeypatch.setattr(
+        "apps.jobs.jobs.deliver_health_alert",
+        lambda *, newly_red, recovered, dry_run=False: (
+            sent.append((sorted(c["name"] for c in newly_red), list(recovered)))
+            or {"changed": len(newly_red) + len(recovered), "sent": 1}
+        ),
+    )
+    return sent
+
+
+@pytest.mark.django_db
+def test_the_first_health_run_does_not_alert_on_a_state_it_never_saw(_health_alerts):
+    """Otherwise every deploy announces the whole standing backlog as news."""
+    health()
+    assert _health_alerts == []
+
+
+@pytest.mark.django_db
+def test_health_alerts_on_the_transition_and_then_goes_quiet(_health_alerts):
+    """A check red today and red tomorrow is one piece of news. A monitor that
+    repeats itself every half hour is a monitor that gets muted, which is the
+    same as not having one."""
+    P.run(steps=["health"])          # first run: records state, says nothing
+    assert _health_alerts == []
+
+    P.run(steps=["health"])          # second run: same state, still nothing
+    assert _health_alerts == []
+
+
+@pytest.mark.django_db
+def test_a_check_going_red_is_announced_once(_health_alerts):
+    from apps.jobs import jobs as J
+
+    red = J.Check("upstream_outage", False, "bama.ir failed 3 fetch(es).")
+    green = J.Check("upstream_outage", True, "bama.ir is answering.")
+
+    with patch.object(J, "run_checks", return_value=[green]):
+        P.run(steps=["health"])      # establishes the green baseline
+    assert _health_alerts == []
+
+    with patch.object(J, "run_checks", return_value=[red]):
+        P.run(steps=["health"])
+        assert _health_alerts == [(["upstream_outage"], [])]
+        _health_alerts.clear()
+
+        P.run(steps=["health"])      # still red, already told
+        assert _health_alerts == []
+
+
+@pytest.mark.django_db
+def test_recovery_is_announced_too(_health_alerts):
+    """Half a monitor is one that only ever tells you things are getting worse."""
+    from apps.jobs import jobs as J
+
+    red = J.Check("upstream_outage", False, "bama.ir failed 3 fetch(es).")
+    green = J.Check("upstream_outage", True, "bama.ir is answering.")
+    with patch.object(J, "run_checks", return_value=[red]):
+        P.run(steps=["health"])
+        P.run(steps=["health"])
+    _health_alerts.clear()
+
+    with patch.object(J, "run_checks", return_value=[green]):
+        P.run(steps=["health"])
+    assert _health_alerts == [([], ["upstream_outage"])]
+
+
+@pytest.mark.django_db
+def test_a_red_health_check_does_not_print_as_ok(_health_alerts):
+    """The maintenance tick used to log `health=ok` on the same line as
+    `step=health FAIL ... ok=False`. The summary an operator actually reads was
+    the one asserting the red check was green."""
+    from apps.jobs import jobs as J
+
+    red = J.Check("removal_detection", False, "Cannot prove any ad is gone.")
+    with patch.object(J, "run_checks", return_value=[red]):
+        report = P.run(steps=["health"])
+
+    assert "health=RED" in report.summary()
+    # Advisory: a red crawler still must not make the tick look like it failed.
+    assert report.ok is True
+
+
+@pytest.mark.django_db
+def test_a_failing_alert_channel_never_takes_the_health_job_down(monkeypatch):
+    """A monitor that crashes on a Telegram outage is a monitor that is loudest
+    exactly when it is least able to speak."""
+    from apps.jobs import jobs as J
+
+    P.run(steps=["health"])
+    monkeypatch.setattr(J, "deliver_health_alert",
+                        lambda **kw: (_ for _ in ()).throw(RuntimeError("telegram down")))
+    red = J.Check("upstream_outage", False, "down")
+    with patch.object(J, "run_checks", return_value=[red]):
+        result = J.health()
+    assert result["ok"] is False
+    assert result["alerts_sent"] == 0
+
+
 @pytest.mark.django_db
 def test_run_checks_returns_every_check():
     results = run_checks(NOW)
     assert {c.name for c in results} == {
-        "source_block", "sweep_freshness", "coverage_progress", "failed_runs",
-        "reject_spike", "ingest_progress",
+        "source_block", "upstream_outage", "sweep_freshness", "coverage_progress",
+        "removal_detection", "failed_runs", "reject_spike", "ingest_progress",
+        "model_staleness",
     }
 
 

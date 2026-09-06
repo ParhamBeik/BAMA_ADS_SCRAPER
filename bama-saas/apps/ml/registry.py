@@ -21,6 +21,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.db import transaction
+from django.utils import timezone
 
 from apps.ml.models import MLModel
 
@@ -166,6 +167,35 @@ def incumbent_metric(name: str, key: str, *, feature_spec: dict | None = None) -
     return float(value) if isinstance(value, (int, float)) else None
 
 
+def incumbent_context(name: str, key: str, *, feature_spec: dict | None = None) -> dict:
+    """Everything ``gate`` needs about the model currently serving this role.
+
+    Splatted into the gate as ``**incumbent_context(...)``, so a trainer states
+    which metric decides its role and nothing else. The extra two fields are
+    what let the gate tell "the challenger is worse" apart from "the challenger
+    sat a harder exam" — see ``gate``.
+
+    The baseline is read from the incumbent's own promotion decision rather than
+    recomputed: it is the number that was measured on the incumbent's holdout,
+    and recomputing it today would reintroduce the very mismatch this fixes.
+    """
+    score = incumbent_metric(name, key, feature_spec=feature_spec)
+    if score is None:
+        return {"incumbent": None, "incumbent_baseline": None,
+                "incumbent_age_days": None}
+    current = active(name)
+    promotion = (current.metrics or {}).get("promotion") or {}
+    baseline = promotion.get("baseline")
+    age = None
+    if current.trained_at:
+        age = (timezone.now() - current.trained_at).total_seconds() / 86400.0
+    return {
+        "incumbent": score,
+        "incumbent_baseline": float(baseline) if isinstance(baseline, (int, float)) else None,
+        "incumbent_age_days": age,
+    }
+
+
 @transaction.atomic
 def promote(record: MLModel, *, decision: dict) -> bool:
     """Make ``record`` the active model for its name, if the gate says so.
@@ -197,9 +227,26 @@ def promote(record: MLModel, *, decision: dict) -> bool:
     return True
 
 
+# How long an incumbent may sit unchallengeable before a tie stops going its way.
+#
+# Only reached when there is no baseline on both sides to normalise against, so
+# it is the weaker of the two corrections here — but it is the one that unsticks
+# a line of models entirely. `model_text` and `value_tier` both sat on versions
+# from 2026-09-01 while fifteen challengers within ~1% of them were refused, one
+# a night, because "within 1%" reads as "loses" to a strict bar.
+INCUMBENT_STALE_AFTER_DAYS = 3.0
+
+
+def _usable(value: float | None) -> bool:
+    """A number the gate can divide by."""
+    return isinstance(value, (int, float)) and value not in (0, None)
+
+
 def gate(*, challenger: float | None, incumbent: float | None, baseline: float | None,
          lower_is_better: bool = True, margin: float = 0.0,
-         veto: tuple[bool, str] | None = None) -> dict:
+         veto: tuple[bool, str] | None = None,
+         incumbent_baseline: float | None = None,
+         incumbent_age_days: float | None = None) -> dict:
     """The promotion decision, as data.
 
     A challenger must beat **both** the model it would replace and the
@@ -220,6 +267,27 @@ def gate(*, challenger: float | None, incumbent: float | None, baseline: float |
     contains 43% of held-out cars instead of 80% — which is a model that looks
     precise and is not, and no accuracy score can see it. Anything vetoed is
     reported with its own reason rather than with a comparison it actually won.
+
+    ``incumbent_baseline`` and ``incumbent_age_days`` describe the *incumbent's
+    own* evaluation, and they exist because comparing a challenger's fresh score
+    against an incumbent's stored one is comparing two different exams.
+
+    Every trainer here splits on time, so each night's holdout is a different
+    slice of a moving market. The baseline is recomputed on the current holdout
+    — that comparison was always sound — but the incumbent's number is read
+    frozen off the row it was written on, which silently asks the challenger to
+    beat a score earned on older, easier data. Production on 2026-09-06: four of
+    five models had been refused every night for four days, each losing by
+    0.6%-4%, while the *baseline* they were measured against had itself drifted
+    (price: 0.0406 -> 0.0437, an 8% harder holdout). Nothing was regressing; the
+    exam had got harder and only one side was re-sat.
+
+    So: when both sides recorded a baseline, they are compared as *lift over
+    their own baseline*, which cancels holdout difficulty to first order. When
+    they did not, a stale incumbent's raw score stops acting as a hard floor and
+    a tie goes to the fresher model instead. The baseline half of the gate is
+    untouched — it is measured on the challenger's own holdout and was never the
+    problem.
     """
     if veto is not None and veto[0]:
         return {"promote": False, "reason": veto[1], "vetoed": True,
@@ -228,13 +296,34 @@ def gate(*, challenger: float | None, incumbent: float | None, baseline: float |
         return {"promote": False, "reason": "no_challenger_metric",
                 "challenger": None, "incumbent": incumbent, "baseline": baseline}
 
-    def beats(other: float | None) -> bool:
+    def beats(mine: float, other: float | None) -> bool:
         if other is None:
             return True  # nothing to beat is not a reason to refuse
-        return (challenger < other * (1 - margin) if lower_is_better
-                else challenger > other * (1 + margin))
+        return (mine < other * (1 - margin) if lower_is_better
+                else mine > other * (1 + margin))
 
-    beat_incumbent, beat_baseline = beats(incumbent), beats(baseline)
+    def not_worse_than(mine: float, other: float) -> bool:
+        """A tie counts. Used only where the two numbers are not comparable."""
+        return (mine <= other * (1 + margin) if lower_is_better
+                else mine >= other * (1 - margin))
+
+    # How the incumbent half was decided, recorded so a refusal is auditable.
+    if incumbent is None:
+        basis = "no_incumbent"
+        beat_incumbent = True
+    elif _usable(baseline) and _usable(incumbent_baseline):
+        # Same exam, expressed as each model's lift over the baseline it was
+        # actually measured against.
+        basis = "baseline_normalised"
+        beat_incumbent = beats(challenger / baseline, incumbent / incumbent_baseline)
+    elif incumbent_age_days is not None and incumbent_age_days > INCUMBENT_STALE_AFTER_DAYS:
+        basis = "stale_incumbent_tie_breaks_to_fresh"
+        beat_incumbent = not_worse_than(challenger, incumbent)
+    else:
+        basis = "raw"
+        beat_incumbent = beats(challenger, incumbent)
+
+    beat_baseline = beats(challenger, baseline)
     reason = (
         "beats_incumbent_and_baseline" if beat_incumbent and beat_baseline
         else "loses_to_baseline" if beat_incumbent
@@ -247,6 +336,9 @@ def gate(*, challenger: float | None, incumbent: float | None, baseline: float |
         "challenger": challenger,
         "incumbent": incumbent,
         "baseline": baseline,
+        "incumbent_baseline": incumbent_baseline,
+        "incumbent_age_days": incumbent_age_days,
+        "incumbent_basis": basis,
         "lower_is_better": lower_is_better,
         "margin": margin,
     }

@@ -141,6 +141,12 @@ class Adjusted:
     band: str | None = None
     band_adjustment: int | None = None
     band_peers: int = 0
+    # What this car's own damage band actually asks, as a plain median. Reported
+    # only — it must never move `fair_value`, for the sign reason in `adjusted`
+    # below. It answers the question a buyer asks before opening the listing:
+    # "what do other cars with this much paintwork go for?", which the
+    # cohort-wide median cannot answer because it pools every condition together.
+    band_median: int | None = None
     # "peers" when the band's own median was thick enough, "measured" when the
     # pooled haircut stood in for it, None when neither applied.
     band_basis: str | None = None
@@ -214,8 +220,11 @@ class Baseline:
         band_adj: int | None = None
         band_peers = 0
         band_basis: str | None = None
+        band_median: int | None = None
         if band:
-            band_peers = self.band_medians.get(band, (None, 0))[1]
+            raw_median, band_peers = self.band_medians.get(band, (None, 0))
+            if raw_median is not None:
+                band_median = int(raw_median)
             if haircuts and band in haircuts:
                 band_adj, band_basis = int(-base * haircuts[band]), "measured"
 
@@ -236,8 +245,15 @@ class Baseline:
                 mileage_adj, mileage_basis = int(-base * mileage_haircuts[key]), "measured"
                 value += mileage_adj
 
-        return Adjusted(int(value), mileage_adj, key, bucket_peers,
-                        band, band_adj, band_peers, band_basis, mileage_basis)
+        # Keyword, not positional: `band_median` sits with the other band_*
+        # fields rather than at the end of the dataclass, so a positional call
+        # here would silently shift `band_basis` and `mileage_basis` by one.
+        return Adjusted(
+            fair_value=int(value), adjustment=mileage_adj, bucket=key,
+            bucket_peers=bucket_peers, band=band, band_adjustment=band_adj,
+            band_peers=band_peers, band_median=band_median,
+            band_basis=band_basis, mileage_basis=mileage_basis,
+        )
 
 
 def cohort_baseline(
@@ -1101,6 +1117,10 @@ def compute_deal_scores(*, model_id: int | None = None,
                 "condition_band": adjusted.band,
                 "condition_adjustment": adjusted.band_adjustment,
                 "condition_band_peers": adjusted.band_peers,
+                # The like-for-like number: what cars with *this* much damage
+                # ask, as opposed to `peer_median`, which pools every condition
+                # in the cohort together.
+                "condition_band_median": adjusted.band_median,
                 "condition_basis": adjusted.band_basis,
                 # Absent, not zero, when there is no measured rate for this
                 # model: the UI must be able to tell "sells slowly" from

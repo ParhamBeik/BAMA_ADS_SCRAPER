@@ -64,9 +64,32 @@ FEED_DEPTH_WINDOW_DAYS = 30
 # per-run, so it does not matter which run covered which page.
 COVERAGE_WINDOW_HOURS = 24
 
+# How stale a rank may get before the coverage job goes and re-reads it.
+#
+# Deliberately shorter than the window it has to satisfy, and that gap is the
+# point. Planning refreshes against the same 24h it is judged on made the deep
+# sweep a sawtooth with no slack: a rank became "due" at the exact moment it
+# stopped counting as covered, so ~700 pages of tail fell due at once and the
+# window was already broken before the first page of repair was fetched.
+# Production ran that way for 13 hours on 2026-09-05 — one burst of deep pages
+# at 15:00-18:00, then nothing below rank 1,500 until the next burst.
+#
+# Six hours of headroom against a job that walks the whole tail in about one
+# hour (120 pages a tick, a tick every 10 minutes) is a 6x margin, so an outage
+# the length of the one on 2026-09-06 no longer costs a window. It does not
+# de-burst the work — the tail still comes due together — but it stops the burst
+# from racing a deadline it has already missed.
+COVERAGE_REFRESH_HOURS = 18.0
 
-def known_feed_depth() -> int | None:
+
+def known_feed_depth(as_of: datetime | None = None) -> int | None:
     """Deepest rank any page covered recently, capped by the last real end-of-feed.
+
+    ``as_of`` answers the question as it stood at a past instant, ignoring
+    everything learned since. That is what lets a *closed* coverage window be
+    judged against the feed it was actually walking — see ``coverage_is_complete``,
+    where using today's answer for yesterday's window silently disabled removal
+    detection every single time the feed grew.
 
     A max over accumulated ``PageCoverage`` needs no run to survive start to
     finish: three interrupted sweeps that jointly walk the feed give the same
@@ -92,21 +115,26 @@ def known_feed_depth() -> int | None:
     ``end_of_feed_is_credible`` is what keeps this honest — a shallow delta that
     hits an empty page never sets ``reached_end``.
     """
-    since = djtz.now() - timedelta(days=FEED_DEPTH_WINDOW_DAYS)
+    now = as_of or djtz.now()
+    since = now - timedelta(days=FEED_DEPTH_WINDOW_DAYS)
     covered = PageCoverage.objects.filter(fetched_at__gte=since)
+    ends = FetchRun.objects.filter(
+        stop_reason=FetchRun.StopReason.END_OF_FEED,
+        reached_end=True, status=FetchRun.Status.SUCCEEDED,
+        started_at__gte=since,
+    )
+    if as_of is not None:
+        covered = covered.filter(fetched_at__lt=as_of)
+        ends = ends.filter(started_at__lt=as_of)
+
     ratchet = covered.aggregate(depth=Max("rank_hi"))["depth"]
     if not ratchet:
         return None
 
     last_end = (
-        FetchRun.objects.filter(
-            stop_reason=FetchRun.StopReason.END_OF_FEED,
-            reached_end=True, status=FetchRun.Status.SUCCEEDED,
-            started_at__gte=since,
-        )
         # feed_end_rank is the honest bound; deepest_rank is the fallback for
         # runs recorded before that column existed.
-        .filter(Q(feed_end_rank__isnull=False) | Q(deepest_rank__isnull=False))
+        ends.filter(Q(feed_end_rank__isnull=False) | Q(deepest_rank__isnull=False))
         .order_by("-started_at")
         .values("started_at", "feed_end_rank", "deepest_rank").first()
     )
@@ -195,8 +223,20 @@ def coverage_is_complete(since: datetime, until: datetime | None = None) -> bool
     With no known depth there is nothing to prove against, so this returns False
     — callers must fail closed. So does a window with no coverage at all: the
     whole feed is then one gap, which is far past the tolerance.
+
+    The ceiling is the depth known *at the end of the window*, not the depth
+    known now, and that distinction is the whole reason removal detection kept
+    dying. The feed grows continuously. Judged against today's ceiling, a window
+    that closed yesterday is retroactively guilty of not covering ads that did
+    not exist while it was open: measured in production 2026-09-06, the window
+    24-48h back had walked the feed to rank 20,846 — every rank there was — and
+    was failed for leaving (20847, 20910) uncovered, 64 ranks the feed grew
+    afterwards. Two pages over a 30-rank tolerance, so ``mark_inactive`` refused
+    to mark anything for 14 hours and 918 ads sat in UNVERIFIED. Every time the
+    feed grows, one window fails; windows are needed in consecutive pairs, so a
+    growing feed switched the whole mechanism off permanently.
     """
-    depth = known_feed_depth()
+    depth = known_feed_depth(as_of=until)
     if not depth:
         return False
     return uncovered_ranks(find_gaps(since=since, until=until, max_rank=depth)) \
@@ -317,16 +357,80 @@ def cooldown_until():
     return at + min(BASE_COOLDOWN * (2 ** doublings), MAX_COOLDOWN)
 
 
+# ---------------------------------------------------------------------------
+# Upstream outage back-off — a second, much gentler breaker
+# ---------------------------------------------------------------------------
+#
+# A 403 is a policy decision that lasts hours; a 500 is bama.ir having a bad
+# morning. They need opposite cooldowns, so they are separate breakers rather
+# than one with a shared constant.
+#
+# Measured on the 2026-09-06 outage: 02:26-04:48 UTC, every request 500/502/503.
+# Each hot tick spent 250-360s on three pipeline-level retries, each of which
+# had already exhausted five in-run retries, then failed. Eleven ticks did that.
+# The cost was not the wasted requests — it was that a FAILED fetch cascades,
+# so `deal_scores`, `ml_score`, `alerts` and `alerts_send` were all skipped for
+# two and a half hours. The deal board went unmaintained and no alert could be
+# delivered, over an outage that changed nothing about the data already stored.
+#
+# Gating turns that into a *skip*: `CrawlBlocked` is not a failure, so the tick
+# proceeds to every local step and the board stays live through the outage. The
+# cooldown is capped below one hot tick so recovery costs at most one missed
+# fetch after bama.ir returns, and any single success clears the streak.
+UPSTREAM_FAILURES_BEFORE_BACKOFF = 2
+UPSTREAM_BASE_COOLDOWN = timedelta(
+    seconds=int(os.environ.get("BAMA_UPSTREAM_COOLDOWN", 120)))
+UPSTREAM_MAX_COOLDOWN = timedelta(
+    seconds=int(os.environ.get("BAMA_UPSTREAM_COOLDOWN_MAX", 600)))
+
+
+def consecutive_failures() -> int:
+    """How many live-fetch runs in a row ended FAILED, counting back from newest.
+
+    Deliberately does not inspect *why*. Two failed fetches in a row is enough
+    to stop hammering whatever is broken, and a rule that pattern-matched the
+    error text would go quiet the first time bama.ir changed its error copy.
+    A blocked run is not counted here — that is the other breaker's streak.
+    """
+    streak = 0
+    for run in _last_runs():
+        if run["stop_reason"] == FetchRun.StopReason.BLOCKED:
+            break
+        if run["status"] == FetchRun.Status.FAILED:
+            streak += 1
+        elif run["status"] == FetchRun.Status.RUNNING:
+            # The in-flight run asking this question.
+            continue
+        else:
+            break
+    return streak
+
+
+def upstream_cooldown_until():
+    """When the upstream breaker reopens, or None if fetching is allowed now."""
+    streak = consecutive_failures()
+    if streak < UPSTREAM_FAILURES_BEFORE_BACKOFF:
+        return None
+    last = next((r for r in _last_runs()
+                 if r["status"] == FetchRun.Status.FAILED), None)
+    if last is None:
+        return None
+    at = last["finished_at"] or last["started_at"] or last["created_at"]
+    doublings = min(streak - UPSTREAM_FAILURES_BEFORE_BACKOFF, MAX_BACKOFF_DOUBLINGS)
+    return at + min(UPSTREAM_BASE_COOLDOWN * (2 ** doublings), UPSTREAM_MAX_COOLDOWN)
+
+
 def check_gate() -> None:
     """Raise :class:`CrawlBlocked` if we must not fetch; otherwise return.
 
     Returning means "fetch whatever you were going to fetch, at whatever rate".
     This gate caps nothing on a healthy history.
     """
+    now = djtz.now()
     until = cooldown_until()
-    if until is not None and djtz.now() < until:
+    if until is not None and now < until:
         streak = consecutive_blocks()
-        remaining = (until - djtz.now()).total_seconds()
+        remaining = (until - now).total_seconds()
         logger.warning(
             "event=bama_crawl_gated reason=waf_block consecutive=%d "
             "cooldown_remaining_s=%.0f until=%s", streak, remaining, until.isoformat(),
@@ -334,6 +438,20 @@ def check_gate() -> None:
         raise CrawlBlocked(
             f"bama.ir returned {WAF_STATUS} on {streak} consecutive run(s); "
             f"next attempt in {remaining / 60:.0f} min (until {until.isoformat()})"
+        )
+
+    until = upstream_cooldown_until()
+    if until is not None and now < until:
+        streak = consecutive_failures()
+        remaining = (until - now).total_seconds()
+        logger.warning(
+            "event=bama_crawl_gated reason=upstream_outage consecutive=%d "
+            "cooldown_remaining_s=%.0f until=%s", streak, remaining, until.isoformat(),
+        )
+        raise CrawlBlocked(
+            f"bama.ir failed {streak} consecutive fetch(es); backing off "
+            f"{remaining / 60:.1f} min (until {until.isoformat()}) so the local "
+            f"steps keep running"
         )
 
 

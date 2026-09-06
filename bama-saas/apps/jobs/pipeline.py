@@ -4,8 +4,8 @@ Cadences (see ``CADENCES``):
 
     hot         ~15 min   fetch + removal marking + incremental deals + notify
     coverage    ~10 min   one bounded chunk of whatever the feed has not shown lately
-    warm        ~30 min   episodes + daily snapshot + market index
-    maintenance   ~6 h    full deal rebuild + prune + health report
+    warm        ~30 min   episodes + daily snapshot + market index + health
+    maintenance   ~6 h    full deal rebuild + prune
     train        ~daily   refit the learned models, gate them, rescore the board
     full                  every hot/warm step, with a full deal-score rebuild
 
@@ -80,7 +80,12 @@ STEP_ORDER = ("fetch", "mark_inactive", "link_reposts", "episodes", "snapshot",
 CADENCES = {
     "hot": ("fetch", "mark_inactive", "deal_scores", "ml_score", "probe_sold",
             "notify", "alerts", "alerts_send"),
-    "warm": ("link_reposts", "episodes", "snapshot", "market_index"),
+    # `health` moved here from `maintenance`. Every check is local arithmetic
+    # over rows this tick already touched — no network, ~4s — and on the 6-hour
+    # cadence it was capable of missing a two-and-a-half hour outage entirely.
+    # It is the job that tells a human something is wrong; running it four times
+    # a day was making detection latency the largest term in every incident.
+    "warm": ("link_reposts", "episodes", "snapshot", "market_index", "health"),
     "coverage": ("coverage",),
     # Training is its own cadence and its own container. It is the one step here
     # that is CPU-bound for minutes rather than seconds, and running it inside
@@ -91,7 +96,7 @@ CADENCES = {
     # backfill_images is local and idempotent: it sweeps up rows whose photos
     # were never extracted, so a listing does not have to be re-observed before
     # the board can show it.
-    "maintenance": ("deal_scores", "backfill_images", "prune", "health"),
+    "maintenance": ("deal_scores", "backfill_images", "prune"),
     # `ml_train` is deliberately not in `full`: everything else here is seconds
     # of local arithmetic and a full refit is minutes of CPU, so folding it in
     # would turn the one command an operator runs to catch up into something
@@ -137,10 +142,18 @@ FETCH_RETRY_DELAY = 5.0
 @dataclass
 class StepResult:
     name: str
+    # Whether this step lets the run continue: it gates dependents and decides
+    # `Report.ok`. An ADVISORY step is always True here even when it failed.
     ok: bool
     detail: str = ""
     duration_s: float = 0.0
     skipped: bool = False
+    # The step's own verdict, which for an advisory step can be False while
+    # `ok` stays True. Both were `ok` until 2026-09-06, so the maintenance tick
+    # logged `health=ok` on the same line as `step=health FAIL ... ok=False` —
+    # the one summary an operator actually reads was the one asserting that the
+    # red check was green.
+    healthy: bool = True
 
 
 @dataclass
@@ -160,7 +173,13 @@ class Report:
         return 0.0
 
     def summary(self) -> str:
-        flags = " ".join(f"{s.name}={'ok' if s.ok else 'FAIL'}" for s in self.steps)
+        def label(step: StepResult) -> str:
+            if step.healthy:
+                return "ok"
+            # RED: the step reported a problem it is not allowed to fail on.
+            return "RED" if step.ok else "FAIL"
+
+        flags = " ".join(f"{s.name}={label(s)}" for s in self.steps)
         return f"pipeline ok={self.ok} duration={self.duration_s:.1f}s {flags}"
 
 
@@ -229,7 +248,8 @@ def run_step(name: str, *, triggered_by: str = JobRun.Trigger.SCHEDULER, **opts)
             ok = result.get("ok", True)
             logger.info("step=%s %s duration=%.1fs %s",
                         name, "OK" if ok else "FAIL", duration, detail)
-            return StepResult(name, ok or name in ADVISORY, detail, duration)
+            return StepResult(name, ok or name in ADVISORY, detail, duration,
+                              healthy=ok)
     except CrawlBlocked as exc:
         # record_job already stored this as SKIPPED. Reported ok=True so the tick
         # continues to the steps that need no network.
@@ -240,7 +260,8 @@ def run_step(name: str, *, triggered_by: str = JobRun.Trigger.SCHEDULER, **opts)
         duration = time.monotonic() - start
         logger.exception("event=pipeline_step_failed step=%s duration_s=%.1f error=%s",
                          name, duration, exc)
-        return StepResult(name, name in ADVISORY, str(exc)[:500], duration)
+        return StepResult(name, name in ADVISORY, str(exc)[:500], duration,
+                          healthy=False)
 
 
 def record_skipped(name: str, reason: str) -> StepResult:
@@ -253,7 +274,8 @@ def record_skipped(name: str, reason: str) -> StepResult:
     JobRun.objects.create(name=name, status=JobRun.Status.SKIPPED, started_at=now,
                           finished_at=now, duration_s=0.0, detail=reason)
     logger.warning("step=%s SKIPPED (%s)", name, reason)
-    return StepResult(name, False, f"skipped: {reason}", 0.0, skipped=True)
+    return StepResult(name, False, f"skipped: {reason}", 0.0, skipped=True,
+                      healthy=False)
 
 
 def run(*, cadence: str | None = None, steps=None, skip_fetch: bool = False,

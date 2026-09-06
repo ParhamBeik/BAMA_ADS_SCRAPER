@@ -512,8 +512,8 @@ def train_price() -> dict:
             else (False, ""))
     promoted = registry.promote(record, decision=registry.gate(
         challenger=mean_pinball,
-        incumbent=registry.incumbent_metric(MLModel.Name.PRICE, "pinball_mean",
-                                             feature_spec=spec.to_json()),
+        **registry.incumbent_context(MLModel.Name.PRICE, "pinball_mean",
+                                     feature_spec=spec.to_json()),
         baseline=mean_pinball_cohort,
         lower_is_better=True, margin=PROMOTION_MARGIN,
         veto=veto,
@@ -722,8 +722,8 @@ def train_sell_fast(*, horizon_days: int = SELL_HORIZON_DAYS) -> dict:
     )
     promoted = registry.promote(record, decision=registry.gate(
         challenger=measured["brier"],
-        incumbent=registry.incumbent_metric(MLModel.Name.SELL_FAST, "brier",
-                                             feature_spec=spec.to_json()),
+        **registry.incumbent_context(MLModel.Name.SELL_FAST, "brier",
+                                     feature_spec=spec.to_json()),
         baseline=measured["brier_baseline"],
         lower_is_better=True, margin=PROMOTION_MARGIN,
     ))
@@ -838,8 +838,8 @@ def train_anomaly() -> dict:
     lift = (measured["precision_at_k"] or {}).get("lift")
     promoted = registry.promote(record, decision=registry.gate(
         challenger=lift,
-        incumbent=registry.incumbent_metric(MLModel.Name.ANOMALY, "lift",
-                                             feature_spec=spec.to_json()),
+        **registry.incumbent_context(MLModel.Name.ANOMALY, "lift",
+                                     feature_spec=spec.to_json()),
         baseline=RANDOM_LIFT,
         lower_is_better=False, margin=PROMOTION_MARGIN,
     ) if lift else {"promote": False, "reason": "no_measurable_lift",
@@ -1017,8 +1017,8 @@ def train_model_text() -> dict:
     )
     promoted = registry.promote(record, decision=registry.gate(
         challenger=macro_f1,
-        incumbent=registry.incumbent_metric(MLModel.Name.MODEL_TEXT, "macro_f1",
-                                             feature_spec=TEXT_FEATURE_SPEC),
+        **registry.incumbent_context(MLModel.Name.MODEL_TEXT, "macro_f1",
+                                     feature_spec=TEXT_FEATURE_SPEC),
         # The rule-based catalogue is right by construction on the labels it
         # produced — it *is* the label — so there is no independent baseline to
         # beat here, and pretending otherwise would be a comparison of a thing
@@ -1126,7 +1126,7 @@ def train_value_tiers() -> dict:
     )
     promoted = registry.promote(record, decision=registry.gate(
         challenger=measured["mean_silhouette"],
-        incumbent=registry.incumbent_metric(MLModel.Name.VALUE_TIER, "mean_silhouette"),
+        **registry.incumbent_context(MLModel.Name.VALUE_TIER, "mean_silhouette"),
         baseline=None, lower_is_better=False, margin=PROMOTION_MARGIN,
     ))
     return {"model": "value_tier", "trained": True, "version": record.version,

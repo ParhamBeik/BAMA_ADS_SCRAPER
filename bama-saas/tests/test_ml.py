@@ -353,6 +353,103 @@ def test_a_missing_challenger_metric_refuses_rather_than_defaulting():
                          baseline=1.0)["reason"] == "no_challenger_metric"
 
 
+# ---------------------------------------------------------------------------
+# Comparing two models that sat different exams
+# ---------------------------------------------------------------------------
+#
+# Every trainer splits on time, so each night's holdout is a different slice of
+# a moving market. The baseline is re-measured on the current holdout; the
+# incumbent's score is read frozen off its own row. Comparing them directly asks
+# the challenger to beat a number earned on older, easier data — which on
+# 2026-09-06 had four of five models refused every night for four days while
+# nothing was actually regressing.
+
+
+def test_a_harder_holdout_does_not_read_as_a_worse_model():
+    """The real `sell_fast` numbers from 2026-09-05.
+
+    Raw, the challenger loses: 0.19945 against the incumbent's 0.19138. But the
+    baseline moved with it — 0.22013 now against 0.2064 then — so measured
+    against the yardstick each one actually sat beside, the challenger is the
+    better model and had been refused for four nights running.
+    """
+    raw = registry.gate(challenger=0.19945, incumbent=0.19138, baseline=0.22013,
+                        margin=0.02)
+    assert raw["promote"] is False
+
+    normalised = registry.gate(
+        challenger=0.19945, incumbent=0.19138, baseline=0.22013,
+        incumbent_baseline=0.2064, margin=0.02,
+    )
+    assert normalised["promote"] is True
+    assert normalised["incumbent_basis"] == "baseline_normalised"
+
+
+def test_a_model_that_is_worse_on_the_same_yardstick_is_still_refused():
+    """The `price` numbers from the same night, and the reason this is a fix
+    rather than a loosened bar: normalised for holdout difficulty it is *still*
+    3% worse than the model it would replace, so it does not ship."""
+    decision = registry.gate(
+        challenger=0.029036898965338367, incumbent=0.026211860298701983,
+        baseline=0.04373389338290531, incumbent_baseline=0.040638047148264904,
+        margin=0.02,
+    )
+    assert decision["promote"] is False
+    assert decision["reason"] == "loses_to_incumbent"
+    assert decision["incumbent_basis"] == "baseline_normalised"
+
+
+def test_a_tie_goes_to_the_fresher_model_once_the_incumbent_is_stale():
+    """`model_text` and `value_tier` have no independent baseline, so there is
+    no yardstick to normalise against. They sat on versions from five days
+    earlier while every challenger landed within ~1% — and "within 1%" reads as
+    "loses" to a bar that demands 2% better, one night after another."""
+    fresh = registry.gate(challenger=0.4754, incumbent=0.4784, baseline=None,
+                          lower_is_better=False, margin=0.02,
+                          incumbent_age_days=5.0)
+    assert fresh["promote"] is True
+    assert fresh["incumbent_basis"] == "stale_incumbent_tie_breaks_to_fresh"
+
+
+def test_a_tie_does_not_unseat_a_model_that_is_still_current():
+    """The anti-churn property. A day-old incumbent keeps its place on a tie."""
+    decision = registry.gate(challenger=0.4754, incumbent=0.4784, baseline=None,
+                             lower_is_better=False, margin=0.02,
+                             incumbent_age_days=1.0)
+    assert decision["promote"] is False
+    assert decision["incumbent_basis"] == "raw"
+
+
+def test_a_stale_incumbent_does_not_excuse_a_real_regression():
+    """"Fresher" breaks ties; it does not buy a model past the margin."""
+    decision = registry.gate(challenger=0.30, incumbent=0.50, baseline=None,
+                             lower_is_better=False, margin=0.02,
+                             incumbent_age_days=90.0)
+    assert decision["promote"] is False
+
+
+def test_a_veto_outranks_every_incumbent_comparison():
+    """Whatever the exam said, an interval that lies is not shipped."""
+    decision = registry.gate(
+        challenger=0.19945, incumbent=0.19138, baseline=0.22013,
+        incumbent_baseline=0.2064, margin=0.02,
+        veto=(True, "interval_coverage_off_target"),
+    )
+    assert decision["promote"] is False
+    assert decision["vetoed"] is True
+
+
+def test_an_unusable_incumbent_baseline_falls_back_rather_than_dividing_by_it():
+    """A model registered before the baseline was recorded has none, and a
+    stored 0.0 is not a yardstick either. Both must degrade to the raw
+    comparison, not to a ZeroDivisionError inside the nightly trainer."""
+    for stored in (None, 0.0):
+        decision = registry.gate(challenger=1.0, incumbent=2.0, baseline=4.0,
+                                 incumbent_baseline=stored, margin=0.0)
+        assert decision["incumbent_basis"] == "raw"
+        assert decision["promote"] is True
+
+
 # ===========================================================================
 # JSON coercion — the thing that broke a real training run
 # ===========================================================================

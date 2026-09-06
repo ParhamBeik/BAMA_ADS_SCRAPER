@@ -697,6 +697,72 @@ def test_a_clean_history_does_not_gate():
     assert crawl_gate.check_gate() is None  # returns without raising
 
 
+# --- the upstream-outage breaker ------------------------------------------------
+#
+# A 403 is policy and lasts hours; a 500 is bama.ir having a bad morning. The
+# breakers are separate because the right cooldowns are an order of magnitude
+# apart, and because only one of them means "stop, you are banned".
+
+
+@pytest.mark.django_db
+def test_one_failure_is_not_an_outage():
+    """Single failures are ordinary. Backing off on one would halve the crawl."""
+    make_run(failed=True, ago_minutes=1)
+    assert crawl_gate.consecutive_failures() == 1
+    assert crawl_gate.upstream_cooldown_until() is None
+    assert crawl_gate.check_gate() is None
+
+
+@pytest.mark.django_db
+def test_two_failures_back_off_instead_of_hammering():
+    """The 2026-09-06 shape: eleven hot ticks, each spending ~5 minutes on
+    retries into a host answering 500, and each cascading a skip through
+    deal_scores, ml_score and alerts. Gating makes it a skip instead — which
+    costs the fetch and keeps every local step running."""
+    make_run(failed=True, ago_minutes=2)
+    make_run(failed=True, ago_minutes=1)
+
+    assert crawl_gate.consecutive_failures() == 2
+    with pytest.raises(crawl_gate.CrawlBlocked) as excinfo:
+        crawl_gate.check_gate()
+    assert "consecutive fetch" in str(excinfo.value)
+
+
+@pytest.mark.django_db
+def test_one_success_ends_the_outage_immediately():
+    """Recovery must not have to wait out a cooldown it has already disproven."""
+    make_run(failed=True, ago_minutes=3)
+    make_run(failed=True, ago_minutes=2)
+    make_run(pages=5, ago_minutes=1)
+
+    assert crawl_gate.consecutive_failures() == 0
+    assert crawl_gate.upstream_cooldown_until() is None
+    assert crawl_gate.check_gate() is None
+
+
+@pytest.mark.django_db
+def test_the_upstream_cooldown_stays_under_one_hot_tick():
+    """Capped on purpose. A breaker that outlasts the tick that would clear it
+    turns a two-minute blip into an hour of not looking."""
+    for minute in range(12, 0, -1):
+        make_run(failed=True, ago_minutes=minute)
+
+    until = crawl_gate.upstream_cooldown_until()
+    last = NOW() - timedelta(minutes=1)
+    assert until - last <= crawl_gate.UPSTREAM_MAX_COOLDOWN
+    assert crawl_gate.UPSTREAM_MAX_COOLDOWN < timedelta(seconds=900)
+
+
+@pytest.mark.django_db
+def test_a_waf_block_is_not_counted_as_an_outage():
+    """Otherwise a ban would be served the 10-minute cooldown, not the 6-hour one."""
+    make_run(blocked=True, ago_minutes=2)
+    make_run(blocked=True, ago_minutes=1)
+
+    assert crawl_gate.consecutive_failures() == 0
+    assert crawl_gate.consecutive_blocks() == 2
+
+
 @pytest.mark.django_db
 def test_one_block_costs_one_tick_then_reopens():
     """The first cooldown is a single pipeline tick: cheap probe, no latching."""
@@ -806,11 +872,12 @@ def test_a_healthy_history_does_not_cap_the_range(monkeypatch):
     assert seen["end_page"] == 199
 
 
-def _run():
+def _run(*, started_at=None):
     return FetchRun.objects.create(
         source=FetchRun.Source.LIVE_FETCH,
         status=FetchRun.Status.SUCCEEDED,
         mode=FetchRun.Mode.DELTA,
+        started_at=started_at or djtz.now(),
     )
 
 
@@ -892,6 +959,61 @@ def test_a_sliver_of_a_gap_does_not_switch_removal_detection_off():
     PageCoverage.objects.filter(fetch_run=run, page_index__in=[1, 2]).delete()
     assert sum(hi - lo + 1 for lo, hi in find_gaps()) > COVERAGE_GAP_TOLERANCE_RANKS
     assert coverage_is_complete(since=window) is False
+
+
+@pytest.mark.django_db
+def test_a_closed_window_is_judged_against_the_feed_it_actually_walked():
+    """A growing feed used to retroactively invalidate the window before it.
+
+    The bug that froze removal detection for 14 hours on 2026-09-06. The window
+    24-48h back had walked the feed end to end — every rank that existed while
+    it was open — and was then failed for not covering 64 ranks the feed grew
+    *after* it closed. Windows are needed in consecutive pairs, so one failing
+    window is enough, and the feed grows every day: the mechanism was off far
+    more often than it was on.
+
+    The ceiling for a closed window is therefore the depth known when it closed.
+    """
+    now = djtz.now()
+    older_start, recent_start = now - timedelta(hours=48), now - timedelta(hours=24)
+
+    # The older window walks pages 0..9 — ranks 1..300, the whole feed then.
+    old_run = _run(started_at=older_start + timedelta(minutes=5))
+    _cover(old_run, range(0, 10), fetched_at=older_start + timedelta(minutes=5))
+
+    # Both windows are complete while the feed is 300 deep.
+    recent_run = _run(started_at=recent_start + timedelta(minutes=5))
+    _cover(recent_run, range(0, 10), fetched_at=recent_start + timedelta(minutes=5))
+    assert F.coverage_is_complete(since=older_start, until=recent_start) is True
+
+    # Now the feed grows by two pages, and only the recent window sees them.
+    _cover(recent_run, [10, 11], fetched_at=now - timedelta(minutes=5))
+    assert F.known_feed_depth() == 360
+
+    # The older window still covered everything there was to cover.
+    assert F.known_feed_depth(as_of=recent_start) == 300
+    assert F.coverage_is_complete(since=older_start, until=recent_start) is True
+    assert F.coverage_is_complete(since=recent_start) is True
+
+
+@pytest.mark.django_db
+def test_a_window_that_genuinely_missed_the_tail_still_fails():
+    """The safety property the fix must not spend: real holes still count."""
+    now = djtz.now()
+    older_start, recent_start = now - timedelta(hours=48), now - timedelta(hours=24)
+
+    run = _run(started_at=older_start + timedelta(minutes=5))
+    # Pages 0..9 existed, but this window only ever read 0..6 — four pages of
+    # tail went unread while they were there to read.
+    _cover(run, range(0, 7), fetched_at=older_start + timedelta(minutes=5))
+    _cover(run, range(7, 10), fetched_at=older_start + timedelta(minutes=6))
+    PageCoverage.objects.filter(page_index__gte=7).delete()
+
+    assert F.known_feed_depth(as_of=recent_start) == 210
+    # Ask for the real ceiling of the day: the tail is missing and it matters.
+    assert F.uncovered_ranks(
+        F.find_gaps(since=older_start, until=recent_start, max_rank=300)
+    ) == 90
 
 
 @pytest.mark.django_db

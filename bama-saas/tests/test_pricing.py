@@ -820,12 +820,13 @@ def cfg(db):
 
 
 def make_scored(notifier_catalog, code, *, discount=30.0, peers=20, price=1_000_000_000,
-                model=None):
+                model=None, band=None, band_median=None, band_peers=0,
+                body_status=""):
     ad = Ad.objects.create(
         code=code, brand=notifier_catalog["brand"], model=model or notifier_catalog["model"],
         variant=notifier_catalog["variant"], city=notifier_catalog["city"],
         year_jalali=1400, mileage=50_000, current_price=price,
-        status=Ad.Status.ACTIVE, title="پژو، 207",
+        status=Ad.Status.ACTIVE, title="پژو، 207", body_status=body_status,
         first_seen_at=NOW - timedelta(days=1), last_seen_at=NOW, publish_at=NOW,
     )
     return DealScoreCache.objects.create(
@@ -833,6 +834,8 @@ def make_scored(notifier_catalog, code, *, discount=30.0, peers=20, price=1_000_
         components={
             "peer_count": peers, "confidence": "high",
             "fair_value": price * 2, "price": price,
+            "condition_band": band, "condition_band_median": band_median,
+            "condition_band_peers": band_peers, "body_status": body_status,
         },
     )
 
@@ -970,8 +973,49 @@ def test_message_names_the_evidence(notifier_catalog, cfg, _no_real_telegram):
 
     text = _no_real_telegram[0]
     assert "30% below fair value" in text
-    assert "20 peers" in text
+    assert "20 cars" in text
     assert "high confidence" in text
+
+
+@pytest.mark.django_db
+def test_message_quotes_the_median_for_this_car_s_own_damage_band(
+    notifier_catalog, cfg, _no_real_telegram,
+):
+    """The cohort median pools every condition; the band median does not.
+
+    A repainted car 30% under its cohort is often only a few percent under
+    other repainted cars, and without both numbers the reader cannot tell those
+    two situations apart — which is the difference between a find and a wasted
+    evening. `peer_median` alone was the whole message before this.
+    """
+    make_scored(notifier_catalog, "deal0001", discount=30.0, peers=20,
+                band="painted", band_median=1_800_000_000, band_peers=13,
+                body_status="کامل رنگ")
+
+    N.notify_deals()
+
+    text = _no_real_telegram[0]
+    assert "repainted" in text          # the band, in words the reader knows
+    assert "کامل رنگ" in text            # and as the listing page itself says it
+    assert "13 similar" in text
+    assert "1.80B" in text              # the band's own median
+    assert "2.00B" in text              # still shows the cohort median beside it
+
+
+@pytest.mark.django_db
+def test_a_thin_damage_band_is_not_given_a_median(
+    notifier_catalog, cfg, _no_real_telegram,
+):
+    """Three cars is not "what these go for". Say so rather than inventing it."""
+    make_scored(notifier_catalog, "deal0001", discount=30.0, peers=20,
+                band="structural", band_median=1_800_000_000, band_peers=3,
+                body_status="کاپوت تعویض")
+
+    N.notify_deals()
+
+    text = _no_real_telegram[0]
+    assert "too few to quote a median" in text
+    assert "1.80B" not in text
 
 
 @pytest.mark.django_db
