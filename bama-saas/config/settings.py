@@ -279,6 +279,11 @@ ML_ARTIFACT_DIR = Path(os.environ.get("ML_ARTIFACT_DIR", BASE_DIR / "data" / "ml
 # Empty disables sending — the notifier logs and moves on rather than failing.
 BAMA_TELEGRAM_TOKEN = os.environ.get("BAMA_TELEGRAM_TOKEN", "")
 
+# Where the nightly encrypted dumps land, mounted read-only into the worker so
+# `check_backup_freshness` can see them. Empty means "this environment has no
+# backups", which is the truth on a laptop and must not read as a failure.
+BAMA_BACKUP_DIR = os.environ.get("BAMA_BACKUP_DIR", "")
+
 # Console handler only: the worker's stdout is the log, which is
 # environment-agnostic across host and Docker.
 #

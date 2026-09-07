@@ -163,8 +163,32 @@ def incumbent_metric(name: str, key: str, *, feature_spec: dict | None = None) -
             and task_signature(current.feature_spec) != task_signature(feature_spec)):
         logger.info("ml.incumbent_incomparable name=%s reason=feature_spec_changed", name)
         return None
-    value = (current.metrics or {}).get(key)
-    return float(value) if isinstance(value, (int, float)) else None
+    value = _dig(current.metrics or {}, key)
+    if value is None:
+        # Loud, because the silent version of this cost the anomaly gate its
+        # entire incumbent half: `lift` lives at `precision_at_k.lift`, the
+        # lookup asked for a top-level `lift`, and a missing metric reads as
+        # "no incumbent to beat" — which is indistinguishable from a first
+        # training run and so never looked wrong. Production 2026-09-07: every
+        # anomaly decision ever made carried `incumbent_basis=no_incumbent`
+        # while a model was demonstrably active.
+        logger.warning("ml.incumbent_metric_missing name=%s key=%s", name, key)
+    return value
+
+
+def _dig(blob: dict, key: str) -> float | None:
+    """A metric by dotted path, so a nested one can still decide a promotion.
+
+    ``precision_at_k.lift`` rather than ``lift``. Trainers group related numbers
+    into sub-dicts for readability and the gate has to be able to name one of
+    them; a flat lookup silently returned ``None`` instead.
+    """
+    node = blob
+    for part in key.split("."):
+        if not isinstance(node, dict):
+            return None
+        node = node.get(part)
+    return float(node) if isinstance(node, (int, float)) else None
 
 
 def incumbent_context(name: str, key: str, *, feature_spec: dict | None = None) -> dict:
@@ -194,6 +218,38 @@ def incumbent_context(name: str, key: str, *, feature_spec: dict | None = None) 
         "incumbent_baseline": float(baseline) if isinstance(baseline, (int, float)) else None,
         "incumbent_age_days": age,
     }
+
+
+def incumbent_artifact(name: str, *, feature_spec: dict | None = None):
+    """The live model and its loaded artifact, for re-scoring on a fresh holdout.
+
+    The counterpart to ``incumbent_context``: that one reads the incumbent's
+    stored number, this one hands back the thing itself so a trainer can make it
+    sit the challenger's exam. Returns ``(None, None)`` whenever the comparison
+    would be dishonest or impossible — no incumbent, a changed task signature, or
+    an artifact the volume no longer has — and every one of those is a normal
+    state that must leave the gate treating the incumbent as "nothing to beat"
+    rather than crashing the nightly train.
+
+    The artifact carries its *own* feature spec and its own conformal delta, and
+    a caller must use them rather than the challenger's: re-scoring a model with
+    somebody else's preprocessing measures neither model.
+    """
+    current = active(name)
+    if current is None:
+        return None, None
+    if (feature_spec is not None
+            and task_signature(current.feature_spec) != task_signature(feature_spec)):
+        logger.info("ml.incumbent_incomparable name=%s reason=feature_spec_changed", name)
+        return None, None
+    try:
+        artifact = load(current)
+    except Exception as exc:  # noqa: BLE001 — a stale pickle must not stop training
+        logger.warning("ml.incumbent_artifact_unloadable name=%s error=%r", name, exc)
+        return None, None
+    if artifact is None:
+        return None, None
+    return current, artifact
 
 
 @transaction.atomic
@@ -229,11 +285,18 @@ def promote(record: MLModel, *, decision: dict) -> bool:
 
 # How long an incumbent may sit unchallengeable before a tie stops going its way.
 #
-# Only reached when there is no baseline on both sides to normalise against, so
-# it is the weaker of the two corrections here — but it is the one that unsticks
-# a line of models entirely. `model_text` and `value_tier` both sat on versions
-# from 2026-09-01 while fifteen challengers within ~1% of them were refused, one
-# a night, because "within 1%" reads as "loses" to a strict bar.
+# It is the correction that unsticks a line of models entirely: `model_text` and
+# `value_tier` both sat on versions from 2026-09-01 while fifteen challengers
+# within ~1% of them were refused, one a night, because "within 1%" reads as
+# "loses" to a strict bar.
+#
+# This used to be an `elif` *after* the baseline-normalised branch, which made it
+# unreachable for any model that recorded a baseline on both sides — i.e. every
+# model that most needed it. `price` sat on v10 for five days with 21 refusals
+# while holding an `incumbent_age_days` of 4.9 that nothing ever read. Staleness
+# is now applied *within* whichever comparison basis was chosen, because how old
+# the incumbent is and how the two scores are made comparable are two independent
+# questions and collapsing them into one if/elif chain answered only the second.
 INCUMBENT_STALE_AFTER_DAYS = 3.0
 
 
@@ -246,7 +309,8 @@ def gate(*, challenger: float | None, incumbent: float | None, baseline: float |
          lower_is_better: bool = True, margin: float = 0.0,
          veto: tuple[bool, str] | None = None,
          incumbent_baseline: float | None = None,
-         incumbent_age_days: float | None = None) -> dict:
+         incumbent_age_days: float | None = None,
+         incumbent_rescored: bool = False) -> dict:
     """The promotion decision, as data.
 
     A challenger must beat **both** the model it would replace and the
@@ -282,12 +346,24 @@ def gate(*, challenger: float | None, incumbent: float | None, baseline: float |
     (price: 0.0406 -> 0.0437, an 8% harder holdout). Nothing was regressing; the
     exam had got harder and only one side was re-sat.
 
-    So: when both sides recorded a baseline, they are compared as *lift over
-    their own baseline*, which cancels holdout difficulty to first order. When
-    they did not, a stale incumbent's raw score stops acting as a hard floor and
-    a tie goes to the fresher model instead. The baseline half of the gate is
-    untouched — it is measured on the challenger's own holdout and was never the
-    problem.
+    ``incumbent_rescored`` says the caller did the honest thing instead: loaded
+    the incumbent's artifact and ran it on *this* holdout, so the two scores are
+    the same exam literally rather than by approximation. When it is set the
+    numbers are compared directly, because there is nothing left to correct for.
+
+    Otherwise, when both sides recorded a baseline they are compared as *lift
+    over their own baseline*, which cancels holdout difficulty only to first
+    order and assumes that ratio is itself stable — good enough to unstick a
+    gate, not good enough to trust when it is the thing deciding. Failing that,
+    the raw scores are compared and the mismatch is simply accepted.
+
+    Staleness is then applied on top of whichever basis was chosen: past
+    ``INCUMBENT_STALE_AFTER_DAYS`` a tie goes to the fresher model. It used to be
+    a fourth mutually-exclusive branch below the normalised one, which made it
+    dead code for exactly the models it was written for — see the constant.
+
+    The baseline half of the gate is untouched — it is measured on the
+    challenger's own holdout and was never the problem.
     """
     if veto is not None and veto[0]:
         return {"promote": False, "reason": veto[1], "vetoed": True,
@@ -308,20 +384,35 @@ def gate(*, challenger: float | None, incumbent: float | None, baseline: float |
                 else mine >= other * (1 - margin))
 
     # How the incumbent half was decided, recorded so a refusal is auditable.
+    #
+    # Two independent questions, answered in order: *what pair of numbers is
+    # comparable at all* (the basis), and *how hard must the challenger beat
+    # them* (strict, or a tie if the incumbent has gone stale).
     if incumbent is None:
         basis = "no_incumbent"
         beat_incumbent = True
-    elif _usable(baseline) and _usable(incumbent_baseline):
-        # Same exam, expressed as each model's lift over the baseline it was
-        # actually measured against.
-        basis = "baseline_normalised"
-        beat_incumbent = beats(challenger / baseline, incumbent / incumbent_baseline)
-    elif incumbent_age_days is not None and incumbent_age_days > INCUMBENT_STALE_AFTER_DAYS:
-        basis = "stale_incumbent_tie_breaks_to_fresh"
-        beat_incumbent = not_worse_than(challenger, incumbent)
     else:
-        basis = "raw"
-        beat_incumbent = beats(challenger, incumbent)
+        if incumbent_rescored:
+            # The incumbent was re-run on this holdout, so the two numbers are
+            # the same exam literally. Nothing to normalise and nothing to
+            # approximate — this is what `baseline_normalised` was a proxy for.
+            basis = "rescored_same_holdout"
+            mine, theirs = challenger, incumbent
+        elif _usable(baseline) and _usable(incumbent_baseline):
+            # Same exam approximated: each model's lift over the baseline it was
+            # actually measured against, which cancels holdout difficulty to
+            # first order but assumes that ratio is itself stable.
+            basis = "baseline_normalised"
+            mine, theirs = challenger / baseline, incumbent / incumbent_baseline
+        else:
+            basis = "raw"
+            mine, theirs = challenger, incumbent
+
+        if incumbent_age_days is not None and incumbent_age_days > INCUMBENT_STALE_AFTER_DAYS:
+            basis += "+stale_tie_breaks_to_fresh"
+            beat_incumbent = not_worse_than(mine, theirs)
+        else:
+            beat_incumbent = beats(mine, theirs)
 
     beat_baseline = beats(challenger, baseline)
     reason = (
@@ -339,6 +430,7 @@ def gate(*, challenger: float | None, incumbent: float | None, baseline: float |
         "incumbent_baseline": incumbent_baseline,
         "incumbent_age_days": incumbent_age_days,
         "incumbent_basis": basis,
+        "incumbent_rescored": incumbent_rescored,
         "lower_is_better": lower_is_better,
         "margin": margin,
     }

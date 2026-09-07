@@ -462,6 +462,23 @@ def train_price() -> dict:
         "feature_importance": _importance(boosters["0.5"], spec),
     }
 
+    # Before `register`, because this goes into the row's metrics and the row is
+    # written once. Preferred over the incumbent's stored score: it makes the
+    # live model sit this exact holdout, so the gate below compares two numbers
+    # that mean the same thing. Falls back to the stored-score comparison when
+    # the incumbent cannot be re-run — a missing artifact, a changed task —
+    # because that is still better than treating it as nothing to beat.
+    incumbent_pinball, incumbent_record = _rescore_price_incumbent(
+        holdout, hold_offset, q_rows, log_actual, spec)
+    if incumbent_pinball is not None:
+        measured["incumbent_rescored"] = {
+            "version": incumbent_record.version,
+            "pinball_mean_on_this_holdout": round(incumbent_pinball, 5),
+            # The gap between this and what that version stored on its own night
+            # is the holdout drift the old gate was reading as a regression.
+            "pinball_mean_as_stored": (incumbent_record.metrics or {}).get("pinball_mean"),
+        }
+
     record = registry.register(
         name=MLModel.Name.PRICE,
         algorithm=("lightgbm.LGBMRegressor(objective=quantile) on log price ratio "
@@ -510,16 +527,83 @@ def train_price() -> dict:
     veto = ((True, "interval_coverage_off_target") if off_target
             else (True, "point_estimate_regressed") if point_regression
             else (False, ""))
+    if incumbent_pinball is not None:
+        age = None
+        if incumbent_record.trained_at:
+            age = (timezone.now() - incumbent_record.trained_at).total_seconds() / 86400.0
+        # `incumbent_baseline=None` on purpose: the two scores are already the
+        # same exam, so normalising them by baselines measured on two *different*
+        # exams would reintroduce exactly the mismatch this removes.
+        incumbent_side = {"incumbent": incumbent_pinball, "incumbent_baseline": None,
+                          "incumbent_age_days": age, "incumbent_rescored": True}
+    else:
+        incumbent_side = registry.incumbent_context(
+            MLModel.Name.PRICE, "pinball_mean", feature_spec=spec.to_json())
+
     promoted = registry.promote(record, decision=registry.gate(
         challenger=mean_pinball,
-        **registry.incumbent_context(MLModel.Name.PRICE, "pinball_mean",
-                                     feature_spec=spec.to_json()),
+        **incumbent_side,
         baseline=mean_pinball_cohort,
         lower_is_better=True, margin=PROMOTION_MARGIN,
         veto=veto,
     ))
     return {"model": "price", "trained": True, "version": record.version,
             "promoted": promoted, "metrics": measured}
+
+
+def _rescore_price_incumbent(holdout, hold_offset, q_rows, log_actual, spec):
+    """The live price model's pinball loss on *this* holdout, or ``None``.
+
+    The gate's whole difficulty was that it compared a challenger's fresh score
+    against an incumbent's frozen one — two different exams, and every trainer
+    here splits on time, so the incumbent's exam is always the easier, older
+    market. `baseline_normalised` corrected for that by ratio, which cancels
+    holdout difficulty only to first order and, on production, still refused
+    `price` 21 nights running while `incumbent_age_days` climbed to 4.9.
+
+    The artifact is on disk and the holdout is in memory, so the correction does
+    not have to be an approximation: run the incumbent on the challenger's rows
+    and compare two numbers that mean the same thing. Costs one `predict` per
+    quantile over a few thousand rows — under a second, against a fit that takes
+    forty.
+
+    Uses the incumbent's *own* spec and *own* conformal delta, read from the
+    artifact rather than reused from the challenger: re-scoring a model with
+    somebody else's preprocessing measures neither of them. Returns ``None`` on
+    anything unexpected, because a gate that cannot re-score the incumbent should
+    fall back to the old comparison, not fail the night's training.
+    """
+    import numpy as np
+
+    record, artifact = registry.incumbent_artifact(
+        MLModel.Name.PRICE, feature_spec=spec.to_json())
+    if record is None:
+        return None, None
+    try:
+        payload = artifact["payload"]
+        boosters = payload["boosters"]
+        delta = float(payload.get("conformal_delta", 0.0))
+        their_spec = features.FeatureSpec.from_json(payload["spec"])
+        x_hold, _ = features.build(holdout, their_spec)
+        preds = {}
+        for alpha in QUANTILES:
+            raw = boosters[str(alpha)].predict(x_hold)
+            widened = raw + (delta if alpha == 0.9 else -delta if alpha == 0.1 else 0.0)
+            preds[alpha] = np.exp(widened + hold_offset)
+        # Scored on exactly the rows the challenger was scored on — the subset
+        # where the cohort could draw a band — so neither side is credited for
+        # the other's refusals, and neither for a different denominator.
+        truth_q = [log_actual[i] for i in q_rows]
+        losses = {
+            a: metrics.pinball_loss(
+                truth_q, [math.log(max(preds[a][i], 1)) for i in q_rows], a) or 0.0
+            for a in QUANTILES
+        }
+    except Exception as exc:  # noqa: BLE001 — a stale artifact must not stop training
+        logger.warning("ml.incumbent_rescore_failed name=price version=%s error=%r",
+                       record.version, exc)
+        return None, None
+    return sum(losses.values()) / len(QUANTILES), record
 
 
 def _cohort_quantile_baseline(rows: list[dict], quantiles=QUANTILES) -> dict:
@@ -835,10 +919,17 @@ def train_anomaly() -> dict:
     # reads "nothing to beat" as "beat it" — so a detector whose flagged
     # listings left the feed *less* often than average (lift 0.85) was promoted.
     # A gate that cannot fail is not a gate; the baseline is 1.0.
+    #
+    # The incumbent key is the *dotted path* `precision_at_k.lift`, not `lift`.
+    # It read `lift` until 2026-09-07 and therefore resolved to None on every
+    # run ever made, which `gate` treats as "no incumbent" — so the incumbent
+    # half of this gate had never once executed. Visible in production as an
+    # `incumbent_basis` of `no_incumbent` on a model with an active version, and
+    # it meant a v22 scoring 1.1 would have replaced a v21 scoring 2.5.
     lift = (measured["precision_at_k"] or {}).get("lift")
     promoted = registry.promote(record, decision=registry.gate(
         challenger=lift,
-        **registry.incumbent_context(MLModel.Name.ANOMALY, "lift",
+        **registry.incumbent_context(MLModel.Name.ANOMALY, "precision_at_k.lift",
                                      feature_spec=spec.to_json()),
         baseline=RANDOM_LIFT,
         lower_is_better=False, margin=PROMOTION_MARGIN,

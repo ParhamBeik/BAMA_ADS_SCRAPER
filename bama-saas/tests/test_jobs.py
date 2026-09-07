@@ -8,6 +8,7 @@ observable from a unit test of the function alone.
 from __future__ import annotations
 
 import hashlib
+import os
 import time
 from datetime import timedelta
 from unittest.mock import Mock, patch
@@ -31,8 +32,10 @@ from apps.jobs import fetcher
 from apps.jobs import pipeline as P
 from apps.jobs.fetcher import known_feed_depth
 from apps.jobs.jobs import (
+    BACKUP_STALE_AFTER,
     COVERAGE_STARVED_AFTER,
     REJECT_SPIKE_MIN_COUNT,
+    check_backup_freshness,
     check_coverage_progress,
     check_failed_runs,
     check_ingest_progress,
@@ -553,6 +556,75 @@ def test_known_feed_depth_none_without_coverage():
 # Health checks
 # ---------------------------------------------------------------------------
 
+def _backup_dir(tmp_path, settings, *, age_hours=None, name="daily-2026-09-07.dump.enc"):
+    """A backup directory holding one dump of the given age."""
+    settings.BAMA_BACKUP_DIR = str(tmp_path)
+    if age_hours is None:
+        return tmp_path
+    dump = tmp_path / name
+    dump.write_bytes(b"encrypted-bytes")
+    when = (NOW - timedelta(hours=age_hours)).timestamp()
+    os.utime(dump, (when, when))
+    return tmp_path
+
+
+def test_backup_freshness_is_silent_where_no_backups_are_expected(settings):
+    """A laptop has no nightly dump and that is not an incident. The check must
+    stay green when unconfigured, or every dev run reports a fake outage."""
+    settings.BAMA_BACKUP_DIR = ""
+    assert check_backup_freshness(NOW).ok is True
+
+
+def test_backup_freshness_accepts_last_nights_dump(tmp_path, settings):
+    _backup_dir(tmp_path, settings, age_hours=11)
+    check = check_backup_freshness(NOW)
+    assert check.ok is True
+    assert check.data["age_hours"] == 11.0
+
+
+def test_backup_freshness_goes_red_when_the_cron_stops_firing(tmp_path, settings):
+    """The failure the backup script itself cannot see: it alerts when a dump
+    *fails*, but a cron that never runs produces no error and no file — only a
+    newest backup that quietly stops getting newer."""
+    _backup_dir(tmp_path, settings,
+                age_hours=BACKUP_STALE_AFTER.total_seconds() / 3600 + 3)
+    check = check_backup_freshness(NOW)
+    assert check.ok is False
+    assert "stopped running" in check.detail
+
+
+def test_backup_freshness_tolerates_clock_jitter_around_the_nightly_run(tmp_path, settings):
+    """23:00 UTC plus a minute of dump time, read at 00:59 the next night, is 25
+    hours old and perfectly healthy. A 24h bar would page every single night."""
+    _backup_dir(tmp_path, settings, age_hours=25)
+    assert check_backup_freshness(NOW).ok is True
+
+
+def test_backup_freshness_reports_an_unmounted_volume_separately(tmp_path, settings):
+    """Configured but absent is a deployment fault, not a missed backup, and it
+    sends you somewhere completely different."""
+    settings.BAMA_BACKUP_DIR = str(tmp_path / "never-created")
+    check = check_backup_freshness(NOW)
+    assert check.ok is False
+    assert "not mounted" in check.detail
+
+
+def test_backup_freshness_goes_red_on_an_empty_backup_directory(tmp_path, settings):
+    _backup_dir(tmp_path, settings)
+    check = check_backup_freshness(NOW)
+    assert check.ok is False
+    assert check.data["count"] == 0
+
+
+def test_a_rejected_archive_does_not_count_as_a_backup(tmp_path, settings):
+    """The backup script renames a dump that fails verification to `.rejected`
+    precisely so retention cannot evict the last good one. Counting it here
+    would report a healthy backup that is known to be unrestorable."""
+    _backup_dir(tmp_path, settings, age_hours=2,
+                name="daily-2026-09-07.dump.enc.rejected")
+    assert check_backup_freshness(NOW).ok is False
+
+
 @pytest.mark.django_db
 def test_sweep_freshness_fails_without_any_coverage():
     assert check_sweep_freshness(NOW).ok is False
@@ -881,7 +953,7 @@ def test_run_checks_returns_every_check():
     assert {c.name for c in results} == {
         "source_block", "upstream_outage", "sweep_freshness", "coverage_progress",
         "removal_detection", "failed_runs", "reject_spike", "ingest_progress",
-        "model_staleness",
+        "model_staleness", "backup_freshness",
     }
 
 

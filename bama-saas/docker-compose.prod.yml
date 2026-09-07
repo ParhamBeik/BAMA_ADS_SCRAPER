@@ -36,6 +36,16 @@ x-django-env: &django-env
   # disagree on whether the mount is writable — see the `ml` service below.
   ML_ARTIFACT_DIR: /artifacts
 
+# Where `check_backup_freshness` looks. Deliberately *not* in the shared env
+# above: it must be set only on the services that also mount the directory, or a
+# service without the mount reports "volume not mounted" and the health page goes
+# red on its own configuration. Unset — on a dev box or in CI — the check reports
+# "not configured" and stays green, because a laptop with no nightly dump is not
+# an incident. Spelled as a path rather than a boolean so the check can say
+# *which* directory it found nothing in.
+x-backup-env: &backup-env
+  BAMA_BACKUP_DIR: /backups
+
 services:
   # Tuned, because it was running on stock settings. Measured 2026-09-04: the
   # database is 2,370 MB against the 128 MB default `shared_buffers`, and the
@@ -110,7 +120,11 @@ services:
     container_name: bama-django
     restart: unless-stopped
     logging: *logging
-    environment: *django-env
+    # Backups included because `/api/jobs/health` re-runs every check to answer a
+    # request, so without the mount the dashboard would contradict the worker's
+    # own log about whether last night's dump exists.
+    environment:
+      <<: [*django-env, *backup-env]
     # `:ro` on the artifacts, and it is load-bearing rather than tidiness. A web
     # worker that can overwrite a model file can change what every reader is
     # told without a deploy, a migration or a registry row — and the registry is
@@ -118,6 +132,7 @@ services:
     volumes:
       - staticfiles:/app/staticfiles
       - ml_artifacts:/artifacts:ro
+      - /var/backups/bama:/backups:ro
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -185,10 +200,20 @@ services:
     container_name: bama-worker
     restart: unless-stopped
     logging: *logging
-    environment: *django-env
+    environment:
+      <<: [*django-env, *backup-env]
     # Read-only too: the worker *scores* with the models (`ml_score` on the hot
     # tick) but never fits one. Only `ml` writes here.
-    volumes: [ml_artifacts:/artifacts:ro]
+    #
+    # The backup directory is mounted read-only so `check_backup_freshness` can
+    # stat it. The worker is where every other health check already lives, which
+    # buys the backup alarm the same alert-on-transition behaviour instead of a
+    # second cron that nags hourly once it goes stale. Read-only because a
+    # process that can delete the backups is not the process that should be
+    # watching them.
+    volumes:
+      - ml_artifacts:/artifacts:ro
+      - /var/backups/bama:/backups:ro
     depends_on:
       django: { condition: service_healthy }
     command: sh deploy/worker.sh

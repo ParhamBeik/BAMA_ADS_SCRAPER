@@ -12,7 +12,8 @@ import os
 import statistics
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from django.conf import settings
 from django.core.cache import cache
@@ -1357,6 +1358,66 @@ def check_model_staleness(now=None) -> Check:
                  {"stale": stale})
 
 
+# A nightly job that stops running produces silence, and silence is what success
+# also looks like. 26 hours, not 24: the dump runs at 23:00 UTC and takes about a
+# minute, so a 24h bar would go red on clock jitter alone every night.
+BACKUP_STALE_AFTER = timedelta(hours=26)
+
+
+def check_backup_freshness(now=None) -> Check:
+    """Did last night's database dump actually happen?
+
+    The backup script alerts loudly when it *fails*. What neither it nor anything
+    else could detect is the cron never firing at all — a disabled crontab, a
+    renamed script, a host that rebooted into a broken state. That failure mode
+    is invisible by construction: it produces no error, no log line, and no file,
+    and the newest backup simply stops getting newer while everything reads fine.
+
+    Watches the artifact rather than the job, because the artifact is the thing
+    with the value. A run that "succeeded" and left no file is the same incident
+    as a run that never happened, and this notices both.
+    """
+    now = now or timezone.now()
+    directory = getattr(settings, "BAMA_BACKUP_DIR", "") or ""
+    if not directory:
+        return Check("backup_freshness", True,
+                     "No backup directory configured for this environment.")
+    path = Path(directory)
+    if not path.is_dir():
+        return Check("backup_freshness", False,
+                     f"{directory} is not a directory. The backup volume is not "
+                     f"mounted, so nothing here can confirm a dump exists.",
+                     {"backup_dir": directory})
+
+    dumps = sorted(path.glob("daily-*.dump.enc"), key=lambda p: p.stat().st_mtime)
+    if not dumps:
+        return Check("backup_freshness", False,
+                     f"No daily-*.dump.enc in {directory}. There is no restorable "
+                     f"copy of this database.", {"backup_dir": directory, "count": 0})
+
+    newest = dumps[-1]
+    stat = newest.stat()
+    age = now - datetime.fromtimestamp(stat.st_mtime, tz=UTC)
+    hours = age.total_seconds() / 3600
+    # Reported alongside the age because the two failures look identical from a
+    # timestamp alone: a dump that never ran, and a dump that ran and wrote
+    # almost nothing because the database was unreachable.
+    data = {"backup_dir": directory, "newest": newest.name, "count": len(dumps),
+            "age_hours": round(hours, 1), "size_mb": round(stat.st_size / 1e6, 1)}
+    # `.rejected` files are the backup script's own verification failing; it has
+    # already alerted about those, and counting them here would report the same
+    # incident twice under a name that sends you to the wrong place.
+    if age > BACKUP_STALE_AFTER:
+        return Check("backup_freshness", False,
+                     f"Newest backup {newest.name} is {hours:.0f}h old "
+                     f"({BACKUP_STALE_AFTER.total_seconds() / 3600:.0f}h is the bar). "
+                     f"The nightly dump has stopped running; every hour from here "
+                     f"widens what a restore would lose.", data)
+    return Check("backup_freshness", True,
+                 f"{len(dumps)} dump(s) retained, newest {newest.name} "
+                 f"{hours:.0f}h old ({data['size_mb']:.0f}MB).", data)
+
+
 # Source block first: when it is active it is the cause of everything below, and
 # reading the consequences before the cause wastes the operator's time.
 # `upstream_outage` sits beside it for the same reason: both say "the problem is
@@ -1367,7 +1428,7 @@ def check_model_staleness(now=None) -> Check:
 CHECKS = (check_source_block, check_upstream_outage,
           check_sweep_freshness, check_coverage_progress, check_removal_detection,
           check_failed_runs, check_reject_spike, check_ingest_progress,
-          check_model_staleness)
+          check_model_staleness, check_backup_freshness)
 
 
 def run_checks(now=None) -> list[Check]:

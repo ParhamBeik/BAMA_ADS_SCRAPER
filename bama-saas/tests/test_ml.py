@@ -408,7 +408,82 @@ def test_a_tie_goes_to_the_fresher_model_once_the_incumbent_is_stale():
                           lower_is_better=False, margin=0.02,
                           incumbent_age_days=5.0)
     assert fresh["promote"] is True
-    assert fresh["incumbent_basis"] == "stale_incumbent_tie_breaks_to_fresh"
+    assert fresh["incumbent_basis"] == "raw+stale_tie_breaks_to_fresh"
+
+
+def test_staleness_still_applies_when_both_sides_recorded_a_baseline():
+    """The escape hatch used to be an `elif` below the normalised comparison,
+    which made it unreachable for every model that recorded a baseline — that
+    is, for `price`, the one it was needed by. It sat on v10 for five days
+    carrying an `incumbent_age_days` of 4.9 that nothing ever read.
+
+    Same numbers as the refusal above, with the incumbent aged past the bar."""
+    stale = registry.gate(challenger=0.0288, incumbent=0.0262, baseline=0.0438,
+                          incumbent_baseline=0.0406, lower_is_better=True,
+                          margin=0.02, incumbent_age_days=5.0)
+    assert stale["promote"] is True
+    assert stale["incumbent_basis"] == "baseline_normalised+stale_tie_breaks_to_fresh"
+
+
+def test_a_rescored_incumbent_is_compared_directly_not_normalised():
+    """When the caller re-ran the incumbent on this holdout the two scores are
+    the same exam, so dividing each by a baseline measured on a *different* exam
+    would put back the mismatch the re-scoring removed."""
+    decision = registry.gate(challenger=0.0288, incumbent=0.0300, baseline=0.0438,
+                             incumbent_baseline=None, lower_is_better=True,
+                             margin=0.02, incumbent_age_days=1.0,
+                             incumbent_rescored=True)
+    assert decision["incumbent_basis"] == "rescored_same_holdout"
+    assert decision["incumbent_rescored"] is True
+    # 0.0288 beats 0.0300 by 4%, past the 2% margin, and beats the 0.0438 cohort.
+    assert decision["promote"] is True
+
+
+def test_a_rescored_incumbent_still_wins_when_it_is_genuinely_better():
+    """The point of re-scoring is a trustworthy answer, not a promotion."""
+    decision = registry.gate(challenger=0.0320, incumbent=0.0262, baseline=0.0438,
+                             incumbent_baseline=None, lower_is_better=True,
+                             margin=0.02, incumbent_age_days=1.0,
+                             incumbent_rescored=True)
+    assert decision["promote"] is False
+    assert decision["reason"] == "loses_to_incumbent"
+
+
+@pytest.mark.django_db
+def test_a_nested_metric_can_still_decide_a_promotion():
+    """`lift` lives at `precision_at_k.lift`. The anomaly gate asked for a
+    top-level `lift`, got None, and `gate` reads a missing incumbent as "nothing
+    to beat" — so for every run ever made the incumbent half of that gate did
+    not execute. A v22 scoring 1.1 would have replaced a v21 scoring 2.5."""
+    MLModel.objects.create(
+        name=MLModel.Name.ANOMALY, version=1, status=MLModel.Status.ACTIVE,
+        algorithm="IsolationForest", artifact_path="",
+        metrics={"precision_at_k": {"k": 200, "lift": 2.514}},
+        feature_spec={}, training_rows=100, trained_at=djtz.now(),
+    )
+    assert registry.incumbent_metric(MLModel.Name.ANOMALY, "lift") is None
+    assert registry.incumbent_metric(
+        MLModel.Name.ANOMALY, "precision_at_k.lift") == pytest.approx(2.514)
+
+
+@pytest.mark.django_db
+def test_a_worse_anomaly_model_no_longer_ships_past_a_better_incumbent():
+    """The consequence of the lookup above, at the gate rather than the reader.
+    Lift 1.1 clears the random baseline of 1.0 but is less than half the 2.514
+    that is already serving."""
+    MLModel.objects.create(
+        name=MLModel.Name.ANOMALY, version=1, status=MLModel.Status.ACTIVE,
+        algorithm="IsolationForest", artifact_path="",
+        metrics={"precision_at_k": {"k": 200, "lift": 2.514}},
+        feature_spec={}, training_rows=100, trained_at=djtz.now(),
+    )
+    decision = registry.gate(
+        challenger=1.1,
+        **registry.incumbent_context(MLModel.Name.ANOMALY, "precision_at_k.lift"),
+        baseline=1.0, lower_is_better=False, margin=0.02,
+    )
+    assert decision["promote"] is False
+    assert decision["incumbent_basis"] != "no_incumbent"
 
 
 def test_a_tie_does_not_unseat_a_model_that_is_still_current():
