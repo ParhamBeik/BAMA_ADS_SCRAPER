@@ -203,11 +203,20 @@ def incumbent_context(name: str, key: str, *, feature_spec: dict | None = None) 
     recomputed: it is the number that was measured on the incumbent's holdout,
     and recomputing it today would reintroduce the very mismatch this fixes.
     """
-    score = incumbent_metric(name, key, feature_spec=feature_spec)
-    if score is None:
+    current = active(name)
+    if current is None:
         return {"incumbent": None, "incumbent_baseline": None,
                 "incumbent_age_days": None}
-    current = active(name)
+    if (feature_spec is not None
+            and task_signature(current.feature_spec) != task_signature(feature_spec)):
+        return {"incumbent": None, "incumbent_baseline": None,
+                "incumbent_age_days": None}
+    score = incumbent_metric(name, key, feature_spec=feature_spec)
+    if score is None:
+        # Live row, readable task, unreadable number. Treating that as
+        # "nothing to beat" is how a missing key promoted freely.
+        return {"incumbent": None, "incumbent_baseline": None,
+                "incumbent_age_days": None, "incumbent_unreadable": True}
     promotion = (current.metrics or {}).get("promotion") or {}
     baseline = promotion.get("baseline")
     age = None
@@ -310,7 +319,8 @@ def gate(*, challenger: float | None, incumbent: float | None, baseline: float |
          veto: tuple[bool, str] | None = None,
          incumbent_baseline: float | None = None,
          incumbent_age_days: float | None = None,
-         incumbent_rescored: bool = False) -> dict:
+         incumbent_rescored: bool = False,
+         incumbent_unreadable: bool = False) -> dict:
     """The promotion decision, as data.
 
     A challenger must beat **both** the model it would replace and the
@@ -368,6 +378,10 @@ def gate(*, challenger: float | None, incumbent: float | None, baseline: float |
     if veto is not None and veto[0]:
         return {"promote": False, "reason": veto[1], "vetoed": True,
                 "challenger": challenger, "incumbent": incumbent, "baseline": baseline}
+    if incumbent_unreadable:
+        return {"promote": False, "reason": "incumbent_metric_missing",
+                "challenger": challenger, "incumbent": incumbent, "baseline": baseline,
+                "incumbent_unreadable": True}
     if challenger is None:
         return {"promote": False, "reason": "no_challenger_metric",
                 "challenger": None, "incumbent": incumbent, "baseline": baseline}

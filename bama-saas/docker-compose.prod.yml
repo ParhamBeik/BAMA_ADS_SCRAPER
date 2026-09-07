@@ -30,6 +30,10 @@ x-django-env: &django-env
   BAMA_PAGE_PAUSE: ${BAMA_PAGE_PAUSE:-1.5}
   BAMA_REQUEST_TIMEOUT: ${BAMA_REQUEST_TIMEOUT:-20}
   BAMA_COOKIE: ${BAMA_COOKIE:-}
+  # `:-` not `:?`: a missing key becomes "" and the container starts. That is
+  # how four notification channels went silent on 2026-09-07 with the name
+  # still listed in `docker exec env`. `check_telegram_configured` is the
+  # check that notices; test the value's length, not whether the name exists.
   BAMA_TELEGRAM_TOKEN: ${BAMA_TELEGRAM_TOKEN:-}
   REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
   # Where trained model artifacts live. Every service agrees on the path; they

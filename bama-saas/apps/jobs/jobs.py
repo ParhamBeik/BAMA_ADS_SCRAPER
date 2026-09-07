@@ -32,6 +32,7 @@ from apps.core.models import (
     JobRun,
     ListingEpisode,
     MarketIndex,
+    NotifierSettings,
     PageCoverage,
 )
 from apps.core.notify import (
@@ -1347,16 +1348,15 @@ MODEL_STALE_AFTER = timedelta(days=4)
 # challenger while the promotion gate did exactly what it was written to do.
 _HOLD_REASONS = frozenset({
     "loses_to_incumbent", "loses_to_baseline", "loses_to_both",
-    "no_challenger_metric",
 })
 
 
 def check_model_staleness(now=None) -> Check:
     """Is anything still serving predictions from a model nobody can replace?
 
-    Old is not stuck. This fails only when a newer challenger exists and was
-    refused for a reason that suggests the gate or trainer is broken — not when
-    the challenger genuinely lost on the holdout.
+    Old is not stuck when a newer challenger lost on the holdout. It is stuck
+    when the trainer has gone silent (no newer row) or when the newest row was
+    refused for a reason that is not a real holdout loss.
     """
     from apps.ml.models import MLModel
 
@@ -1370,6 +1370,12 @@ def check_model_staleness(now=None) -> Check:
                   .order_by("-version").values("version", "metrics").first()) or {}
         latest_version = newest.get("version")
         if latest_version is None or latest_version == record.version:
+            # No newer row: the trainer is silent, not holding a winner.
+            stuck.append({
+                "name": record.name, "serving": record.version,
+                "age_days": round((now - record.trained_at).total_seconds() / 86400, 1),
+                "latest": record.version, "refused_because": "no_challenger_trained",
+            })
             continue
         reason = ((newest.get("metrics") or {}).get("promotion") or {}).get("reason", "?")
         row = {"name": record.name, "serving": record.version,
@@ -1456,6 +1462,67 @@ def check_backup_freshness(now=None) -> Check:
                  f"{hours:.0f}h old ({data['size_mb']:.0f}MB).", data)
 
 
+def check_telegram_configured(now=None) -> Check:
+    """Can any live sender actually reach Telegram?
+
+    The chat id and ``enabled`` flag live in the database and can look fully
+    configured while the token is an empty string. Compose spells it
+    ``${BAMA_TELEGRAM_TOKEN:-}``, so a missing ``.env.production`` key resolves
+    to ``""`` without error, and ``docker exec env`` still lists the name.
+    That combination silenced four channels on 2026-09-07 — the deal feed, the
+    per-user alerts, the health alerts, and the backup script's own failure
+    alarm — with zero errors anywhere.
+
+    The operator switch is not the only sender. Per-user alert rules and the
+    nightly backup script read the same token and ignore that switch. Empty
+    token is a laptop only when nothing here is trying to send.
+    """
+    from apps.accounts.models import AlertRule
+
+    cfg = NotifierSettings.load()
+    token = (getattr(settings, "BAMA_TELEGRAM_TOKEN", "") or "").strip()
+    chat = (cfg.telegram_chat_id or "").strip()
+    has_token = bool(token)
+    has_chat = bool(chat)
+    user_chats = AlertRule.objects.filter(enabled=True, telegram_chat_id__gt="").exists()
+    backups_configured = bool(getattr(settings, "BAMA_BACKUP_DIR", "") or "")
+    needs_token = cfg.enabled or user_chats or backups_configured
+    # Length only. The value is a secret and must not land in JobRun.detail,
+    # the Control page, or a health-alert message.
+    data = {"enabled": cfg.enabled, "has_chat": has_chat, "has_token": has_token,
+            "token_len": len(token), "user_chats": user_chats,
+            "backups_configured": backups_configured}
+    if not has_token and not needs_token:
+        return Check("telegram_configured", True,
+                     "No live sender needs a token; an empty one is expected.", data)
+    if has_token and (not cfg.enabled or has_chat):
+        return Check("telegram_configured", True,
+                     "A sender is live and the token is present.", data)
+    missing = []
+    if not has_token:
+        missing.append("token")
+    if cfg.enabled and not has_chat:
+        missing.append("chat id")
+    joined = " and ".join(missing)
+    verb = "is" if len(missing) == 1 else "are"
+    who = []
+    if cfg.enabled:
+        who.append("operator")
+    if user_chats:
+        who.append("user alerts")
+    if backups_configured:
+        who.append("backups")
+    return Check(
+        "telegram_configured", False,
+        f"{' / '.join(who) or 'Notifier'} "
+        f"{'needs' if len(who) == 1 else 'need'} a working channel but {joined} "
+        f"{verb} empty. A missing BAMA_TELEGRAM_TOKEN key becomes \"\" in "
+        f"compose without error; check the value's length, not whether the "
+        f"name exists.",
+        data,
+    )
+
+
 # Source block first: when it is active it is the cause of everything below, and
 # reading the consequences before the cause wastes the operator's time.
 # `upstream_outage` sits beside it for the same reason: both say "the problem is
@@ -1466,7 +1533,8 @@ def check_backup_freshness(now=None) -> Check:
 CHECKS = (check_source_block, check_upstream_outage,
           check_sweep_freshness, check_coverage_progress, check_removal_detection,
           check_failed_runs, check_reject_spike, check_ingest_progress,
-          check_model_staleness, check_backup_freshness)
+          check_model_staleness, check_backup_freshness,
+          check_telegram_configured)
 
 
 def run_checks(now=None) -> list[Check]:

@@ -353,6 +353,36 @@ def test_a_missing_challenger_metric_refuses_rather_than_defaulting():
                          baseline=1.0)["reason"] == "no_challenger_metric"
 
 
+def test_a_live_model_with_an_unreadable_metric_is_refused():
+    """A missing stored score used to read as nothing to beat and promote."""
+    decision = registry.gate(
+        challenger=1.0, incumbent=None, baseline=2.0,
+        incumbent_unreadable=True)
+    assert decision["promote"] is False
+    assert decision["reason"] == "incumbent_metric_missing"
+
+
+@pytest.mark.django_db
+def test_incumbent_context_marks_a_live_row_whose_metric_is_gone():
+    MLModel.objects.create(
+        name=MLModel.Name.PRICE, version=1, algorithm="lgbm",
+        status=MLModel.Status.ACTIVE, trained_at=djtz.now(), training_rows=1000,
+        feature_spec={"columns": ["x"]}, metrics={}, artifact_path="x")
+    ctx = registry.incumbent_context(
+        MLModel.Name.PRICE, "pinball_mean", feature_spec={"columns": ["x"]})
+    assert ctx["incumbent_unreadable"] is True
+    assert registry.gate(challenger=0.02, baseline=0.04, **ctx)["reason"] == (
+        "incumbent_metric_missing")
+
+
+def test_empty_exam_rows_do_not_invent_a_perfect_incumbent():
+    from apps.ml.train import _rescore_price_incumbent
+
+    spec = features.fit_spec([], now=djtz.now())
+    pinball, rec = _rescore_price_incumbent([], [], [], [], spec)
+    assert pinball is None and rec is None
+
+
 # ---------------------------------------------------------------------------
 # Comparing two models that sat different exams
 # ---------------------------------------------------------------------------

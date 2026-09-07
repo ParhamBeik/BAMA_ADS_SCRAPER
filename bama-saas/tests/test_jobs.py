@@ -43,6 +43,7 @@ from apps.jobs.jobs import (
     check_reject_spike,
     check_removal_detection,
     check_sweep_freshness,
+    check_telegram_configured,
     check_upstream_outage,
     health,
     prune,
@@ -626,6 +627,99 @@ def test_a_rejected_archive_does_not_count_as_a_backup(tmp_path, settings):
     assert check_backup_freshness(NOW).ok is False
 
 
+def _notifier(settings, *, enabled, chat="", token=""):
+    """Singleton row + env token, the two halves of a sendable channel."""
+    from apps.core.models import NotifierSettings
+
+    settings.BAMA_TELEGRAM_TOKEN = token
+    cfg = NotifierSettings.load()
+    cfg.enabled = enabled
+    cfg.telegram_chat_id = chat
+    cfg.save()
+    return cfg
+
+
+@pytest.mark.django_db
+def test_telegram_configured_is_silent_when_the_notifier_is_off(settings):
+    """A laptop with no bot token is not an incident. The check must stay
+    green when nothing is trying to send, or every dev run reports a fake outage."""
+    settings.BAMA_BACKUP_DIR = ""
+    _notifier(settings, enabled=False, token="")
+    check = check_telegram_configured(NOW)
+    assert check.ok is True
+    assert check.data["has_token"] is False
+
+
+@pytest.mark.django_db
+def test_telegram_configured_goes_red_when_enabled_with_an_empty_token(settings):
+    """The failure compose cannot see: the chat id and enabled flag look
+    configured in the database while BAMA_TELEGRAM_TOKEN is empty."""
+    _notifier(settings, enabled=True, chat="78455553", token="")
+    check = check_telegram_configured()
+    assert check.ok is False
+    assert check.data["has_chat"] is True
+    assert check.data["has_token"] is False
+    assert check.data["token_len"] == 0
+    assert "empty" in check.detail
+    assert "check raised" not in check.detail
+
+
+@pytest.mark.django_db
+def test_telegram_configured_goes_red_when_enabled_without_a_chat_id(settings):
+    _notifier(settings, enabled=True, chat="", token="123:placeholder")
+    check = check_telegram_configured()
+    assert check.ok is False
+    assert check.data["has_token"] is True
+    assert "chat id" in check.detail
+    assert "123:placeholder" not in check.detail
+    assert "123:placeholder" not in str(check.data)
+
+
+@pytest.mark.django_db
+def test_telegram_configured_passes_when_both_halves_are_present(settings):
+    _notifier(settings, enabled=True, chat="78455553", token="123:placeholder")
+    check = check_telegram_configured()
+    assert check.ok is True
+    assert check.data["has_token"] is True
+    assert check.data["has_chat"] is True
+    assert "123:placeholder" not in check.detail
+    assert "123:placeholder" not in str(check.data)
+
+
+@pytest.mark.django_db
+def test_telegram_configured_treats_whitespace_chat_id_as_missing(settings):
+    settings.BAMA_BACKUP_DIR = ""
+    _notifier(settings, enabled=True, chat="   ", token="123:placeholder")
+    check = check_telegram_configured()
+    assert check.ok is False
+    assert check.data["has_chat"] is False
+    assert "chat id" in check.detail
+    assert "123:placeholder" not in check.detail
+
+
+@pytest.mark.django_db
+def test_telegram_configured_goes_red_when_backups_need_a_token(settings, tmp_path):
+    """The backup script pages with the same token and ignores the operator switch."""
+    settings.BAMA_BACKUP_DIR = str(tmp_path)
+    _notifier(settings, enabled=False, token="")
+    check = check_telegram_configured(NOW)
+    assert check.ok is False
+    assert check.data["backups_configured"] is True
+
+
+@pytest.mark.django_db
+def test_telegram_configured_goes_red_when_a_user_rule_needs_a_token(settings):
+    from apps.accounts.models import AlertRule, User
+
+    settings.BAMA_BACKUP_DIR = ""
+    _notifier(settings, enabled=False, token="")
+    user = User.objects.create_user(email="alert@example.com", password="StrongPass1!")
+    AlertRule.objects.create(user=user, telegram_chat_id="78455553", enabled=True)
+    check = check_telegram_configured(NOW)
+    assert check.ok is False
+    assert check.data["user_chats"] is True
+
+
 @pytest.mark.django_db
 def test_sweep_freshness_fails_without_any_coverage():
     assert check_sweep_freshness(NOW).ok is False
@@ -661,15 +755,33 @@ def test_sweep_freshness_passes_on_coverage_assembled_from_partial_runs():
 
 @pytest.mark.django_db
 def test_sweep_freshness_passes_within_gap_tolerance():
-    """One page of slack matches removal detection — not a false FAIL."""
+    """One page of slack matches removal detection — not a false FAIL.
+
+    `_cover(1, 100)` writes page_index=0. Updating page_index=1 matched nothing
+    and the test never opened a gap.
+    """
     from apps.jobs.fetcher import COVERAGE_GAP_TOLERANCE_RANKS
 
     run = _run()
     _cover(1, 100, at=NOW - timedelta(hours=1), run=run)
-    PageCoverage.objects.filter(fetch_run=run, page_index=1).update(rank_lo=37)
+    # ranks 1-15 uncovered; 15 <= one page of slack.
+    PageCoverage.objects.filter(fetch_run=run, page_index=0).update(rank_lo=16)
     check = check_sweep_freshness(NOW)
     assert check.ok is True
-    assert check.data["missing_ranks"] <= COVERAGE_GAP_TOLERANCE_RANKS
+    assert 0 < check.data["missing_ranks"] <= COVERAGE_GAP_TOLERANCE_RANKS
+
+
+@pytest.mark.django_db
+def test_sweep_freshness_fails_when_the_gap_exceeds_one_page():
+    from apps.jobs.fetcher import COVERAGE_GAP_TOLERANCE_RANKS
+
+    run = _run()
+    _cover(1, 100, at=NOW - timedelta(hours=1), run=run)
+    # ranks 1-61 uncovered; more than one page.
+    PageCoverage.objects.filter(fetch_run=run, page_index=0).update(rank_lo=62)
+    check = check_sweep_freshness(NOW)
+    assert check.ok is False
+    assert check.data["missing_ranks"] > COVERAGE_GAP_TOLERANCE_RANKS
 
 
 @pytest.mark.django_db
@@ -710,6 +822,42 @@ def test_model_staleness_fails_when_refusal_is_not_a_legitimate_hold():
     check = check_model_staleness(NOW)
     assert check.ok is False
     assert check.data["stuck"]
+
+
+@pytest.mark.django_db
+def test_model_staleness_fails_when_no_newer_version_exists():
+    """A trainer that stops producing rows is stuck, not correctly held."""
+    from apps.ml.models import MLModel
+
+    active = MLModel.objects.create(
+        name="price", version=1, status=MLModel.Status.ACTIVE,
+        algorithm="test",
+    )
+    MLModel.objects.filter(pk=active.pk).update(trained_at=NOW - timedelta(days=5))
+    check = check_model_staleness(NOW)
+    assert check.ok is False
+    assert check.data["stuck"]
+    assert check.data["stuck"][0]["refused_because"] == "no_challenger_trained"
+
+
+@pytest.mark.django_db
+def test_model_staleness_fails_when_the_trainer_wrote_no_metric():
+    """A nightly row with no_challenger_metric is a broken train, not a hold."""
+    from apps.ml.models import MLModel
+
+    active = MLModel.objects.create(
+        name="price", version=1, status=MLModel.Status.ACTIVE,
+        algorithm="test",
+    )
+    MLModel.objects.filter(pk=active.pk).update(trained_at=NOW - timedelta(days=5))
+    MLModel.objects.create(
+        name="price", version=2, status=MLModel.Status.SHADOW,
+        algorithm="test",
+        metrics={"promotion": {"reason": "no_challenger_metric"}},
+    )
+    check = check_model_staleness(NOW)
+    assert check.ok is False
+    assert check.data["stuck"][0]["refused_because"] == "no_challenger_metric"
 
 
 @pytest.mark.django_db
@@ -1007,8 +1155,9 @@ def test_run_checks_returns_every_check():
     assert {c.name for c in results} == {
         "source_block", "upstream_outage", "sweep_freshness", "coverage_progress",
         "removal_detection", "failed_runs", "reject_spike", "ingest_progress",
-        "model_staleness", "backup_freshness",
+        "model_staleness", "backup_freshness", "telegram_configured",
     }
+    assert all(not c.detail.startswith("check raised") for c in results)
 
 
 # ---------------------------------------------------------------------------

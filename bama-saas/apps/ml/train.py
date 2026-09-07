@@ -468,8 +468,13 @@ def train_price() -> dict:
     # that mean the same thing. Falls back to the stored-score comparison when
     # the incumbent cannot be re-run — a missing artifact, a changed task —
     # because that is still better than treating it as nothing to beat.
+    # Same denominator the challenger used. Below MIN_HOLDOUT_ROWS the
+    # challenger is scored on the full holdout; scoring the incumbent on the
+    # thin q_rows subset (or on nothing, which pinball turns into 0.0) would
+    # compare two different exams and can invent a perfect incumbent.
+    exam_rows = q_rows if len(q_rows) >= MIN_HOLDOUT_ROWS else list(range(len(holdout)))
     incumbent_pinball, incumbent_record = _rescore_price_incumbent(
-        holdout, hold_offset, q_rows, log_actual, spec)
+        holdout, hold_offset, exam_rows, log_actual, spec)
     if incumbent_pinball is not None:
         measured["incumbent_rescored"] = {
             "version": incumbent_record.version,
@@ -575,6 +580,8 @@ def _rescore_price_incumbent(holdout, hold_offset, q_rows, log_actual, spec):
     """
     import numpy as np
 
+    if not q_rows:
+        return None, None
     record, payload = registry.incumbent_artifact(
         MLModel.Name.PRICE, feature_spec=spec.to_json())
     if record is None:
@@ -592,15 +599,15 @@ def _rescore_price_incumbent(holdout, hold_offset, q_rows, log_actual, spec):
             raw = boosters[str(alpha)].predict(x_hold)
             widened = raw + (delta if alpha == 0.9 else -delta if alpha == 0.1 else 0.0)
             preds[alpha] = np.exp(widened + hold_offset)
-        # Scored on exactly the rows the challenger was scored on — the subset
-        # where the cohort could draw a band — so neither side is credited for
-        # the other's refusals, and neither for a different denominator.
+        # Scored on exactly the rows the challenger was scored on.
         truth_q = [log_actual[i] for i in q_rows]
         losses = {
             a: metrics.pinball_loss(
-                truth_q, [math.log(max(preds[a][i], 1)) for i in q_rows], a) or 0.0
+                truth_q, [math.log(max(preds[a][i], 1)) for i in q_rows], a)
             for a in QUANTILES
         }
+        if any(v is None for v in losses.values()):
+            return None, None
     except Exception as exc:  # noqa: BLE001 — a stale artifact must not stop training
         logger.warning("ml.incumbent_rescore_failed name=price version=%s error=%r",
                        record.version, exc)
