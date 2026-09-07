@@ -676,11 +676,13 @@ def test_sweep_freshness_passes_within_gap_tolerance():
 def test_model_staleness_passes_when_incumbent_is_correctly_held():
     from apps.ml.models import MLModel
 
-    MLModel.objects.create(
+    active = MLModel.objects.create(
         name="price", version=1, status=MLModel.Status.ACTIVE,
-        algorithm="test", trained_at=NOW - timedelta(days=5),
+        algorithm="test",
         metrics={"promotion": {"reason": "beats_incumbent_and_baseline"}},
     )
+    # trained_at is auto_now_add — create() ignores an explicit backdate.
+    MLModel.objects.filter(pk=active.pk).update(trained_at=NOW - timedelta(days=5))
     MLModel.objects.create(
         name="price", version=2, status=MLModel.Status.SHADOW,
         algorithm="test",
@@ -695,10 +697,11 @@ def test_model_staleness_passes_when_incumbent_is_correctly_held():
 def test_model_staleness_fails_when_refusal_is_not_a_legitimate_hold():
     from apps.ml.models import MLModel
 
-    MLModel.objects.create(
+    active = MLModel.objects.create(
         name="price", version=1, status=MLModel.Status.ACTIVE,
-        algorithm="test", trained_at=NOW - timedelta(days=5),
+        algorithm="test",
     )
+    MLModel.objects.filter(pk=active.pk).update(trained_at=NOW - timedelta(days=5))
     MLModel.objects.create(
         name="price", version=2, status=MLModel.Status.SHADOW,
         algorithm="test",
