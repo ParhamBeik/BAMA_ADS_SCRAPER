@@ -404,7 +404,7 @@ function MoversPanel({ days }: { days: number }) {
         value={scope}
         onValueChange={(next) => filters.set({ movers: next === "model" ? null : next })}
       >
-        <TabsList className="mb-3">
+        <TabsList className="mb-3 max-w-full">
           {MOVER_SCOPES.map((s) => (
             <TabsTrigger key={s.id} value={s.id}>{s.label}</TabsTrigger>
           ))}
@@ -633,8 +633,8 @@ export function Home() {
 
   return (
     <div className="stack">
-      <div className="row between" style={{ marginBottom: 2 }}>
-        <div>
+      <div className="row between gap-y-2" style={{ marginBottom: 2 }}>
+        <div className="min-w-0">
           <h1 style={{ margin: 0, fontSize: 22, letterSpacing: "-0.01em" }}>
             نبض بازار خودرو
           </h1>
@@ -642,7 +642,7 @@ export function Home() {
             وضعیت امروز بازار، بر پایه آگهی‌های باما
           </p>
         </div>
-        <WindowPicker defaultDays={DEFAULT_DAYS} />
+        <WindowPicker className="w-full sm:w-auto" defaultDays={DEFAULT_DAYS} />
       </div>
 
       <Card title="شاخص قیمت با کنترل ترکیب آگهی‌ها">
