@@ -174,7 +174,7 @@ function NotifierPanel() {
       <PopoverTrigger asChild>
         <Button variant="outline" size="sm">
           <Bell className="size-4" />
-          اعلان تلگرام
+          <span className="hidden sm:inline">اعلان تلگرام</span>
           <span className={`badge ${form.enabled ? "ok" : ""}`}>
             {form.enabled ? "روشن" : "خاموش"}
           </span>
@@ -347,8 +347,9 @@ export function Deals() {
 
   return (
     <div className="stack">
-      <div className="row between">
+      <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <Tabs
+          className="min-w-0"
           value={band}
           onValueChange={(next) =>
             filters.set({ band: next === "top" ? null : next, page: null })
@@ -360,7 +361,9 @@ export function Deals() {
             ))}
           </TabsList>
         </Tabs>
-        <NotifierPanel />
+        <div className="shrink-0 self-end sm:self-auto">
+          <NotifierPanel />
+        </div>
       </div>
 
       {/* The thresholds are computed, so the page quotes them rather than

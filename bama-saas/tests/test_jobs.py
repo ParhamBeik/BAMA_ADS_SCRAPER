@@ -39,6 +39,7 @@ from apps.jobs.jobs import (
     check_coverage_progress,
     check_failed_runs,
     check_ingest_progress,
+    check_model_staleness,
     check_reject_spike,
     check_removal_detection,
     check_sweep_freshness,
@@ -656,6 +657,56 @@ def test_sweep_freshness_passes_on_coverage_assembled_from_partial_runs():
     for lo in (1, 26, 51, 76):
         _cover(lo, lo + 24, at=NOW - timedelta(hours=1))
     assert check_sweep_freshness(NOW).ok is True
+
+
+@pytest.mark.django_db
+def test_sweep_freshness_passes_within_gap_tolerance():
+    """One page of slack matches removal detection — not a false FAIL."""
+    from apps.jobs.fetcher import COVERAGE_GAP_TOLERANCE_RANKS
+
+    run = _run()
+    _cover(1, 100, at=NOW - timedelta(hours=1), run=run)
+    PageCoverage.objects.filter(fetch_run=run, page_index=1).update(rank_lo=37)
+    check = check_sweep_freshness(NOW)
+    assert check.ok is True
+    assert check.data["missing_ranks"] <= COVERAGE_GAP_TOLERANCE_RANKS
+
+
+@pytest.mark.django_db
+def test_model_staleness_passes_when_incumbent_is_correctly_held():
+    from apps.ml.models import MLModel
+
+    MLModel.objects.create(
+        name="price", version=1, status=MLModel.Status.ACTIVE,
+        algorithm="test", trained_at=NOW - timedelta(days=5),
+        metrics={"promotion": {"reason": "beats_incumbent_and_baseline"}},
+    )
+    MLModel.objects.create(
+        name="price", version=2, status=MLModel.Status.SHADOW,
+        algorithm="test",
+        metrics={"promotion": {"reason": "loses_to_baseline"}},
+    )
+    check = check_model_staleness(NOW)
+    assert check.ok is True
+    assert check.data["held"]
+
+
+@pytest.mark.django_db
+def test_model_staleness_fails_when_refusal_is_not_a_legitimate_hold():
+    from apps.ml.models import MLModel
+
+    MLModel.objects.create(
+        name="price", version=1, status=MLModel.Status.ACTIVE,
+        algorithm="test", trained_at=NOW - timedelta(days=5),
+    )
+    MLModel.objects.create(
+        name="price", version=2, status=MLModel.Status.SHADOW,
+        algorithm="test",
+        metrics={"promotion": {"reason": "coverage_veto"}},
+    )
+    check = check_model_staleness(NOW)
+    assert check.ok is False
+    assert check.data["stuck"]
 
 
 @pytest.mark.django_db

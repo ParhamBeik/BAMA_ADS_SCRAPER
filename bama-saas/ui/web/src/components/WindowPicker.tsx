@@ -19,6 +19,7 @@ import type { DateObject } from "react-multi-date-picker";
 import { CalendarDays } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { cn } from "@/lib/utils";
 import { useFilters } from "@/filters";
 
 /**
@@ -47,14 +48,20 @@ function daysSince(date: DateObject): number {
   return Math.max(2, Math.round((today.getTime() - chosen.getTime()) / 86_400_000));
 }
 
-export function WindowPicker({ defaultDays = 30 }: { defaultDays?: number }) {
+export function WindowPicker({
+  defaultDays = 30,
+  className,
+}: {
+  defaultDays?: number;
+  className?: string;
+}) {
   const filters = useFilters();
   const [open, setOpen] = useState(false);
   const days = filters.getInt("days") ?? defaultDays;
   const isPreset = PRESETS.some(([, d]) => d === days);
 
   return (
-    <div className="flex flex-wrap items-center gap-1">
+    <div className={cn("flex min-w-0 max-w-full flex-wrap items-center gap-1", className)}>
       {PRESETS.map(([label, value]) => (
         <Button
           key={value}

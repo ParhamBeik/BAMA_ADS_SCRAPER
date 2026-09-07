@@ -1185,7 +1185,12 @@ main:focus { outline: none; }
    because the children fit side by side anyway. */
 @media (max-width: 560px) {
   .row.between { flex-wrap: wrap; }
-  .card { overflow-x: clip; }
+  /* Tab rows scroll inside the card; clipping them hid the overflow on Home/Deals. */
+  .card:not(:has([data-slot="tabs-list"])) { overflow-x: clip; }
+  [data-slot="tabs-list"] {
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
 }
 
 /* --- price verdict --------------------------------------------------------

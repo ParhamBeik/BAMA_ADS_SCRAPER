@@ -46,6 +46,7 @@ from apps.core.pricing import compute_deal_scores, deal_window, refresh_cohort_d
 from apps.core.quality import verified
 from apps.core.research import build_index
 from apps.jobs.fetcher import (
+    COVERAGE_GAP_TOLERANCE_RANKS,
     COVERAGE_REFRESH_HOURS,
     COVERAGE_WINDOW_HOURS,
     FIRST_PAGE,
@@ -63,6 +64,7 @@ from apps.jobs.fetcher import (
     is_waf_block,
     known_feed_depth,
     plan_backfill,
+    uncovered_ranks,
     warmup,
 )
 from apps.jobs.parsing import absolute_ad_url
@@ -1088,6 +1090,10 @@ def check_sweep_freshness(now=None) -> Check:
     Coverage accumulates across runs, so a feed can be fully covered by several
     partial sweeps with no run setting ``reached_end`` at all — asking for that
     flag reported permanent failure while the crawler worked correctly.
+
+    Uses the same slack as ``coverage_is_complete`` and removal detection: up
+    to one page of uncovered ranks is normal on a live feed and must not read
+    as a failed sweep while removal detection is green.
     """
     now = now or timezone.now()
     depth = known_feed_depth()
@@ -1097,16 +1103,20 @@ def check_sweep_freshness(now=None) -> Check:
             "No pages fetched in the depth window, so feed depth is unknown. "
             "Nothing can be proven about coverage and removal detection stays disabled.",
         )
-    gaps = find_gaps(since=now - timedelta(hours=COVERAGE_WINDOW_HOURS), max_rank=depth)
-    missing = sum(hi - lo + 1 for lo, hi in gaps)
+    since = now - timedelta(hours=COVERAGE_WINDOW_HOURS)
+    gaps = find_gaps(since=since, max_rank=depth)
+    missing = uncovered_ranks(gaps)
+    complete = missing <= COVERAGE_GAP_TOLERANCE_RANKS
     detail = (
-        f"Feed fully covered in the last {COVERAGE_WINDOW_HOURS:.0f}h (ceiling {depth})."
-        if not gaps else
+        f"Feed fully covered in the last {COVERAGE_WINDOW_HOURS:.0f}h "
+        f"(ceiling {depth}, ≤{COVERAGE_GAP_TOLERANCE_RANKS} rank slack)."
+        if complete else
         f"{len(gaps)} uncovered rank range(s) (~{missing} ad slots) in the last "
         f"{COVERAGE_WINDOW_HOURS:.0f}h; removal detection is paused until closed."
     )
-    return Check("sweep_freshness", not gaps, detail,
-                 {"feed_depth": depth, "gap_count": len(gaps), "missing_ranks": missing})
+    return Check("sweep_freshness", complete, detail,
+                 {"feed_depth": depth, "gap_count": len(gaps), "missing_ranks": missing,
+                  "tolerance_ranks": COVERAGE_GAP_TOLERANCE_RANKS})
 
 
 def check_failed_runs(now=None) -> Check:
@@ -1331,31 +1341,59 @@ def check_removal_detection(now=None) -> Check:
 # only the first one was on the page.
 MODEL_STALE_AFTER = timedelta(days=4)
 
+# Nightly training refused the challenger for one of these reasons — the
+# incumbent is correctly held, not stuck. Reporting that as ops failure made
+# `model_staleness` red for two models that were legitimately beating every
+# challenger while the promotion gate did exactly what it was written to do.
+_HOLD_REASONS = frozenset({
+    "loses_to_incumbent", "loses_to_baseline", "loses_to_both",
+    "no_challenger_metric",
+})
+
 
 def check_model_staleness(now=None) -> Check:
-    """Is anything still serving predictions from a model nobody can replace?"""
+    """Is anything still serving predictions from a model nobody can replace?
+
+    Old is not stuck. This fails only when a newer challenger exists and was
+    refused for a reason that suggests the gate or trainer is broken — not when
+    the challenger genuinely lost on the holdout.
+    """
     from apps.ml.models import MLModel
 
     now = now or timezone.now()
-    stale = []
+    stuck = []
+    held = []
     for record in MLModel.objects.filter(status=MLModel.Status.ACTIVE):
         if not record.trained_at or now - record.trained_at <= MODEL_STALE_AFTER:
             continue
         newest = (MLModel.objects.filter(name=record.name)
                   .order_by("-version").values("version", "metrics").first()) or {}
+        latest_version = newest.get("version")
+        if latest_version is None or latest_version == record.version:
+            continue
         reason = ((newest.get("metrics") or {}).get("promotion") or {}).get("reason", "?")
-        stale.append({"name": record.name, "serving": record.version,
-                      "age_days": round((now - record.trained_at).total_seconds() / 86400, 1),
-                      "latest": newest.get("version"), "refused_because": reason})
-    if not stale:
-        return Check("model_staleness", True, "Every active model is current.")
+        row = {"name": record.name, "serving": record.version,
+               "age_days": round((now - record.trained_at).total_seconds() / 86400, 1),
+               "latest": latest_version, "refused_because": reason}
+        if reason in _HOLD_REASONS:
+            held.append(row)
+            continue
+        stuck.append(row)
+    if not stuck:
+        detail = "Every active model is current."
+        if held:
+            detail += (
+                f" {len(held)} older incumbent(s) correctly held after nightly "
+                f"training refused a worse challenger."
+            )
+        return Check("model_staleness", True, detail, {"held": held})
     detail = "; ".join(
         f"{m['name']} serving v{m['serving']} ({m['age_days']:.0f}d old), "
-        f"v{m['latest']} refused: {m['refused_because']}" for m in stale
+        f"v{m['latest']} refused: {m['refused_because']}" for m in stuck
     )
     return Check("model_staleness", False,
-                 f"{len(stale)} model(s) stuck on a stale version. {detail}",
-                 {"stale": stale})
+                 f"{len(stuck)} model(s) stuck on a stale version. {detail}",
+                 {"stuck": stuck, "held": held})
 
 
 # A nightly job that stops running produces silence, and silence is what success
