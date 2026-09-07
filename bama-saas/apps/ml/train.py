@@ -575,12 +575,14 @@ def _rescore_price_incumbent(holdout, hold_offset, q_rows, log_actual, spec):
     """
     import numpy as np
 
-    record, artifact = registry.incumbent_artifact(
+    record, payload = registry.incumbent_artifact(
         MLModel.Name.PRICE, feature_spec=spec.to_json())
     if record is None:
         return None, None
     try:
-        payload = artifact["payload"]
+        # `registry.load` returns the payload itself. `inference` wraps it as
+        # {"record", "payload"} for its own cache, which is that module's shape
+        # and not this one's — reaching for ["payload"] here found nothing.
         boosters = payload["boosters"]
         delta = float(payload.get("conformal_delta", 0.0))
         their_spec = features.FeatureSpec.from_json(payload["spec"])

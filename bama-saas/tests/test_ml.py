@@ -450,6 +450,51 @@ def test_a_rescored_incumbent_still_wins_when_it_is_genuinely_better():
 
 
 @pytest.mark.django_db
+def test_a_loaded_artifact_is_the_payload_itself_not_a_wrapper(tmp_path, settings):
+    """`registry.load` returns what `registry.save` was given. `inference` wraps
+    it as {"record", "payload"} for its own cache, and that wrapper is that
+    module's shape, not the registry's — reaching for ["payload"] on a freshly
+    loaded artifact finds nothing.
+
+    Pinned because the price re-scoring did exactly that and failed closed: the
+    gate fell back to the stored-score comparison and the only evidence was one
+    `ml.incumbent_rescore_failed` line in a log nobody was reading."""
+    settings.ML_ARTIFACT_DIR = tmp_path
+    payload = {"boosters": {"0.5": "stand-in"}, "spec": {"columns": []},
+               "conformal_delta": 0.25, "target": "log_ratio_to_peer_median"}
+    record = MLModel.objects.create(
+        name=MLModel.Name.PRICE, version=1, status=MLModel.Status.ACTIVE,
+        algorithm="lightgbm", artifact_path=registry.save(MLModel.Name.PRICE, 1, payload),
+        metrics={}, feature_spec={}, training_rows=100, trained_at=djtz.now(),
+    )
+    assert registry.load(record) == payload
+
+    found, loaded = registry.incumbent_artifact(MLModel.Name.PRICE)
+    assert found.version == 1
+    # The four keys `_rescore_price_incumbent` reaches for, at the top level.
+    assert loaded["boosters"]["0.5"] == "stand-in"
+    assert loaded["conformal_delta"] == 0.25
+    assert "spec" in loaded
+
+
+@pytest.mark.django_db
+def test_re_scoring_refuses_rather_than_failing_the_nightly_train(tmp_path, settings):
+    """An artifact the volume no longer has is a normal state — the volume can
+    be recreated empty. The gate must fall back, not take training down."""
+    settings.ML_ARTIFACT_DIR = tmp_path
+    MLModel.objects.create(
+        name=MLModel.Name.PRICE, version=1, status=MLModel.Status.ACTIVE,
+        algorithm="lightgbm", artifact_path=str(tmp_path / "vanished.joblib"),
+        metrics={"pinball_mean": 0.026}, feature_spec={}, training_rows=100,
+        trained_at=djtz.now(),
+    )
+    assert registry.incumbent_artifact(MLModel.Name.PRICE) == (None, None)
+    # And the stored-score path still answers, so the gate keeps an incumbent.
+    assert registry.incumbent_context(
+        MLModel.Name.PRICE, "pinball_mean")["incumbent"] == pytest.approx(0.026)
+
+
+@pytest.mark.django_db
 def test_a_nested_metric_can_still_decide_a_promotion():
     """`lift` lives at `precision_at_k.lift`. The anomaly gate asked for a
     top-level `lift`, got None, and `gate` reads a missing incumbent as "nothing
