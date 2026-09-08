@@ -43,4 +43,8 @@ compose stop django worker
 compose run --rm --no-deps django python manage.py migrate --noinput
 
 compose up -d
+# Image cache leaves frontend running yesterday's container when its layer
+# did not change. Recreate it every deploy so the public site matches the
+# backend that just came up.
+compose up -d --force-recreate --no-deps frontend
 docker image prune -f

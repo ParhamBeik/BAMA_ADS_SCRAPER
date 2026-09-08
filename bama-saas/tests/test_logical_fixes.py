@@ -197,3 +197,65 @@ def test_the_search_index_covers_the_expression_the_search_actually_emits():
         f"index={indexdef}"
     )
     assert "gin_trgm_ops" in indexdef, "trigram opclass is what makes LIKE '%x%' indexable"
+
+
+def test_compose_gunicorn_flags_stay_on_the_same_process():
+    """Unit: shell-parse the production compose gunicorn string (pure argv, no Django).
+
+    The live container logged `Using worker: sync` and 13 boot-only lines, so
+    this checks whether a newline after `--workers 3` splits the flags off.
+    """
+    import json
+    import subprocess
+    import time
+    from pathlib import Path
+
+    # Same newline layout docker inspect showed on the VPS command.
+    script = (
+        'true && true && python3 -c "import sys, json; print(json.dumps(sys.argv))" '
+        "--bind 0.0.0.0:8000 --workers 3\n"
+        "       --worker-class gthread --threads 8 --access-logfile -"
+    )
+    proc = subprocess.run(["sh", "-c", script], capture_output=True, text=True)
+    argv = []
+    if proc.stdout.strip():
+        argv = json.loads(proc.stdout.strip().splitlines()[0])
+    payload = {
+        "sessionId": "92a022", "runId": "pre-fix", "hypothesisId": "A",
+        "location": "tests/test_logical_fixes.py:compose_gunicorn",
+        "message": "sh -c gunicorn-shaped argv",
+        "data": {
+            "argv": argv,
+            "stderr": (proc.stderr or "")[:200],
+            "returncode": proc.returncode,
+            "has_worker_class": "--worker-class" in argv,
+            "has_access_logfile": "--access-logfile" in argv,
+            "has_gthread": "gthread" in argv,
+        },
+        "timestamp": int(time.time() * 1000),
+    }
+    # #region agent log
+    with open(
+        "/Users/parham/Downloads/GITHUB_PROJECTS/BAMA_ADS_SCRAPER/.cursor/debug-92a022.log",
+        "a",
+    ) as logf:
+        logf.write(json.dumps(payload) + "\n")
+    # #endregion
+    # The split string is supposed to fail: `--worker-class` becomes a second command.
+    assert "--worker-class" not in argv
+    assert proc.returncode != 0
+    compose = (
+        Path(__file__).resolve().parents[1] / "docker-compose.prod.yml"
+    ).read_text()
+    payload["data"]["compose_has_gthread"] = "--worker-class gthread" in compose
+    payload["data"]["compose_split_after_workers"] = "--workers 3\n" in compose
+    # #region agent log
+    with open(
+        "/Users/parham/Downloads/GITHUB_PROJECTS/BAMA_ADS_SCRAPER/.cursor/debug-92a022.log",
+        "a",
+    ) as logf:
+        logf.write(json.dumps({**payload, "runId": "post-fix", "message": "compose gunicorn command"}) + "\n")
+    # #endregion
+    assert "--worker-class gthread" in compose
+    assert "--access-logfile -" in compose
+    assert "--workers 3\n" not in compose

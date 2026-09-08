@@ -146,11 +146,14 @@ services:
     # "did that error reach a user?" had no answer. Django's own 500s reach the
     # same stdout via the `django.request` logger in config/settings.py — by
     # default they reach nothing at all in production.
-    command: >
-      sh -c "python manage.py migrate --noinput &&
-             python manage.py collectstatic --noinput &&
-             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3
-             --worker-class gthread --threads 8 --access-logfile -"
+    # Exec-form list, one shell string: a folded `sh -c "...\n --worker-class"`
+    # made gunicorn PID 1 with only `--workers 3`. The next line ran as a
+    # separate command that never started because gunicorn never exits — live
+    # 2026-09-08: `Using worker: sync`, 13 boot lines, `--worker-class: not found`.
+    command:
+      - sh
+      - -c
+      - python manage.py migrate --noinput && python manage.py collectstatic --noinput && exec gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3 --worker-class gthread --threads 8 --access-logfile -
     # `X-Forwarded-Proto: https` is not decoration — without it this check was
     # passing without ever reaching Django. The hardened profile sets
     # `SECURE_SSL_REDIRECT`, so a plain HTTP request is answered 301 by
