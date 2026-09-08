@@ -235,11 +235,14 @@ def test_compose_gunicorn_flags_stay_on_the_same_process():
         "timestamp": int(time.time() * 1000),
     }
     # #region agent log
-    with open(
-        "/Users/parham/Downloads/GITHUB_PROJECTS/BAMA_ADS_SCRAPER/.cursor/debug-92a022.log",
-        "a",
-    ) as logf:
-        logf.write(json.dumps(payload) + "\n")
+    try:
+        with open(
+            "/Users/parham/Downloads/GITHUB_PROJECTS/BAMA_ADS_SCRAPER/.cursor/debug-92a022.log",
+            "a",
+        ) as logf:
+            logf.write(json.dumps(payload) + "\n")
+    except OSError:
+        pass
     # #endregion
     # The split string is supposed to fail: `--worker-class` becomes a second command.
     assert "--worker-class" not in argv
@@ -250,11 +253,14 @@ def test_compose_gunicorn_flags_stay_on_the_same_process():
     payload["data"]["compose_has_gthread"] = "--worker-class gthread" in compose
     payload["data"]["compose_split_after_workers"] = "--workers 3\n" in compose
     # #region agent log
-    with open(
-        "/Users/parham/Downloads/GITHUB_PROJECTS/BAMA_ADS_SCRAPER/.cursor/debug-92a022.log",
-        "a",
-    ) as logf:
-        logf.write(json.dumps({**payload, "runId": "post-fix", "message": "compose gunicorn command"}) + "\n")
+    try:
+        with open(
+            "/Users/parham/Downloads/GITHUB_PROJECTS/BAMA_ADS_SCRAPER/.cursor/debug-92a022.log",
+            "a",
+        ) as logf:
+            logf.write(json.dumps({**payload, "runId": "post-fix", "message": "compose gunicorn command"}) + "\n")
+    except OSError:
+        pass
     # #endregion
     assert "--worker-class gthread" in compose
     assert "--access-logfile -" in compose
