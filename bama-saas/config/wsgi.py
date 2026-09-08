@@ -10,7 +10,9 @@ application = get_wsgi_application()
 
 # #region agent log
 try:
-    import json, time, sys
+    import json
+    import sys
+    import time
     _p = "/Users/parham/Downloads/GITHUB_PROJECTS/BAMA_ADS_SCRAPER/.cursor/debug-92a022.log"
     with open(_p, "a") as _f:
         _f.write(json.dumps({
