@@ -294,6 +294,17 @@ a:hover { text-decoration: underline; }
   border-radius: var(--radius);
   padding: 14px 16px;
   box-shadow: var(--shadow);
+  /* The line that makes `.table-wrap`'s scrollbar do its job, and it is not
+     redundant with the `minmax(0, 1fr)` on `.stack`. That clamps the grid
+     *track*; a grid item still carries `min-width: auto`, which resolves to its
+     own min-content width — and a card wrapping a table full of `white-space:
+     nowrap` headers has a min-content width of whatever the widest row needs.
+     So the card grew past its track instead of letting the table scroll inside
+     it, and every ancestor grew with it.
+     Measured 2026-09-08 on /saved at 390px: the followed-cars table put the
+     card at 420px and the document at scrollWidth 436 against clientWidth 390,
+     which also dragged the fixed bottom nav 46px off-screen. */
+  min-width: 0;
 }
 /* Deliberately no nested cards: a panel inside a panel reads as depth that is
    not there and doubles every border in the layout. */
@@ -490,7 +501,12 @@ td.num, th.num {
 .gallery img { width: 100%; border-radius: 8px; aspect-ratio: 4/3; object-fit: cover; }
 .spec-list { display: grid; grid-template-columns: 1fr 1fr; gap: 0.35rem; padding: 0; list-style: none; }
 .price { font-family: var(--font-mono); font-size: 1.4rem; font-weight: 700; }
-.stack { display: grid; gap: 1rem; }
+/* Let wide tables scroll inside their panels instead of widening the grid. */
+/* The narrow-screen half of `.hide-narrow`: a value that moves into another
+   cell rather than disappearing. Hidden by default and revealed under the same
+   breakpoint, so exactly one copy is ever in the accessibility tree. */
+.show-narrow { display: none; }
+.stack { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; }
 /* The same thing at the density of one section inside a card, where a full
    1rem gutter between a heading and its own table reads as two panels. */
 .stack-sm { display: grid; gap: 0.4rem; }
@@ -1185,6 +1201,16 @@ main:focus { outline: none; }
    because the children fit side by side anyway. */
 @media (max-width: 560px) {
   .row.between { flex-wrap: wrap; }
+  /* Columns a phone-width table gives up. Measured on /saved at 390px: a
+     four-column row wanted 403px of a 324px panel, and what auto table layout
+     sacrificed instead was the car's name — «پژو ۲۰۶ تیپ ۲ ۱۴۰۱» wrapped to one
+     word per line. Dropping a column beats scrolling here because a horizontal
+     scrollbar on a personal screen hides the row's delete button behind a
+     gesture. Only ever put this on a column the row can already answer without:
+     the trend sparkline (the percentage beside it states the same move) and the
+     previous price (current price and the change restate it). */
+  .hide-narrow { display: none; }
+  .show-narrow { display: block; }
   /* Tab rows scroll inside the card; clipping them hid the overflow on Home/Deals. */
   .card:not(:has([data-slot="tabs-list"])) { overflow-x: clip; }
   [data-slot="tabs-list"] {

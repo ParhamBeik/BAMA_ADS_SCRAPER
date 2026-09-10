@@ -147,6 +147,35 @@ def test_auth_registration_creates_session_user(anonymous_client):
 
 
 @pytest.mark.django_db
+def test_login_throttle_cannot_be_reset_by_a_forwarded_for_header(anonymous_client):
+    """A wrong password must cost the caller a bucket they do not own.
+
+    DRF buckets a throttle on `get_ident`, and with `NUM_PROXIES` unset that is
+    the whole `X-Forwarded-For` string. Both hops in front of this app *append*
+    to that header rather than replacing it, so whatever the caller sends stays
+    in it — one guess per header value, and the 10/min login limit, the 5/min
+    register limit and the 5/min password limit were all decoration. Measured
+    before the fix: 25 wrong passwords with a rotating header, 25 × 401 and not
+    one 429.
+
+    Two entries here because that is what the deployed chain produces (Caddy,
+    then the frontend nginx). The left one is the attacker's; `NUM_PROXIES = 2`
+    reads the second from the right, which is the address Caddy vouched for.
+    """
+    User.objects.create_user(email="victim@example.com", password="StrongPass1!")
+    statuses = [
+        anonymous_client.post(
+            "/api/auth/login/",
+            {"email": "victim@example.com", "password": "wrong"},
+            format="json",
+            HTTP_X_FORWARDED_FOR=f"10.9.9.{attempt}, 203.0.113.7, 172.18.0.4",
+        ).status_code
+        for attempt in range(15)
+    ]
+    assert 429 in statuses, "rotating X-Forwarded-For bought unlimited guesses"
+
+
+@pytest.mark.django_db
 def test_auth_registration_rejects_duplicate_and_weak_password(api_client):
     User.objects.create_user(email="existing@example.com", password="StrongPass1!")
 
@@ -1413,30 +1442,26 @@ def test_failed_image_fetch_is_not_retried_until_its_short_marker_expires(monkey
 def test_svg_image_is_refused(monkeypatch):
     monkeypatch.setattr(images, "consecutive_blocks", lambda: 0)
 
-    class FakeResponse:
-        headers = {"Content-Type": "image/svg+xml"}
-
-        def raise_for_status(self):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            pass
-
-        def iter_content(self, chunk_size):
-            return [b"<svg></svg>"]
-
-    monkeypatch.setattr(images.requests, "get", lambda *args, **kwargs: FakeResponse())
+    monkeypatch.setattr(
+        images.requests, "get",
+        lambda url, **kwargs: _answering_with("image/svg+xml", [b"<svg></svg>"])(url),
+    )
     assert images.fetch(_SMALL) is None
 
 
-def _answering_with(content_type: str, chunks: list[bytes]):
-    """A `requests.get` stand-in that returns a 200 nobody can use."""
+def _answering_with(content_type: str, chunks: list[bytes], *, final_url: str | None = None):
+    """A `requests.get` stand-in that returns a 200 nobody can use.
+
+    ``url`` is on it because `images.fetch` re-checks the address it was
+    *answered* by against the CDN allowlist, not only the one it asked for.
+    ``final_url`` stands in for a redirect having moved it.
+    """
 
     class FakeResponse:
         headers = {"Content-Type": content_type}
+
+        def __init__(self, requested: str):
+            self.url = final_url or requested
 
         def raise_for_status(self):
             pass
@@ -1477,14 +1502,41 @@ def test_an_unusable_image_answer_is_not_re_fetched_on_every_request(
     monkeypatch.setattr(images, "consecutive_blocks", lambda: 0)
     calls = []
 
-    def get(*args, **kwargs):
-        calls.append(args)
-        return _answering_with(content_type, chunks)()
+    def get(url, **kwargs):
+        calls.append(url)
+        return _answering_with(content_type, chunks)(url)
 
     monkeypatch.setattr(images.requests, "get", get)
 
     assert images.fetch(_LARGE[1]) is None
     assert images.fetch(_LARGE[1]) is None
+    assert len(calls) == 1
+
+
+def test_an_image_that_redirects_off_the_cdn_is_refused(monkeypatch):
+    """The allowlist has to cover the address that answered, not just the one asked.
+
+    `requests` follows redirects, so checking only the stored URL means a 302 off
+    the CDN hands this endpoint's reader whatever it landed on — and from inside
+    the compose network that is Postgres, Redis, or the cloud metadata service.
+    An unauthenticated, deliberately unthrottled proxy is the wrong place to
+    trust a redirect.
+    """
+    monkeypatch.setattr(images, "consecutive_blocks", lambda: 0)
+    calls = []
+
+    def get(url, **kwargs):
+        calls.append(url)
+        return _answering_with(
+            "image/jpeg", [b"\xff\xd8\xff\xe0"],
+            final_url="http://169.254.169.254/latest/meta-data/",
+        )(url)
+
+    monkeypatch.setattr(images.requests, "get", get)
+
+    assert images.fetch(_SMALL) is None
+    # ...and it is marked, so a card grid cannot replay it once per image.
+    assert images.fetch(_SMALL) is None
     assert len(calls) == 1
 
 

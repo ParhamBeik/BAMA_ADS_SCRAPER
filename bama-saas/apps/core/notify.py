@@ -69,6 +69,7 @@ def matching_deals(
     year_jalali: int | None = None,
     exclude_review: bool = False,
     already_sent=None,
+    min_residual_pct: float | None = None,
     limit: int = MAX_PER_RUN,
 ):
     """Scored listings clearing every bar, best discount first.
@@ -82,9 +83,12 @@ def matching_deals(
     ``already_sent`` is a queryset of ad codes this recipient has had, passed in
     rather than assumed, because "already sent" is global for the singleton
     (`NotifiedAd`) and per-user for a rule (`AlertDelivery`).
+
+    ``min_residual_pct`` is the optional learned bar: same population as the
+    `ml` deal board. The operator singleton never sets it.
     """
     qs = (
-        verified_by_ad(DealScoreCache.objects.select_related("ad"))
+        verified_by_ad(DealScoreCache.objects.select_related("ad", "ad__ml"))
         .filter(discount_pct__gte=min_discount_pct)
     )
     # Gated here as well as at build time: the cache is rebuilt on a schedule,
@@ -112,11 +116,18 @@ def matching_deals(
         qs = qs.filter(ad__variant_id=variant_id)
     if year_jalali:
         qs = qs.filter(ad__year_jalali=year_jalali)
+    if min_residual_pct is not None:
+        from apps.ml.models import AdPrediction
+        qs = qs.filter(
+            ad__ml__anomaly_kind=AdPrediction.Anomaly.UNDERPRICED,
+            ad__ml__residual_pct__gte=min_residual_pct,
+        )
 
     # peer_count lives in the components JSON, so this one bar is applied in
     # Python — a JSON cast per row for an already-short list is not worth it.
+    order = "-ad__ml__residual_pct" if min_residual_pct is not None else "-discount_pct"
     out = []
-    for row in qs.order_by("-discount_pct")[: limit * 5]:
+    for row in qs.order_by(order, "ad_id")[: limit * 5]:
         if (row.components or {}).get("peer_count", 0) >= min_peers:
             out.append(row)
         if len(out) >= limit:
@@ -243,6 +254,8 @@ def format_delivery_alert(delivery) -> str:
         f"{title_of(ad)} — {ad.year_jalali or '?'}",
         f"Asking {toman(ad.current_price)} toman (fair ~{toman(delivery.peer_median)})",
     ]
+    if delivery.residual_pct is not None:
+        lines.append(f"Model residual {delivery.residual_pct:.0f}% under predicted p50")
     if url := absolute_ad_url(ad.url or ad.canonical_path):
         lines.append(url)
     return "\n".join(lines)
@@ -297,18 +310,21 @@ def deliver_alerts(*, dry_run: bool = False) -> dict:
             year_jalali=rule.year_jalali,
             exclude_review=rule.exclude_review,
             already_sent=seen_by_user[rule.user_id],
+            min_residual_pct=rule.min_residual_pct,
             limit=MAX_PER_USER_PER_RUN - per_user[rule.user_id],
         )
         for row in rows:
             if dry_run:
                 delivered += 1
                 continue
+            ml = getattr(row.ad, "ml", None)
             # get_or_create, not create: two rules of the same user can select
             # the same ad inside one tick, before either is in `seen`.
             entry, created = AlertDelivery.objects.get_or_create(
                 user_id=rule.user_id, ad_id=row.ad_id,
                 defaults={"rule": rule, "discount_pct": row.discount_pct,
-                          "peer_median": row.peer_median},
+                          "peer_median": row.peer_median,
+                          "residual_pct": None if ml is None else ml.residual_pct},
             )
             if not created:
                 continue

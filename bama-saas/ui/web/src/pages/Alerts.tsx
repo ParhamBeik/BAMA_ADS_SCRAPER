@@ -43,6 +43,7 @@ interface Alert {
   bama_url: string;
   discount_pct: number | null;
   peer_median: number | null;
+  residual_pct: number | null;
   rule_name: string;
   created_at: string;
   read_at: string | null;
@@ -59,6 +60,7 @@ interface Rule {
   model_name: string;
   brand_name: string;
   min_discount_pct: number;
+  min_residual_pct: number | null;
   min_peers: number;
   price_min: number | null;
   price_max: number | null;
@@ -76,6 +78,7 @@ function RuleForm({ onDone }: { onDone: () => void }) {
     model: null as number | null,
     brand_slug: "",
     min_discount_pct: 12,
+    min_residual_pct: "" as string | number,
     min_peers: MIN_PEERS,
     price_max: "" as string | number,
     mileage_max: "" as string | number,
@@ -88,6 +91,8 @@ function RuleForm({ onDone }: { onDone: () => void }) {
         ...form,
         price_max: form.price_max === "" ? null : Number(form.price_max),
         mileage_max: form.mileage_max === "" ? null : Number(form.mileage_max),
+        min_residual_pct:
+          form.min_residual_pct === "" ? null : Number(form.min_residual_pct),
       }),
     onSuccess: () => {
       client.invalidateQueries({ queryKey: ["alert-rules"] });
@@ -138,6 +143,27 @@ function RuleForm({ onDone }: { onDone: () => void }) {
               setForm({ ...form, min_discount_pct: Number(e.target.value) })
             }
           />
+        </label>
+        <label className="grid gap-1.5">
+          <span className="text-muted-foreground text-xs font-semibold">
+            کمترین اختلاف با برآورد مدل (٪)
+          </span>
+          <input
+            className={field}
+            type="number"
+            min={1}
+            max={99}
+            value={form.min_residual_pct}
+            placeholder="اختیاری"
+            onChange={(e) =>
+              setForm({ ...form, min_residual_pct: e.target.value })
+            }
+          />
+          <span className="text-muted-foreground text-[11px]">
+            خالی بگذارید تا فقط تخفیف نسبت به میانه هم‌گروه ملاک باشد. اگر عدد
+            بگذارید، آگهی باید علاوه بر آن زیر برآورد مدل هم باشد — همان فهرست
+            «مدل» در صفحه معامله‌ها.
+          </span>
         </label>
         <label className="grid gap-1.5">
           <span className="text-muted-foreground text-xs font-semibold">
@@ -254,7 +280,12 @@ function Rules() {
                       <div className="stat-sub"><Fa>{rule.brand_name}</Fa></div>
                     )}
                   </td>
-                  <td className="num">{pct(rule.min_discount_pct, 0)}</td>
+                  <td className="num">
+                    {pct(rule.min_discount_pct, 0)}
+                    {rule.min_residual_pct != null && (
+                      <div className="stat-sub">مدل {pct(rule.min_residual_pct, 0)}</div>
+                    )}
+                  </td>
                   <td>
                     <Switch
                       checked={rule.enabled}
@@ -346,6 +377,11 @@ export function Alerts() {
                             it stands now — see the file header. */}
                         <span className="deal-median">{toman(alert.peer_median)}</span>
                       </div>
+                      {alert.residual_pct != null && (
+                        <div className="stat-sub">
+                          برآورد مدل: {pct(alert.residual_pct, 0)} ارزان‌تر
+                        </div>
+                      )}
                       <div className="row">
                         <Fa>{alert.city_name || "—"}</Fa>
                         <span>·</span>

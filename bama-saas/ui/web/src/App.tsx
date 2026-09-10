@@ -54,6 +54,9 @@ const Alerts = lazy(() =>
 );
 // Lazy like the rest: it is a page a reader opens once to understand the
 // numbers, not one they live on, and it carries a page of Persian prose.
+const Account = lazy(() =>
+  import("./pages/Account").then((m) => ({ default: m.Account })),
+);
 const Methodology = lazy(() =>
   import("./pages/Methodology").then((m) => ({ default: m.Methodology })),
 );
@@ -192,6 +195,7 @@ function AppShell() {
           <Route path="/alerts" element={<Lazy><Alerts /></Lazy>} />
           <Route path="/methodology" element={<Lazy><Methodology /></Lazy>} />
           <Route path="/saved" element={<Lazy><Saved /></Lazy>} />
+          <Route path="/account" element={<Lazy><Account /></Lazy>} />
           <Route path="/listing/:code" element={<Lazy><ListingDetail /></Lazy>} />
           <Route
             path="/control"

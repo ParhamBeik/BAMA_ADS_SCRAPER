@@ -23,6 +23,8 @@ from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAdminUser
 from rest_framework.response import Response
+from rest_framework.settings import api_settings
+from rest_framework.throttling import BaseThrottle
 
 from apps.core.models import Ad, AdVersion, Brand, FetchRun, IngestReject, JobRun, Model
 from apps.jobs import jobs, pipeline
@@ -331,6 +333,39 @@ def ad_provenance(request, code: str):
     })
 
 
+def _forwarding(request) -> dict:
+    """What the throttles will treat as "the caller", and whether that is right.
+
+    ``NUM_PROXIES`` decides which entry of ``X-Forwarded-For`` DRF buckets a rate
+    limit on, and it is a constant somebody has to get right by counting hops: too
+    low and every visitor shares one bucket, so a single attacker locks out the
+    whole site; too high and the key comes from a header the caller writes, which
+    is the bypass this endpoint exists to make visible (measured 2026-09-08 —
+    unset, 25 wrong passwords with a rotating header drew zero 429s).
+
+    Reasoning about it is the failure mode, so this reports it instead. Open the
+    endpoint from a machine whose public address you know: ``resolved_ident``
+    must equal that address. If it shows a private address, the count is too low
+    and it is the proxy's; if it echoes something you can inject, it is too high.
+    """
+    forwarded = [p.strip() for p in
+                 (request.headers.get("x-forwarded-for") or "").split(",") if p.strip()]
+    return {
+        "x_forwarded_for": forwarded,
+        "remote_addr": request.META.get("REMOTE_ADDR"),
+        "num_proxies": api_settings.NUM_PROXIES,
+        # Straight from the throttle base class, not a reimplementation of it —
+        # a second copy of this arithmetic could agree with itself and disagree
+        # with the thing actually rate-limiting the login form.
+        "resolved_ident": BaseThrottle().get_ident(request),
+        "expected_chain_length": api_settings.NUM_PROXIES,
+        "chain_matches_setting": (
+            len(forwarded) == api_settings.NUM_PROXIES
+            if api_settings.NUM_PROXIES is not None and forwarded else None
+        ),
+    }
+
+
 @api_view(["GET"])
 @permission_classes([IsAdminUser])
 def system_health(request):
@@ -388,4 +423,5 @@ def system_health(request):
             "coverage_window_hours": COVERAGE_WINDOW_HOURS,
         },
         "crawl": jobs.health(alert=False)["checks"],
+        "forwarding": _forwarding(request),
     })

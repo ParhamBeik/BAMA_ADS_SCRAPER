@@ -546,6 +546,11 @@ Phase 1 re-score named: a reader can follow a scope and can see any scope's
 trend, but there is no one screen showing *their* followed scopes beside their
 current trends. That is a page, not a model.
 
+> 2026-09-08: Saved now lists followed scopes with a 30-day change and sparkline
+> (`GET /api/watchlists/digest/`). Alert rules can require the model's residual
+> (`min_residual_pct`), the same population as the `ml` deal board. The scores
+> in the table above are the Phase 2 re-score and have not been re-applied.
+
 ### The honest part
 
 Two of the five models were held in **shadow** on the first run against a

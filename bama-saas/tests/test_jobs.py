@@ -1436,3 +1436,62 @@ def test_a_cadence_runs_the_pipeline_and_fails_the_process_if_any_step_did(monke
         call_command("bama", "hot")
     assert exc.value.code == 1
     assert called["cadence"] == "hot"
+
+
+# ---------------------------------------------------------------------------
+# The forwarding diagnostic on /api/admin/health/
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_health_reports_the_address_the_throttles_will_bucket_on(staff_client, settings):
+    """`NUM_PROXIES` is a hop count somebody has to get right, so make it visible.
+
+    Wrong in either direction is bad and silent. Too low and `get_ident` returns
+    the proxy's address, so every visitor shares one throttle bucket and one
+    attacker locks out the site. Too high and it returns an entry the caller
+    supplied — the bypass measured on 2026-09-08, where 25 wrong passwords sent
+    with a rotating header drew zero 429s.
+
+    The chain below is what the deployed stack produces: the client, then Caddy,
+    then the frontend nginx, each appending one entry. With `NUM_PROXIES = 2` the
+    reported ident must be the client — not the proxy, and not the value an
+    attacker prepended.
+    """
+    spoofed, client_ip, caddy_ip = "9.9.9.9", "203.0.113.7", "172.18.0.4"
+    body = staff_client.get(
+        "/api/admin/health/",
+        HTTP_X_FORWARDED_FOR=f"{spoofed}, {client_ip}, {caddy_ip}",
+    ).json()["forwarding"]
+
+    assert body["num_proxies"] == 2
+    assert body["resolved_ident"] == client_ip, (
+        "the throttle key must be the address the edge vouched for"
+    )
+    assert body["resolved_ident"] != spoofed, "caller-supplied value became the key"
+    assert body["x_forwarded_for"] == [spoofed, client_ip, caddy_ip]
+
+
+@pytest.mark.django_db
+def test_health_forwarding_shows_the_proxy_when_the_hop_count_is_too_low(
+    staff_client, settings
+):
+    """The other direction, which is the one that looks harmless.
+
+    At `NUM_PROXIES = 1` the ident is the *last* entry — nginx's own address —
+    so every request in the world shares a bucket. The diagnostic has to make
+    that legible rather than merely returning something plausible.
+    """
+    from rest_framework.settings import api_settings
+
+    api_settings.reload()
+    settings.REST_FRAMEWORK = {**settings.REST_FRAMEWORK, "NUM_PROXIES": 1}
+    api_settings.reload()
+    try:
+        body = staff_client.get(
+            "/api/admin/health/",
+            HTTP_X_FORWARDED_FOR="203.0.113.7, 172.18.0.4",
+        ).json()["forwarding"]
+        assert body["resolved_ident"] == "172.18.0.4"
+    finally:
+        api_settings.reload()

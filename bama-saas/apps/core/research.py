@@ -406,26 +406,56 @@ def build_index(scope: str, scope_id: str | None = None, *, segments: dict | Non
     return len(series)
 
 
+def _index_point(r: MarketIndex) -> dict:
+    return {
+        "date": r.date.isoformat() if isinstance(r.date, date_cls) else r.date,
+        "index_value": round(r.index_value, 2),
+        "return_pct": r.return_pct,
+        "cohort_count": r.cohort_count,
+        "ad_count": r.ad_count,
+        # Both are needed to read a point honestly: how many calendar days
+        # this step spans, and whether the day under it was covered enough
+        # to have an opinion at all.
+        "gap_days": r.gap_days,
+        "low_coverage": r.low_coverage,
+    }
+
+
 def read_index(scope: str, scope_id: str | None = None, days: int | None = None) -> list[dict]:
     """Persisted series for one scope, oldest first, optionally the last N days."""
     qs = MarketIndex.objects.filter(scope=scope, scope_id=scope_id).order_by("-date")
     if days:
         qs = qs[:days]
-    return [
-        {
-            "date": r.date.isoformat() if isinstance(r.date, date_cls) else r.date,
-            "index_value": round(r.index_value, 2),
-            "return_pct": r.return_pct,
-            "cohort_count": r.cohort_count,
-            "ad_count": r.ad_count,
-            # Both are needed to read a point honestly: how many calendar days
-            # this step spans, and whether the day under it was covered enough
-            # to have an opinion at all.
-            "gap_days": r.gap_days,
-            "low_coverage": r.low_coverage,
-        }
-        for r in reversed(list(qs))
-    ]
+    return [_index_point(r) for r in reversed(list(qs))]
+
+
+def read_indexes(scope: str, scope_ids, *, days: int) -> dict[str, list[dict]]:
+    """``read_index`` for many scope ids of one kind, in a single query.
+
+    Exists because the caller that needs it — the followed-car digest — asks for
+    one series per scope the reader follows, and a loop over ``read_index`` is a
+    query per followed car. That is the N+1 this codebase keeps re-learning.
+
+    ``days`` is a *calendar* window here rather than ``read_index``'s "newest N
+    rows". Per-group LIMIT is not something one SQL statement does without a
+    window function, and a date floor is both bounded and honest: the index
+    writes one row per scope per day, so the two agree exactly whenever the warm
+    tick has been running, and where it has not the shorter series is the truth
+    about our own coverage rather than a chart stitched across an outage.
+    """
+    ids = [s for s in scope_ids if s]
+    if not ids:
+        return {}
+    floor = timezone.now().date() - timedelta(days=days)
+    rows = (
+        MarketIndex.objects
+        .filter(scope=scope, scope_id__in=ids, date__gte=floor)
+        .order_by("date")
+    )
+    out: dict[str, list[dict]] = {s: [] for s in ids}
+    for r in rows:
+        out[r.scope_id].append(_index_point(r))
+    return out
 
 
 # ---------------------------------------------------------------------------

@@ -26,6 +26,17 @@ x-django-env: &django-env
   SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY}
   ALLOWED_HOSTS: ${ALLOWED_HOSTS:?set ALLOWED_HOSTS}
   CORS_ORIGINS: ${CORS_ORIGINS:?set CORS_ORIGINS}
+  # Session POSTs send Origin; Django 4+ refuses HTTPS origins that are not
+  # listed here. Same-origin behind Caddy still needs the public URL. Missing
+  # from this block used to leave the container on the localhost default, so
+  # login and password-change 403'd in production with a CSRF failure.
+  CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:?set CSRF_TRUSTED_ORIGINS}
+  # Caddy, then the frontend nginx — two hops, each appending one entry to
+  # X-Forwarded-For. It is what the auth throttles bucket on; see the note in
+  # config/settings.py for what an unset value costs. `:-2` because the default
+  # in settings.py is the same number: this line exists so the chain is visible
+  # here, next to the proxy it describes, and overridable without a code change.
+  NUM_PROXIES: ${NUM_PROXIES:-2}
   BAMA_MAX_ADS: ${BAMA_MAX_ADS:-50000}
   BAMA_PAGE_PAUSE: ${BAMA_PAGE_PAUSE:-1.5}
   BAMA_REQUEST_TIMEOUT: ${BAMA_REQUEST_TIMEOUT:-20}

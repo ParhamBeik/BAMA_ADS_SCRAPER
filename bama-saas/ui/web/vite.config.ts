@@ -87,8 +87,20 @@ export default defineConfig({
   // production.
   server: {
     port: 5173,
+    // Fail on a busy port instead of quietly moving to the next one. The port
+    // is named in three places that cannot see each other — this file,
+    // `VITE_API_TARGET`, and `CSRF_TRUSTED_ORIGINS` in the backend `.env` — and
+    // a server that slid from 5173 to 5175 still starts, still serves, and then
+    // misbehaves somewhere else entirely. It is why a session POST could come
+    // back "CSRF Failed: Origin checking failed" (reproduced on 5199 before
+    // `changeOrigin: false` below made Host follow the browser) and why the
+    // proxy can end up pointed at a backend nobody is running. Refusing to
+    // start says which port, once, instead.
+    strictPort: true,
     proxy: {
-      "/api": { target: process.env.VITE_API_TARGET ?? "http://localhost:8001", changeOrigin: true },
+      // Preserve Host so Django can compare it with the browser's CSRF Origin,
+      // including when Vite runs on an alternate local port.
+      "/api": { target: process.env.VITE_API_TARGET ?? "http://localhost:8001", changeOrigin: false },
     },
   },
   build: {

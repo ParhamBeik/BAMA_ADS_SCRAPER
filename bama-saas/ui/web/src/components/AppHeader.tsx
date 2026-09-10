@@ -17,7 +17,7 @@
  */
 import { NavLink, useNavigate } from "react-router-dom";
 import {
-  Activity, BarChart3, Bell, Bookmark, LogOut, Moon, Percent, Search, Sun,
+  Activity, BarChart3, Bell, Bookmark, LogOut, Moon, Percent, Search, Settings, Sun,
   MonitorCog, Sparkles, User, Wallet,
 } from "lucide-react";
 import { useAuth } from "@/auth";
@@ -123,6 +123,9 @@ function AccountMenu() {
             <Activity className="size-4" /> کنترل خزنده
           </DropdownMenuItem>
         )}
+        <DropdownMenuItem onSelect={() => navigate("/account")}>
+          <Settings className="size-4" /> حساب و گذرواژه
+        </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => logout()}>
           <LogOut className="size-4" /> خروج
         </DropdownMenuItem>

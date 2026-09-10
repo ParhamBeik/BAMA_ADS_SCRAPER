@@ -1,8 +1,8 @@
 """Users, saved ads, and the per-user watch and alert layer.
 
-Accounts are created by signing up, never seeded from the environment. The
-first account on an empty database becomes staff (see accounts.views.
-RegisterView); every one after it is an ordinary user.
+Accounts are created by signing up, never seeded from the environment. Every
+new account is a regular user; staff is granted with ``createsuperuser`` (or
+Django admin), never by being first through the door.
 
 This file used to open by stating that there was no alerting and no in-app
 inbox, and that was true: watchlists and saved searches were dropped in
@@ -199,6 +199,10 @@ class AlertRule(ScopedToACar):
     enabled = models.BooleanField(default=True)
 
     min_discount_pct = models.FloatField(default=10.0)
+    # Optional second bar: the learned residual, same population as the `ml`
+    # deal board (underpriced candidate, not a feature-space outlier). Null
+    # keeps the historical "cohort discount only" rule.
+    min_residual_pct = models.FloatField(null=True, blank=True)
     min_peers = models.IntegerField(default=8)
     price_min = models.BigIntegerField(null=True, blank=True)
     price_max = models.BigIntegerField(null=True, blank=True)
@@ -249,6 +253,10 @@ class AlertDelivery(models.Model):
     # next — for an alert whose whole point is what was true when it fired.
     discount_pct = models.FloatField(null=True, blank=True)
     peer_median = models.BigIntegerField(null=True, blank=True)
+    # Copied like discount_pct: the model's residual at fire time, or null when
+    # no prediction existed. A feed that joined live would rewrite the reason
+    # the alert fired after a rescore.
+    residual_pct = models.FloatField(null=True, blank=True)
 
     created_at = models.DateTimeField(default=timezone.now, db_index=True)
     read_at = models.DateTimeField(null=True, blank=True)

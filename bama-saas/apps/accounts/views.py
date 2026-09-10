@@ -13,8 +13,9 @@ decide between the app shell and the login screen.
 from __future__ import annotations
 
 import logging
+from urllib.parse import urlencode
 
-from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth import authenticate, login, logout, update_session_auth_hash
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.sessions.models import Session
 from django.db import IntegrityError
@@ -30,8 +31,8 @@ from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from apps.accounts.models import AlertDelivery, AlertRule, Favorite, User, Watchlist
-from apps.core import images
-from apps.core.models import PriceDropEvent
+from apps.core import images, research
+from apps.core.models import Brand, MarketIndex, PriceDropEvent
 from apps.core.pricing import MIN_PEERS
 from apps.jobs.parsing import absolute_ad_url
 
@@ -160,13 +161,36 @@ class LogoutView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+def _blacklist_tokens(user) -> int | None:
+    """Blacklist outstanding JWT refresh tokens. ``None`` means the table failed.
+
+    The blacklist app is optional at import time and must not be the reason a
+    user cannot change a password or end sessions — but a failure used to be
+    ``pass``, so the caller was told the tokens were dead while they stayed
+    valid until expiry. Logged, and the caller sees ``null``.
+    """
+    try:
+        from rest_framework_simplejwt.token_blacklist.models import (
+            BlacklistedToken,
+            OutstandingToken,
+        )
+
+        revoked = 0
+        for token in OutstandingToken.objects.filter(user=user):
+            _, created = BlacklistedToken.objects.get_or_create(token=token)
+            revoked += int(created)
+        return revoked
+    except Exception:  # noqa: BLE001 — reported, not swallowed
+        log.exception("token revocation failed for user %s", user.pk)
+        return None
+
+
 class LogoutEverywhereView(APIView):
     """Drop every session this user holds, on every device.
 
     Django keys sessions by an opaque id with no user column, so the only way to
     find them is to decode each unexpired one. That is affordable here precisely
-    because this is a small single-operator deployment, and the alternative —
-    "change your password and hope" — is not a revocation.
+    because this is a small single-operator deployment.
     """
 
     permission_classes = [IsAuthenticated]
@@ -178,31 +202,56 @@ class LogoutEverywhereView(APIView):
             if row.get_decoded().get("_auth_user_id") == uid:
                 row.delete()
                 killed += 1
-        tokens_revoked = 0
-        try:
-            from rest_framework_simplejwt.token_blacklist.models import (
-                BlacklistedToken,
-                OutstandingToken,
-            )
-
-            for token in OutstandingToken.objects.filter(user=request.user):
-                _, created = BlacklistedToken.objects.get_or_create(token=token)
-                tokens_revoked += int(created)
-        except Exception:  # noqa: BLE001 — reported, not swallowed; see below
-            # Broad on purpose: the blacklist app is optional and this must not
-            # be the reason a user cannot end their sessions. But it used to be
-            # `pass`, so a failure here left the caller a 200 saying
-            # "sessions_ended" while their bearer tokens stayed valid until
-            # expiry — a revocation endpoint reporting success for a revocation
-            # that did not happen. Logged at exception level, and the response
-            # says which half worked.
-            log.exception("logout-everywhere: token revocation failed for user %s",
-                          request.user.pk)
-            return Response({"sessions_ended": killed, "tokens_revoked": None})
-        finally:
-            # Whatever happened above, this request's own session goes.
-            logout(request)
+        tokens_revoked = _blacklist_tokens(request.user)
+        logout(request)
         return Response({"sessions_ended": killed, "tokens_revoked": tokens_revoked})
+
+
+class PasswordChangeSerializer(serializers.Serializer):
+    current_password = serializers.CharField(trim_whitespace=False)
+    new_password = serializers.CharField(trim_whitespace=False)
+
+    def validate_new_password(self, value):
+        validate_password(value, user=self.context["request"].user)
+        return value
+
+    def validate(self, attrs):
+        if attrs["current_password"] == attrs["new_password"]:
+            raise serializers.ValidationError(
+                {"new_password": "must be different from the current password"}
+            )
+        return attrs
+
+
+class PasswordChangeView(APIView):
+    """Change the signed-in user's password.
+
+    Keeps *this* session (``update_session_auth_hash``). Other browser sessions
+    die on the next request because Django stores a password-derived hash in
+    the session. JWT refresh tokens are blacklisted here because that hash does
+    not apply to them. There is no email reset: this host has no mail backend.
+    """
+
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "password"
+
+    def post(self, request):
+        serializer = PasswordChangeSerializer(
+            data=request.data, context={"request": request}
+        )
+        serializer.is_valid(raise_exception=True)
+        user = request.user
+        if not user.check_password(serializer.validated_data["current_password"]):
+            return Response(
+                {"current_password": ["Current password is incorrect."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        user.set_password(serializer.validated_data["new_password"])
+        user.save(update_fields=["password"])
+        update_session_auth_hash(request, user)
+        tokens_revoked = _blacklist_tokens(user)
+        return Response({"ok": True, "tokens_revoked": tokens_revoked})
 
 
 class FavoriteSerializer(serializers.ModelSerializer):
@@ -314,10 +363,11 @@ class AlertRuleSerializer(ScopeSerializerMixin, serializers.ModelSerializer):
         model = AlertRule
         fields = ["id", "name", "enabled", "brand_slug", "model", "variant",
                   "year_jalali", "scope_key", "model_name", "variant_name",
-                  "brand_name", "min_discount_pct", "min_peers", "price_min",
-                  "price_max", "mileage_max", "exclude_review",
-                  "telegram_chat_id", "created_at"]
+                  "brand_name", "min_discount_pct", "min_residual_pct",
+                  "min_peers", "price_min", "price_max", "mileage_max",
+                  "exclude_review", "telegram_chat_id", "created_at"]
         read_only_fields = ["id", "created_at"]
+        extra_kwargs = {"min_residual_pct": {"allow_null": True, "required": False}}
 
     def validate_min_discount_pct(self, value):
         # 100% would be a free car; 0 would deliver every listing on the site.
@@ -333,6 +383,13 @@ class AlertRuleSerializer(ScopeSerializerMixin, serializers.ModelSerializer):
             raise serializers.ValidationError(
                 f"must be at least {MIN_PEERS} — the fair-price engine's peer minimum"
             )
+        return value
+
+    def validate_min_residual_pct(self, value):
+        if value is None:
+            return value
+        if not 0 < value < 100:
+            raise serializers.ValidationError("must be between 0 and 100")
         return value
 
     def validate(self, attrs):
@@ -353,6 +410,124 @@ class _OwnedViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
+
+
+DIGEST_DAYS = 30
+DIGEST_SPARK = 14
+DIGEST_CAP = 50
+
+
+def _from_stored_index(series: list) -> dict:
+    if len(series) < 2:
+        return {"available": False, "reason": "insufficient_clean_history", "series": series}
+    first, last = series[0]["index_value"], series[-1]["index_value"]
+    change = round((last / first - 1) * 100, 2) if first else None
+    return {
+        "available": True,
+        "change_pct": change,
+        "latest_index": last,
+        "series": series,
+        "window": {"days": len(series)},
+    }
+
+
+def _stored_scope(watch: Watchlist) -> tuple[str, str] | None:
+    """Which persisted index series answers this scope, if one does.
+
+    Trim and model-year scopes are not persisted (see ``research.cohort_series``)
+    and fall through to the on-demand path; a bare market scope has nothing
+    personal to say.
+    """
+    if watch.variant_id or watch.year_jalali:
+        return None
+    if watch.model_id:
+        return MarketIndex.Scope.MODEL, str(watch.model_id)
+    if watch.brand_slug:
+        return MarketIndex.Scope.BRAND, watch.brand_slug
+    return None
+
+
+def _digest_trends(rows: list[Watchlist]) -> dict[int, dict]:
+    """One trend per followed scope, in a bounded number of queries.
+
+    Two shapes of work hide behind a followed car, and both used to run once per
+    row. The stored brand and model series are read in one query per scope kind
+    (``research.read_indexes``) rather than one per row. The trim and model-year
+    scopes have no stored series and are computed from daily snapshots; those
+    stay one query each — an index range scan over a single cohort, served by
+    ``snap_cohort_date_idx`` — but they are cached now, so a reload is free.
+
+    Measured before this existed: fifteen followed cars cost seventeen queries,
+    one per row, none of them cached, on every load of Saved.
+    """
+    from apps.core.views import movement_payload
+
+    wanted: dict[str, set[str]] = {}
+    for watch in rows:
+        scope = _stored_scope(watch)
+        if scope is not None:
+            wanted.setdefault(scope[0], set()).add(scope[1])
+    stored = {
+        kind: research.read_indexes(kind, ids, days=DIGEST_DAYS)
+        for kind, ids in wanted.items()
+    }
+
+    trends: dict[int, dict] = {}
+    for watch in rows:
+        scope = _stored_scope(watch)
+        if scope is not None:
+            trends[watch.id] = _from_stored_index(stored[scope[0]].get(scope[1], []))
+        elif watch.variant_id or watch.year_jalali:
+            if not watch.model_id:
+                trends[watch.id] = {"available": False, "reason": "incomplete_scope"}
+            else:
+                trends[watch.id] = movement_payload(
+                    watch.model_id, watch.variant_id, watch.year_jalali, DIGEST_DAYS
+                )
+        else:
+            trends[watch.id] = {"available": False, "reason": "market_scope"}
+    return trends
+
+
+def _analyse_path(watch: Watchlist) -> str:
+    query = {}
+    if watch.brand_slug:
+        query["brand"] = watch.brand_slug
+    if watch.model_id:
+        query["model"] = str(watch.model_id)
+    if watch.variant_id:
+        query["variant"] = str(watch.variant_id)
+    if watch.year_jalali:
+        query["year"] = str(watch.year_jalali)
+    return "/analyse?" + urlencode(query) if query else "/analyse"
+
+
+def _digest_row(watch: Watchlist, trend: dict, brand_names: dict[str, str]) -> dict:
+    series = trend.get("series") or []
+    spark = [point.get("index_value") for point in series[-DIGEST_SPARK:]]
+    brand_name = ""
+    if watch.model_id and watch.model is not None and watch.model.brand is not None:
+        brand_name = watch.model.brand.name_fa
+    elif watch.brand_slug:
+        brand_name = brand_names.get(watch.brand_slug, watch.brand_slug)
+    return {
+        "id": watch.id,
+        "scope_key": watch.scope_key,
+        "brand_slug": watch.brand_slug,
+        "model": watch.model_id,
+        "variant": watch.variant_id,
+        "year_jalali": watch.year_jalali,
+        "brand_name": brand_name,
+        "model_name": watch.model.name_fa if watch.model_id and watch.model else "",
+        "variant_name": watch.variant.name_fa if watch.variant_id and watch.variant else "",
+        "analyse_path": _analyse_path(watch),
+        "available": bool(trend.get("available")),
+        "reason": trend.get("reason"),
+        "change_pct": trend.get("change_pct"),
+        "latest_index": trend.get("latest_index"),
+        "spark": spark,
+        "window_days": (trend.get("window") or {}).get("days"),
+    }
 
 
 class WatchlistViewSet(_OwnedViewSet):
@@ -381,6 +556,28 @@ class WatchlistViewSet(_OwnedViewSet):
         candidate.save()
         return Response(self.get_serializer(candidate).data,
                         status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=["get"])
+    def digest(self, request):
+        """Followed scopes with their current trend, one round trip.
+
+        The list endpoint is paginated identity. This is the Saved-screen
+        answer: "what happened to the cars I follow."
+        """
+        qs = self.get_queryset()
+        total = qs.count()
+        rows = list(qs[:DIGEST_CAP])
+        slugs = {watch.brand_slug for watch in rows if watch.brand_slug}
+        brand_names = (
+            dict(Brand.objects.filter(slug__in=slugs).values_list("slug", "name_fa"))
+            if slugs else {}
+        )
+        trends = _digest_trends(rows)
+        return Response({
+            "count": total,
+            "truncated": total > DIGEST_CAP,
+            "results": [_digest_row(w, trends[w.id], brand_names) for w in rows],
+        })
 
 
 class AlertRuleViewSet(_OwnedViewSet):
@@ -416,7 +613,8 @@ class AlertDeliverySerializer(serializers.ModelSerializer):
         model = AlertDelivery
         fields = ["id", "code", "title", "price", "year", "mileage", "city_name",
                   "status", "image_url", "bama_url", "discount_pct",
-                  "peer_median", "rule_name", "created_at", "read_at"]
+                  "peer_median", "residual_pct", "rule_name", "created_at",
+                  "read_at"]
         read_only_fields = fields
 
     def get_image_url(self, obj) -> str:

@@ -39,7 +39,7 @@ bama-saas/
 │                            inference.py monitoring.py
 ├── ui/web/                  React + Vite + TypeScript
 ├── deploy/                  worker.sh + train.sh (the two loops), backup, deploy
-├── tests/                   pytest-django, 10 files
+├── tests/                   pytest-django, 12 files
 ├── docker-compose.yml       local: postgres, redis, django, worker, vite (+ ml)
 └── docker-compose.prod.yml  VPS: postgres, redis, gunicorn, worker, ml, nginx
 ```
@@ -57,9 +57,10 @@ fills it. `parsing.py` is the only module with no Django import.
 | `/explore` | Catalog explorer |
 | `/analyse` | One scope, market → brand → model → trim → year, in the URL |
 | `/listing/:code` | Listing detail + fair price + the deal verdict |
-| `/alerts` | Alert inbox and the rules behind it |
+| `/alerts` | Alert inbox and the rules behind it (cohort discount, optional model residual) |
 | `/methodology` | Model cards — what produced each number, and how well it did |
-| `/saved` | Saved cars |
+| `/saved` | Saved cars + followed scopes with their trend |
+| `/account` | Password change and sign-out everywhere |
 | `/control` | Crawl health + job triggers (staff only) |
 
 Five of these are tabs; `/alerts` and `/saved` are icons in the header, because
@@ -93,10 +94,10 @@ python manage.py migrate
 DJANGO_DEBUG=1 python manage.py runserver
 ```
 
-There are no seeded logins. Open the UI, create an account, and the first one on
-an empty database gets staff rights (the Control page and Django admin);
-everyone after it is an ordinary user. `manage.py wipe_users --yes` empties the
-table if you want to start again.
+There are no seeded logins. Open the UI, create an account, and every new
+account is an ordinary user. Staff is granted with `createsuperuser` inside
+the container (or Django admin), never by being first through the door.
+`manage.py wipe_users --yes` empties the table if you want to start again.
 
 `DJANGO_DEBUG` is unset by default and the default is the *hardened* profile —
 HTTPS redirect, HSTS, throttles, login required. A deployed process that forgets
@@ -146,7 +147,7 @@ detection cannot depend on a job that usually dies halfway.
 
 Everything under `/api/`. Health: `/api/health/`, `/api/db/health/`.
 
-- **Auth** — `/api/auth/{me,register,login,logout}/`
+- **Auth** — `/api/auth/{me,register,login,logout,logout-everywhere,password}/`
 - **Catalog** — `/api/brands/`, `/api/brands/<slug>/models/`,
   `/api/models/?q=&brand=` (searchable, with listing counts) or `?id=` (resolve
   one model, so a shared link can name the car it is about),
@@ -189,7 +190,8 @@ Everything under `/api/`. Health: `/api/health/`, `/api/db/health/`.
   (staff only)
 - **Saved cars** — `/api/favorites/`, session-scoped to the user
 - **Follow and be told** — `/api/watchlists/` (a car, a trim or a whole brand;
-  POST is idempotent and answers 200 on a repeat), `/api/alert-rules/` (the
+  POST is idempotent and answers 200 on a repeat), `GET /api/watchlists/digest/`
+  (those same scopes with the current index move, for the Saved screen), `/api/alert-rules/` (the
   thresholds a user wants to hear about), `/api/alerts/` (the inbox, plus
   `mark-read/` and `unread-count/`). All user-scoped, all `IsAuthenticated`.
 - **Notifier** — `/api/notifier-settings/` (the *operator's* Telegram channel, a
@@ -354,10 +356,11 @@ python manage.py bama ml_train --only price --json
 pytest
 ```
 
-Ten files, one per subject: `test_parsing` (pure Python, no DB), `test_verify`,
+Twelve files, one per subject: `test_parsing` (pure Python, no DB), `test_verify`,
 `test_ingest`, `test_fetcher`, `test_jobs`, `test_pricing`, `test_research`,
-`test_api`, `test_ml`, plus `test_logical_fixes` for regressions that span
-subjects. Shared fixtures are in `conftest.py`.
+`test_api`, `test_ml`, `test_logical_fixes` for regressions that span
+subjects, plus `test_account_recovery` for password change and the followed-car
+digest. Shared fixtures are in `conftest.py`.
 
 Most of `test_ml` runs without fitting anything — the metrics, the feature
 builder, the time split and the promotion gate are pure functions, and that is

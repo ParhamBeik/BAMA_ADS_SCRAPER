@@ -2,10 +2,12 @@ FROM node:24-alpine AS build
 
 WORKDIR /app
 COPY package.json package-lock.json ./
-# --legacy-peer-deps: openapi-typescript@7.13.0 peer-requires typescript@^5.x,
-# but the lockfile pins typescript@6.0.3 (dev-only codegen tool, doesn't affect
-# the built bundle) -- npm ci is strict about peer conflicts, this isn't.
-RUN npm ci --legacy-peer-deps
+# Plain `npm ci`, the same command CI runs. It used to carry
+# `--legacy-peer-deps` for a conflict between openapi-typescript and the pinned
+# typescript; neither the package nor the conflict is in the lockfile any more,
+# so the flag was doing one thing only — letting the image that ships resolve
+# peers differently from the tree CI type-checked and built.
+RUN npm ci
 COPY . .
 # The public origin, baked in at build time because the canonical link, the
 # sitemap and robots.txt are static files in the bundle -- there is no runtime

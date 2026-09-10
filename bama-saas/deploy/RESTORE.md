@@ -4,34 +4,47 @@ Backups are written by [`backup_postgres.sh`](backup_postgres.sh) to
 `/var/backups/bama/daily-YYYY-MM-DD.dump.enc` (AES-256-CBC, pbkdf2, 310000
 iterations). Keep `BACKUP_PASSPHRASE_FILE` mode 400/600 **outside** the repo.
 
-This stack is local Docker Compose only. There is no prod compose file, no
-`.env.production`, and no public domain.
+Production runs `docker-compose.prod.yml`. The restore below uses the local
+compose file as a practice target; against the VPS, swap in
+`docker-compose.prod.yml` and `--env-file .env.production`, and stop `django`,
+`worker`, `ml` and `frontend` instead of the local service names.
 
-## Restore to a throwaway volume (practice this once)
+## Restore into a new scratch database
+
+The practice target must be a new database. Do not stop the running app or use
+`--clean`: those commands would replace the existing database, not rehearse a
+restore. Run this in Bash, with a backup and its matching passphrase:
 
 ```bash
-project_dir=/path/to/bama-saas          # the Django project, not the git root
-passphrase_file=/root/bama-backup-passphrase
-dump=/var/backups/bama/daily-YYYY-MM-DD.dump.enc
-compose=(docker compose --project-directory $project_dir -f $project_dir/docker-compose.yml)
+set -euo pipefail
+project_dir=/path/to/bama-saas
+passphrase_file=/path/outside/repository/bama-backup-passphrase
+dump=/path/to/daily-YYYY-MM-DD.dump.enc
+scratch_db="bama_restore_$(date +%Y%m%d_%H%M%S)"
+compose=(docker compose --project-directory "$project_dir" -f "$project_dir/docker-compose.yml")
 
-# 1. Stop writers
-"${compose[@]}" stop django worker frontend
-
-# 2. Decrypt and restore (destroys current DB contents)
+# createdb refuses an existing name; the restore cannot overwrite live data.
+"${compose[@]}" exec -T postgres createdb -U postgres "$scratch_db"
 openssl enc -d -aes-256-cbc -pbkdf2 -iter 310000 \
   -pass "file:${passphrase_file}" -in "$dump" \
   | "${compose[@]}" exec -T postgres pg_restore \
-      --clean --if-exists --no-owner --no-acl \
-      -U postgres -d bama_saas
+      --exit-on-error --no-owner --no-acl -U postgres -d "$scratch_db"
 
-# 3. Bring the app back
-"${compose[@]}" start django worker frontend
-curl -fsS "http://localhost:8001/api/db/health/"
+"${compose[@]}" exec -T postgres psql -U postgres -d "$scratch_db" \
+  -c 'SELECT count(*) FROM accounts_user' \
+  -c 'SELECT count(*) FROM catalog_ad' \
+  -c 'SELECT count(*) FROM django_migrations'
 ```
 
-`pg_restore --list` (used by the backup script) only verifies the dump is
-readable; it does not load data. A real restore uses `--clean` as above.
+Compare counts with those recorded when the backup was taken. Point an isolated
+Django process at the scratch database and run `manage.py check` and
+`manage.py migrate --check`. Keep scheduled workers pointed at their original
+database. Leave the scratch database in place until its results are reviewed.
 
-Rollback of a bad local change is: restore yesterday's dump, then
-`"${compose[@]}" up -d`.
+A production replacement is a separate, explicitly authorized operation: stop
+all writers including the ML trainer, preserve the current database, restore,
+verify schema and application reads, then restart writers.
+
+`pg_restore --list` checks the archive catalogue only. A successful full restore
+plus schema and data checks is the recovery evidence; decrypting or listing an
+archive alone is insufficient.

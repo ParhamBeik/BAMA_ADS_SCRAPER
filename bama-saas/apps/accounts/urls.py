@@ -43,6 +43,7 @@ urlpatterns = [
     path("auth/logout/", views.LogoutView.as_view(), name="auth-logout"),
     path("auth/logout-everywhere/", views.LogoutEverywhereView.as_view(),
          name="auth-logout-everywhere"),
+    path("auth/password/", views.PasswordChangeView.as_view(), name="auth-password"),
     path("auth/token/", _ThrottledTokenView.as_view(), name="auth-token"),
     path("auth/token/refresh/", jwt.TokenRefreshView.as_view(), name="auth-token-refresh"),
     path("auth/token/verify/", jwt.TokenVerifyView.as_view(), name="auth-token-verify"),

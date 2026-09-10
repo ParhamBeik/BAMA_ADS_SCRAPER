@@ -139,6 +139,17 @@ def fetch(url: str) -> tuple[str, bytes] | None:
             stream=True,
         ) as response:
             response.raise_for_status()
+            # The allowlist is checked on the URL we *ask* for; this checks the
+            # one we were *answered* by. `requests` follows redirects, so a 302
+            # off the CDN would otherwise hand this endpoint's reader the body of
+            # whatever it landed on — and what it can reach from inside the
+            # compose network is Postgres, Redis and the cloud metadata address.
+            # Following is left on because a CDN is entitled to redirect between
+            # its own hosts; leaving the allowlist is what is refused.
+            if not is_cdn_url(response.url):
+                log.warning("images: %s redirected off the CDN to %s", url, response.url)
+                failed()
+                return None
             raw_type = (response.headers.get("Content-Type") or "").split(";")[0]
             content_type = raw_type.strip().lower()
             if content_type not in ALLOWED_IMAGE_TYPES:

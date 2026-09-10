@@ -1132,6 +1132,32 @@ def _movement(model_id: int, variant_id: int | None, year: int | None, days: int
     }
 
 
+def movement_payload(model_id: int, variant_id: int | None, year: int | None,
+                     days: int) -> dict:
+    """The series alone, cached, for a caller that publishes no coverage badge.
+
+    The followed-car digest asks this question once per trim or model-year scope
+    a reader follows, and this is the one figure on the analysis page computed at
+    request time rather than read from a stored series — so it wants a cache.
+    What it does not want is ``cached_answer``: that pairs the answer with a
+    fresh ``_coverage()`` read, which is the heaviest query in the envelope, and
+    the digest prints no coverage block to justify it. Measured: routing the
+    digest through the view's cache turned each followed trim from one query into
+    three.
+
+    A second cache entry rather than sharing the view's, deliberately. The two
+    could only share by letting the payload age separately from the coverage
+    beside it, which is precisely the drift ``cached_answer`` exists to prevent.
+    One extra scan per scope per TTL window is the cheaper mistake.
+    """
+    return cached(
+        cache_key("movement:series", {"model": model_id, "variant": variant_id,
+                                      "year": year, "days": days}),
+        MARKETS_CACHE_SECONDS,
+        lambda: _movement(model_id, variant_id, year, days),
+    )
+
+
 @api_view(["GET"])
 def movement_view(request):
     """A price index for a scope finer than the three that get persisted.

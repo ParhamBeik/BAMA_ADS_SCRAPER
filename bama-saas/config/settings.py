@@ -162,11 +162,28 @@ REST_FRAMEWORK = {
     ),
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 50,
+    # How many proxies sit in front of Django, and the difference between a
+    # brute-force guard and a decoration.
+    #
+    # Left unset, DRF's `get_ident` uses the *entire* X-Forwarded-For header as
+    # the throttle bucket. Both hops here append rather than replace, so the
+    # attacker's own value survives in that string: measured 2026-09-08, 25 wrong
+    # passwords sent with a different `X-Forwarded-For` each time were answered
+    # 401 twenty-five times, where the same 25 without the header were answered
+    # 429 fifteen times. Login, register and password-change were all open.
+    #
+    # 2 is this deployment's chain — Caddy, then the frontend nginx, each adding
+    # one entry — so `addrs[-2]` is the address Caddy vouched for and anything
+    # the client injected has been pushed to the left of it. Change this if the
+    # number of proxies changes: too low buckets every visitor together (one
+    # attacker locks out everybody), too high hands the key back to the caller.
+    "NUM_PROXIES": int(os.environ.get("NUM_PROXIES", "2")),
     # Auth endpoints get scoped throttles even in dev: they are reachable
     # without a session and need a brute-force guard.
     "DEFAULT_THROTTLE_RATES": {
         "login": os.environ.get("THROTTLE_LOGIN", "10/min"),
         "register": os.environ.get("THROTTLE_REGISTER", "5/min"),
+        "password": os.environ.get("THROTTLE_PASSWORD", "5/min"),
     },
 }
 
