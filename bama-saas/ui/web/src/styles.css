@@ -497,7 +497,14 @@ td.num, th.num {
 .thumb-fallback { display: grid; place-items: center; height: 100%; color: var(--muted); font-size: 0.85rem; }
 .listing-meta { padding: 0.75rem; display: grid; gap: 0.25rem; }
 .detail-layout { display: grid; grid-template-columns: 1.1fr 1fr; gap: 1rem; }
-.gallery { display: grid; gap: 0.5rem; }
+/* Three across at every width. The three-column rule used to live in the
+   `max-width: 900px` block alone, so a phone got this tidy grid and a desktop
+   got the *default* single column — six 679px photos stacked 3,125px tall in
+   one half of the detail layout, which pushed the fair price, the deal panel
+   and the price history a full screen-height and a half below the fold. It was
+   also the page's entire layout shift: a card that grows by 3,000px when its
+   data arrives moves everything under it. */
+.gallery { display: grid; gap: 0.5rem; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .gallery img { width: 100%; border-radius: 8px; aspect-ratio: 4/3; object-fit: cover; }
 .spec-list { display: grid; grid-template-columns: 1fr 1fr; gap: 0.35rem; padding: 0; list-style: none; }
 .price { font-family: var(--font-mono); font-size: 1.4rem; font-weight: 700; }
@@ -625,7 +632,6 @@ code {
   input, select, textarea { font-size: max(16px, 1em); }
   .auth-field input { font-size: 16px; }
   .spec-list { grid-template-columns: 1fr; }
-  .gallery { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .chip button, .preset { min-height: 44px; padding: 10px 12px; }
 }
 

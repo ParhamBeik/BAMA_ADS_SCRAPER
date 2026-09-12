@@ -35,8 +35,8 @@ import { useAuth } from "../auth";
 import { FilterPanel } from "../FilterPanel";
 import { qs, useFilters } from "../filters";
 import {
-  Async, BamaLink, Card, ConfidenceDots, Fa, ListingActions, Pager, Provenance,
-  Table, fa, pct, toman,
+  Async, BamaLink, Card, ConfidenceDots, Fa, ListingActions, NumberInput, Pager,
+  Provenance, Table, fa, pct, toman,
 } from "../ui";
 import { DealCard, conditionNote, type Deal } from "../components/DealCard";
 import { ViewToggle, useListView } from "../components/ViewToggle";
@@ -103,28 +103,27 @@ interface DealBoard extends Envelope {
 }
 
 function NumberField({
-  label, value, min, max, hint, onChange,
+  label, value, hint, onChange,
 }: {
   label: string;
   value: number | string;
-  min?: number;
-  max?: number;
   hint?: string;
   onChange: (raw: string) => void;
 }) {
+  // A wrapping `<label>`, not a sibling `<Label>` with no `htmlFor`: the latter
+  // is visible text with no association, so the field had no accessible name at
+  // all. The range lives in `hint` now — `NumberInput` is a text field, because
+  // `type="number"` will not accept a Persian digit.
   return (
-    <div className="grid gap-1.5">
-      <Label className="text-muted-foreground text-xs font-semibold">{label}</Label>
-      <input
-        type="number"
-        min={min}
-        max={max}
+    <label className="grid gap-1.5">
+      <span className="text-muted-foreground text-xs font-semibold">{label}</span>
+      <NumberInput
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="border-border bg-panel w-full rounded-md border px-2.5 py-1.5 text-sm"
       />
       {hint && <span className="text-muted-foreground text-[11px]">{hint}</span>}
-    </div>
+    </label>
   );
 }
 
@@ -196,12 +195,13 @@ function NotifierPanel() {
 
         <div className="grid grid-cols-2 gap-3">
           <NumberField
-            label="کمترین تخفیف (٪)" min={1} max={99}
+            label="کمترین تخفیف (٪)"
             value={form.min_discount_pct}
+            hint="بین ۱ تا ۹۹"
             onChange={(raw) => set({ min_discount_pct: Number(raw) })}
           />
           <NumberField
-            label="کمترین آگهی مشابه" min={8}
+            label="کمترین آگهی مشابه"
             value={form.min_peers}
             hint="کمتر از ۸ پذیرفته نمی‌شود"
             onChange={(raw) => set({ min_peers: Number(raw) })}
@@ -304,7 +304,11 @@ function BandedGrid({ rows, ceiling }: { rows: Deal[]; ceiling: number }) {
 // board keeps both rather than replacing one with the other.
 const TABS: { id: string; label: string }[] = [
   { id: "top", label: "پیشنهادهای برتر" },
-  { id: "all", label: "بقیه معامله‌ها" },
+  // "همه", not "بقیه": the `all` band is a superset of `top`, not its
+  // complement — it drops the discount floor and keeps the same ceiling and
+  // recency window. Labelled "the rest" it read as broken, because its first
+  // page is the top board again, in the same order.
+  { id: "all", label: "همه معامله‌ها" },
   { id: "ml", label: "به تشخیص مدل" },
   { id: "review", label: "نیازمند بررسی" },
 ];
@@ -385,11 +389,12 @@ export function Deals() {
         )}
         {band === "all" && (
           <>
-            بقیه آگهی‌های زیر میانه قیمت آگهی‌های مشابه، تا سقف{" "}
+            همه آگهی‌های زیر میانه قیمت آگهی‌های مشابه، تا سقف{" "}
             <b>{w ? pct(w.ceiling_pct, 0) : "—"}</b>، در همان بازه{" "}
-            <b>{fa(w?.window_days)} روزه</b> — یعنی همان‌هایی که به حد
-            «پیشنهادهای برتر» نرسیده‌اند. گروه‌بندی بر پایه تازگی آگهی است و
-            میزان تخفیف تنها ترتیب درون هر گروه را تعیین می‌کند.
+            <b>{fa(w?.window_days)} روزه</b> — بدون حداقلِ تخفیفِ زبانه
+            «پیشنهادهای برتر»، پس آن آگهی‌ها را هم در بر می‌گیرد. گروه‌بندی بر
+            پایه تازگی آگهی است و میزان تخفیف تنها ترتیب درون هر گروه را تعیین
+            می‌کند.
           </>
         )}
         {band === "ml" && <>{ML_TAB_NOTE}</>}

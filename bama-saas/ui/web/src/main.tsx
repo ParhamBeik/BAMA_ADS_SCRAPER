@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter } from "react-router-dom";
+import { Direction } from "radix-ui";
 import { App } from "./App";
 import { AuthProvider } from "./auth";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -32,15 +33,24 @@ const queryClient = new QueryClient({
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ErrorBoundary>
-      <QueryClientProvider client={queryClient}>
-        <ThemeProvider>
-          <AuthProvider>
-            <BrowserRouter>
-              <App />
-            </BrowserRouter>
-          </AuthProvider>
-        </ThemeProvider>
-      </QueryClientProvider>
+      {/* Radix reads direction from this provider and defaults to `ltr` when it
+          is missing — `dir="rtl"` on <html> is not something it looks at. Every
+          primitive was therefore laying itself out and moving focus as if the
+          page ran left to right: the deal-board tabs rendered first-tab-leftmost
+          directly under a row of window presets that rendered first-preset-
+          rightmost, and ArrowRight walked the tab strip backwards. One provider
+          fixes it for every primitive, including ones added later. */}
+      <Direction.Provider dir="rtl">
+        <QueryClientProvider client={queryClient}>
+          <ThemeProvider>
+            <AuthProvider>
+              <BrowserRouter>
+                <App />
+              </BrowserRouter>
+            </AuthProvider>
+          </ThemeProvider>
+        </QueryClientProvider>
+      </Direction.Provider>
     </ErrorBoundary>
   </StrictMode>,
 );

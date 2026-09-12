@@ -87,7 +87,15 @@ export function ScopePicker({ years }: { years?: { year_jalali: number; n: numbe
             })
           }
         >
-          <SelectTrigger><SelectValue placeholder="همه برندها" /></SelectTrigger>
+          {/* Radix renders nothing when the value matches no item, so a stale or
+              hand-typed `?brand=` left the trigger blank — not "همه برندها",
+              blank — beside panels reporting zero categories. Naming the value
+              we were given makes the mismatch legible instead of invisible. */}
+          <SelectTrigger>
+            <SelectValue placeholder="همه برندها">
+              {brand ? <Fa>{brandName(brandList, brand)}</Fa> : "همه برندها"}
+            </SelectValue>
+          </SelectTrigger>
           <SelectContent>
             <SelectItem value={ANY}>همه برندها</SelectItem>
             {brandList.map((b) => (
@@ -168,13 +176,37 @@ export function ScopePicker({ years }: { years?: { year_jalali: number; n: numbe
   );
 }
 
+/** The brand's display name, falling back to the slug we were handed. */
+function brandName(list: Brand[], slug: string): string {
+  return list.find((b) => b.slug === slug)?.name_fa ?? slug;
+}
+
 /** A one-line description of the current scope, for headings and empty states. */
-export function useScopeLabel(modelName?: string, brandName?: string): string {
+export function useScopeLabel(modelName?: string, brandNameFromModel?: string): string {
   const filters = useFilters();
+  const brand = filters.get("brand");
   const variant = filters.get("variant");
   const year = filters.get("year");
-  if (!filters.get("brand") && !filters.get("model")) return "کل بازار";
-  const parts = [brandName, modelName].filter(Boolean);
+  // Resolved from the brand list rather than only from the selected model:
+  // the caller's brand name comes off `useModelLabel`, which is empty when no
+  // model is chosen, so a brand-only scope printed "دامنه تحلیل — کل بازار"
+  // over panels that were filtered to that one brand. Same cached query the
+  // picker already runs, so this costs no request.
+  const brands = useQuery({
+    queryKey: ["brands"],
+    enabled: Boolean(brand) && !brandNameFromModel,
+    staleTime: 10 * 60_000,
+    queryFn: ({ signal }) => api.get<Paginated<Brand> | Brand[]>("/api/brands/", signal),
+  });
+  const list: Brand[] = Array.isArray(brands.data)
+    ? brands.data
+    : (brands.data?.results ?? []);
+
+  if (!brand && !filters.get("model")) return "کل بازار";
+  const parts = [
+    brandNameFromModel ?? (brand ? brandName(list, brand) : undefined),
+    modelName,
+  ].filter(Boolean);
   if (variant) parts.push("تیپ انتخاب‌شده");
   if (year) parts.push(`سال ${year}`);
   return parts.join(" · ") || "کل بازار";

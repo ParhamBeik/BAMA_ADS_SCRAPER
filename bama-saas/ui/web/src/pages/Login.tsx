@@ -18,6 +18,18 @@ export function Login() {
   // account created before the rules changed must still be able to log in.
   const ready = emailValid && Boolean(password);
 
+  // A rejection is about the credentials that were sent, so it stops being true
+  // the moment one of them changes. Without this, «ایمیل یا گذرواژه نادرست است.»
+  // sat above a corrected address until the next submit — and `onSubmit` returns
+  // early while the form is incomplete, so retyping the password alone never
+  // cleared it.
+  function edit(set: (value: string) => void) {
+    return (value: string) => {
+      setError(null);
+      set(value);
+    };
+  }
+
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     if (!ready || submitting) return;
@@ -49,7 +61,7 @@ export function Login() {
 
         <EmailField
           value={email}
-          onChange={setEmail}
+          onChange={edit(setEmail)}
           onBlur={() => setEmailTouched(true)}
           touched={emailTouched}
           hint={
@@ -63,7 +75,7 @@ export function Login() {
           id="auth-password"
           label="گذرواژه"
           value={password}
-          onChange={setPassword}
+          onChange={edit(setPassword)}
           show={show}
           onToggle={() => setShow((v) => !v)}
           autoComplete="current-password"

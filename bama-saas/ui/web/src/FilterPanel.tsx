@@ -23,7 +23,7 @@ import { ChevronDown, Search, SlidersHorizontal, X } from "lucide-react";
 import { api } from "./api";
 import type { Paginated } from "./api";
 import { useFilters } from "./filters";
-import { Fa, toman } from "./ui";
+import { Fa, NumberInput, toman } from "./ui";
 import { ModelCombobox, useModelLabel } from "./components/ModelCombobox";
 import { Button } from "./components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "./components/ui/popover";
@@ -165,22 +165,18 @@ function RangeField({
   return (
     <Field label={label}>
       <div className="flex items-center gap-2">
-        <input
+        <NumberInput
           key={`${minKey}-${min}`}
           className={input}
-          type="number"
-          inputMode="numeric"
           aria-label={`${label} از`}
           placeholder={placeholderMin}
           defaultValue={min ?? ""}
           onBlur={(e) => filters.set({ [minKey]: e.target.value || null, page: null })}
         />
         <span className="text-muted-foreground flex-none text-xs">تا</span>
-        <input
+        <NumberInput
           key={`${maxKey}-${max}`}
           className={input}
-          type="number"
-          inputMode="numeric"
           aria-label={`${label} تا`}
           placeholder={placeholderMax}
           defaultValue={max ?? ""}

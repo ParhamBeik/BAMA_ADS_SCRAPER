@@ -30,7 +30,9 @@ import { Wallet } from "lucide-react";
 import { api } from "../api";
 import type { Envelope } from "../api";
 import { qs, useFilters } from "../filters";
-import { Async, Card, Fa, Provenance, Stat, Table, fa, km, pct, toman } from "../ui";
+import {
+  Async, Card, Fa, NumberInput, Provenance, Stat, Table, fa, km, pct, toman,
+} from "../ui";
 import { Button } from "../components/ui/button";
 
 interface Option {
@@ -112,10 +114,8 @@ export function Budget() {
           }}
         >
           <Wallet className="text-muted-foreground size-4 flex-none" aria-hidden />
-          <input
+          <NumberInput
             className="border-border bg-panel min-w-0 flex-1 rounded-md border px-3 py-2 text-sm sm:max-w-64"
-            type="number"
-            inputMode="numeric"
             aria-label="بودجه به تومان"
             placeholder="مثلاً ۱۰۰۰۰۰۰۰۰۰"
             value={draft}

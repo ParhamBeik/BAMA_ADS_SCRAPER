@@ -24,7 +24,9 @@ import { Link } from "react-router-dom";
 import { BellOff, Plus, Trash2 } from "lucide-react";
 import { api } from "../api";
 import type { Paginated } from "../api";
-import { Async, BamaLink, Card, Fa, Table, Thumb, km, pct, toman } from "../ui";
+import {
+  Async, BamaLink, Card, Fa, NumberInput, Table, Thumb, km, pct, toman,
+} from "../ui";
 import { ModelCombobox } from "../components/ModelCombobox";
 import { Button } from "../components/ui/button";
 import { Label } from "../components/ui/label";
@@ -133,11 +135,8 @@ function RuleForm({ onDone }: { onDone: () => void }) {
           <span className="text-muted-foreground text-xs font-semibold">
             کمترین تخفیف (٪)
           </span>
-          <input
+          <NumberInput
             className={field}
-            type="number"
-            min={1}
-            max={99}
             value={form.min_discount_pct}
             onChange={(e) =>
               setForm({ ...form, min_discount_pct: Number(e.target.value) })
@@ -148,11 +147,8 @@ function RuleForm({ onDone }: { onDone: () => void }) {
           <span className="text-muted-foreground text-xs font-semibold">
             کمترین اختلاف با برآورد مدل (٪)
           </span>
-          <input
+          <NumberInput
             className={field}
-            type="number"
-            min={1}
-            max={99}
             value={form.min_residual_pct}
             placeholder="اختیاری"
             onChange={(e) =>
@@ -169,10 +165,8 @@ function RuleForm({ onDone }: { onDone: () => void }) {
           <span className="text-muted-foreground text-xs font-semibold">
             کمترین آگهی مشابه
           </span>
-          <input
+          <NumberInput
             className={field}
-            type="number"
-            min={MIN_PEERS}
             value={form.min_peers}
             onChange={(e) => setForm({ ...form, min_peers: Number(e.target.value) })}
           />
@@ -185,9 +179,8 @@ function RuleForm({ onDone }: { onDone: () => void }) {
           <span className="text-muted-foreground text-xs font-semibold">
             بیشترین قیمت (تومان)
           </span>
-          <input
+          <NumberInput
             className={field}
-            type="number"
             value={form.price_max}
             onChange={(e) => setForm({ ...form, price_max: e.target.value })}
           />
@@ -196,9 +189,8 @@ function RuleForm({ onDone }: { onDone: () => void }) {
           <span className="text-muted-foreground text-xs font-semibold">
             بیشترین کارکرد (کیلومتر)
           </span>
-          <input
+          <NumberInput
             className={field}
-            type="number"
             value={form.mileage_max}
             onChange={(e) => setForm({ ...form, mileage_max: e.target.value })}
           />

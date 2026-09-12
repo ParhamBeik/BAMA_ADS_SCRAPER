@@ -24,7 +24,17 @@ function Tabs({
 }
 
 const tabsListVariants = cva(
-  "group/tabs-list inline-flex max-w-full w-full overflow-x-auto sm:w-fit items-center justify-center rounded-lg p-[3px] text-muted-foreground group-data-[orientation=horizontal]/tabs:h-9 group-data-[orientation=vertical]/tabs:h-fit group-data-[orientation=vertical]/tabs:flex-col data-[variant=line]:rounded-none",
+  // `scrollbar-width: none` is load-bearing, not cosmetic. `overflow-x-auto`
+  // forces `overflow-y` from `visible` to `auto`, and the trigger's decorative
+  // `after:bottom-[-5px]` underline overflows this box by ~1px — so on any
+  // platform with classic (non-overlay) scrollbars, Windows and Linux included,
+  // that 1px raised a 15px vertical scrollbar, which pushed the row wide enough
+  // to raise a horizontal one too, which ate 15px of the 30px content box. The
+  // triggers' `h-[calc(100%-1px)]` then resolved to 14px and every tab
+  // collapsed to half height with its label spilling out of its pill. A tab
+  // strip has no use for a visible scrollbar anyway; swipe and the arrow keys
+  // still scroll it.
+  "group/tabs-list inline-flex max-w-full w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:w-fit items-center justify-start sm:justify-center rounded-lg p-[3px] text-muted-foreground group-data-[orientation=horizontal]/tabs:h-9 group-data-[orientation=vertical]/tabs:h-fit group-data-[orientation=vertical]/tabs:flex-col data-[variant=line]:rounded-none",
   {
     variants: {
       variant: {
@@ -44,8 +54,26 @@ function TabsList({
   ...props
 }: React.ComponentProps<typeof TabsPrimitive.List> &
   VariantProps<typeof tabsListVariants>) {
+  const ref = React.useRef<HTMLDivElement>(null)
+
+  // Keep the active tab inside the strip. Four Persian labels are ~393px wide
+  // and a phone gives them 358, so the deal board opened with its *selected*
+  // first tab hanging off the edge — the one tab a reader needs to see to know
+  // where they are. Runs on every render because the active trigger changes
+  // without this component's own props changing.
+  React.useEffect(() => {
+    const list = ref.current
+    const active = list?.querySelector<HTMLElement>('[data-state="active"]')
+    if (!list || !active) return
+    const l = list.getBoundingClientRect()
+    const a = active.getBoundingClientRect()
+    if (a.left < l.left) list.scrollLeft -= l.left - a.left
+    else if (a.right > l.right) list.scrollLeft += a.right - l.right
+  })
+
   return (
     <TabsPrimitive.List
+      ref={ref}
       data-slot="tabs-list"
       data-variant={variant}
       className={cn(tabsListVariants({ variant }), className)}

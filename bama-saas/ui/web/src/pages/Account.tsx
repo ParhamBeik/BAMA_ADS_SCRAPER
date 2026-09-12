@@ -57,6 +57,20 @@ export function Account() {
   const matches = Boolean(next) && next === confirm;
   const ready = Boolean(current) && checks.every((c) => c.ok) && matches && current !== next;
 
+  // The server's verdict is about the values that were submitted, so it stops
+  // being true the moment one of them changes. `onSubmit` cleared it, but it
+  // returns early while the form is incomplete — so "گذرواژه فعلی نادرست است."
+  // stayed on screen next to a corrected current password, and next to
+  // "گذرواژه‌ها یکسان نیستند", telling the reader two contradictory things about
+  // a request that was never sent.
+  function edit(set: (value: string) => void) {
+    return (value: string) => {
+      setError(null);
+      setSaved(false);
+      set(value);
+    };
+  }
+
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     if (!ready || submitting) return;
@@ -103,7 +117,7 @@ export function Account() {
             id="account-current"
             label="گذرواژه فعلی"
             value={current}
-            onChange={setCurrent}
+            onChange={edit(setCurrent)}
             show={showCurrent}
             onToggle={() => setShowCurrent((v) => !v)}
             autoComplete="current-password"
@@ -113,7 +127,7 @@ export function Account() {
             id="account-new"
             label="گذرواژه جدید"
             value={next}
-            onChange={setNext}
+            onChange={edit(setNext)}
             show={showNext}
             onToggle={() => setShowNext((v) => !v)}
             autoComplete="new-password"
@@ -126,7 +140,7 @@ export function Account() {
             id="account-confirm"
             label="تکرار گذرواژه جدید"
             value={confirm}
-            onChange={setConfirm}
+            onChange={edit(setConfirm)}
             show={showConfirm}
             onToggle={() => setShowConfirm((v) => !v)}
             autoComplete="new-password"

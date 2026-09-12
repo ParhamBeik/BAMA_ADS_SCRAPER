@@ -83,6 +83,47 @@ export function Thumb({ src, children }: { src?: string; children?: ReactNode })
   );
 }
 
+/** Persian and Arabic-Indic digits as ASCII, plus the separators people paste. */
+export function latinDigits(input: string): string {
+  return input
+    .replace(/[۰-۹]/g, (ch) => String(ch.charCodeAt(0) - 0x06f0))
+    .replace(/[٠-٩]/g, (ch) => String(ch.charCodeAt(0) - 0x0660))
+    .replace(/[,٬\s]/g, "");
+}
+
+/**
+ * A number field that a Persian keyboard can actually fill.
+ *
+ * `<input type="number">` accepts ASCII digits only: a Persian digit never
+ * reaches `value`, which stays empty while the user watches themselves type. On
+ * the budget screen the placeholder was «مثلاً ۱۰۰۰۰۰۰۰۰۰» — the field was
+ * demonstrating the one input it would silently refuse. Every numeric field in
+ * this app is filled by a Persian-speaking audience, so all of them use this.
+ *
+ * `text` plus `inputMode="numeric"` keeps the phone keypad and gives up the
+ * spinner and native `min`/`max`, neither of which was load-bearing: the ranges
+ * are stated in the copy beside each field and enforced by the API.
+ */
+export function NumberInput({
+  onChange, onBlur, ...rest
+}: Omit<React.ComponentProps<"input">, "type" | "min" | "max">) {
+  // Rewrite the element's own value before React reads it, so a controlled
+  // parent and an uncontrolled `defaultValue`/`onBlur` field both see ASCII.
+  const toLatin = (el: HTMLInputElement) => {
+    const next = latinDigits(el.value);
+    if (next !== el.value) el.value = next;
+  };
+  return (
+    <input
+      {...rest}
+      type="text"
+      inputMode="numeric"
+      onChange={(e) => { toLatin(e.currentTarget); onChange?.(e); }}
+      onBlur={(e) => { toLatin(e.currentTarget); onBlur?.(e); }}
+    />
+  );
+}
+
 /** Persian source text inside English chrome. */
 export function Fa({ children }: { children: ReactNode }) {
   return (
@@ -377,18 +418,24 @@ export function Async<T>({
   /** Match the placeholder to what will land, so the page stops jumping. */
   shape?: "block" | "table" | "chart" | "cards";
 }) {
+  // Sized for what typically lands, not for the worst case. Six card
+  // placeholders reserved ~1,260px on «اعلان‌ها», where a fresh account's feed
+  // lands as one sentence — the page then snapped upward by more than a
+  // screen-height. Three is closer to what a first screenful actually holds,
+  // and under-reserving grows the page downward, which is the gentler error.
+  const reserved = shape === "table" ? 260 : shape === "chart" ? 240 : 120;
+
   if (query.isLoading) {
     if (shape === "cards") {
       return (
         <div className="card-grid" aria-busy="true">
-          {Array.from({ length: 6 }, (_, i) => (
+          {Array.from({ length: 3 }, (_, i) => (
             <div key={i} className="skeleton" style={{ height: 210 }} />
           ))}
         </div>
       );
     }
-    const height = shape === "table" ? 260 : shape === "chart" ? 240 : 120;
-    return <div className="skeleton" style={{ height }} aria-busy="true" />;
+    return <div className="skeleton" style={{ height: reserved }} aria-busy="true" />;
   }
   if (query.error) {
     return <div className="state error">{humanError(query.error)}</div>;
@@ -400,7 +447,7 @@ export function Async<T>({
     return (
       <div className="state">
         <AlertTriangle size={16} />{" "}
-        <strong>هنوز داده کافی برای این محاسبه وجود ندارد.</strong>
+        <strong>{reasonTitle(data.reason)}</strong>
         <div style={{ marginTop: 4 }}>{humanReason(data.reason)}</div>
       </div>
     );
@@ -430,6 +477,19 @@ export function humanError(error: unknown): string {
     return error.detail;  // already Persian: the backend meant it for a reader
   }
   return "ارتباط با سرور برقرار نشد.";
+}
+
+/**
+ * The headline over a refusal.
+ *
+ * Almost every `available: false` really is a data shortage, so that is the
+ * default. The budget search is not: it ran fine and the answer was "no car
+ * costs that", which "not enough data yet" turned into a bug report about the
+ * crawler.
+ */
+function reasonTitle(reason?: string): string {
+  if (reason === "nothing_in_range") return "چیزی در این محدوده نیست.";
+  return "هنوز داده کافی برای این محاسبه وجود ندارد.";
 }
 
 function humanReason(reason?: string): string {
@@ -473,8 +533,29 @@ function humanReason(reason?: string): string {
       return "این آگهی هنوز با مدل‌های فعال امتیازدهی نشده است.";
     case "insufficient_rows":
       return "تعداد آگهی‌ها برای آموزش یک مدل قابل اتکا کافی نیست.";
+    case "insufficient_scored_rows":
+      return "تعداد آگهی‌های امتیازدهی‌شده برای سنجش این مدل کافی نیست.";
+    case "no_training_boundary":
+      // No fitted model has a recorded train/test cutoff yet, so "drift since
+      // training" has no date to measure from.
+      return "مرز زمانی آموزش این مدل ثبت نشده، پس رانش را نمی‌توان اندازه گرفت.";
+    // The budget search finding nothing is not a data shortage — it is an
+    // answer. Saying "not enough data" sent people off to check the crawler
+    // when the truth was that no car costs what they typed.
+    case "nothing_in_range":
+      return "در این بودجه آگهی فعالی پیدا نشد — مبلغ بالاتری را امتحان کنید.";
+    case "missing_model_or_price":
+      return "این آگهی مدل یا قیمت مشخصی ندارد، پس قابل قیمت‌گذاری نیست.";
+    case "incomplete_scope":
+      return "دامنه این دنبال‌کردن ناقص است — دوباره از صفحه تحلیل انتخابش کنید.";
+    case "market_scope":
+      return "روند قیمت برای کل بازار در «نبض بازار» است، نه اینجا.";
     default:
-      return reason ?? "این دسته برای گزارش‌دهی کوچک است.";
+      // Never the raw code. `reason` is a machine string in English and this
+      // sentence is the last thing between it and a Persian reader — the budget
+      // search printed a bare "nothing_in_range" onto the page for exactly this
+      // reason.
+      return "این دسته برای گزارش‌دهی کوچک است.";
   }
 }
 

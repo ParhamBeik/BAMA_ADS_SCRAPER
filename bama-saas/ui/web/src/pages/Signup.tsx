@@ -59,6 +59,18 @@ export function Signup() {
     };
   }, [trimmed, emailValid]);
 
+  // Same reason as the account screen: a server error is about the values that
+  // were submitted, so editing any of them retires it. `onSubmit` clears it too,
+  // but it returns early while the form is incomplete — so a rejected address
+  // stayed on screen next to a corrected one, and next to «گذرواژه‌ها یکسان
+  // نیستند», telling the reader two contradictory things about one request.
+  function edit(set: (value: string) => void) {
+    return (value: string) => {
+      setError(null);
+      set(value);
+    };
+  }
+
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     if (!ready || submitting) return;
@@ -99,7 +111,7 @@ export function Signup() {
 
         <EmailField
           value={email}
-          onChange={setEmail}
+          onChange={edit(setEmail)}
           onBlur={() => setEmailTouched(true)}
           touched={emailTouched || Boolean(email)}
           hint={emailHint}
@@ -109,7 +121,7 @@ export function Signup() {
           id="auth-password"
           label="گذرواژه"
           value={password}
-          onChange={setPassword}
+          onChange={edit(setPassword)}
           show={showPassword}
           onToggle={() => setShowPassword((v) => !v)}
           autoComplete="new-password"
@@ -131,7 +143,7 @@ export function Signup() {
           id="auth-confirm-password"
           label="تکرار گذرواژه"
           value={confirmation}
-          onChange={setConfirmation}
+          onChange={edit(setConfirmation)}
           show={showConfirmation}
           onToggle={() => setShowConfirmation((v) => !v)}
           autoComplete="new-password"

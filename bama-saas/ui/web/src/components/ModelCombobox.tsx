@@ -100,6 +100,14 @@ export function ModelCombobox({
           variant="outline"
           role="combobox"
           aria-expanded={open}
+          // `combobox` is not a name-from-content role, so overriding the
+          // button's role threw away the name its own label would have given
+          // it: Chrome's accessibility tree reported this control, on the home
+          // page, with no name at all. Where a `<label>` wraps the control it
+          // supplies one; where it does not, this does.
+          aria-label={
+            selected ? `${selected.brand_name} ${selected.name_fa}` : placeholder
+          }
           className={cn("w-full justify-between font-normal", className)}
         >
           <span className="truncate">

@@ -237,6 +237,18 @@ export function ListingDetail() {
         )}
       </Async>
 
+      {/* Held back until the listing itself has rendered, and that ordering is
+          the whole point. These three panels resolve independently of `ad`, so
+          they used to paint their own skeletons at the very top of an otherwise
+          empty page — and then the gallery, the title and the description
+          arrived *above* them and shoved them down by about a thousand pixels.
+          That single reflow was a 0.47 layout shift on a phone. Rendering them
+          only once there is something above them to sit under costs nothing:
+          the queries are already in flight either way, and a price verdict with
+          no car above it was not readable anyway. It also stops a bad listing
+          code printing "این مورد پیدا نشد." four times over. */}
+      {ad.isSuccess && (
+        <>
       <div className="card">
         <h2>ارزیابی قیمت</h2>
         <Async query={fair}>
@@ -355,6 +367,8 @@ export function ListingDetail() {
           }}
         </Async>
       </div>
+        </>
+      )}
     </div>
   );
 }
