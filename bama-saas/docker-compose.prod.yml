@@ -37,6 +37,24 @@ x-django-env: &django-env
   # in settings.py is the same number: this line exists so the chain is visible
   # here, next to the proxy it describes, and overridable without a code change.
   NUM_PROXIES: ${NUM_PROXIES:-2}
+  # Sized for a room, not for one attacker. These bucket on the *resolved client
+  # IP* above, and a group of people on one office WiFi share a single public
+  # address — so settings.py's 5/min register limit meant the sixth person to
+  # sign up inside a minute was answered 429, which reads to them as "signup is
+  # closed" rather than as a rate limit. 30/min leaves a crowd unobstructed and
+  # still leaves a brute-forcer nowhere: every guess costs the server a PBKDF2,
+  # and 30 a minute against an unknown password is not a threat.
+  #
+  # `:-` with a real default, never `:-` with an empty one: settings.py reads
+  # these with `os.environ.get(name, default)`, and an env var that is *present
+  # and empty* wins over that default and hands DRF an unparseable rate.
+  THROTTLE_REGISTER: ${THROTTLE_REGISTER:-30/min}
+  THROTTLE_LOGIN: ${THROTTLE_LOGIN:-60/min}
+  THROTTLE_PASSWORD: ${THROTTLE_PASSWORD:-30/min}
+  # The signed-out SPA still makes unauthenticated calls, and this one is shared
+  # across everyone behind that same NAT.
+  THROTTLE_ANON: ${THROTTLE_ANON:-300/min}
+  THROTTLE_USER: ${THROTTLE_USER:-600/min}
   BAMA_MAX_ADS: ${BAMA_MAX_ADS:-50000}
   BAMA_PAGE_PAUSE: ${BAMA_PAGE_PAUSE:-1.5}
   BAMA_REQUEST_TIMEOUT: ${BAMA_REQUEST_TIMEOUT:-20}
