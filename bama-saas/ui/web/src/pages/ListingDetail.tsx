@@ -154,8 +154,8 @@ export function ListingDetail() {
             </div>
             <div className="detail-layout">
               <div className="gallery card">
-                {(data.image_urls?.length ? data.image_urls : data.image_url ? [data.image_url] : []).map((src) => (
-                  <img key={src} src={src} alt="" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.opacity = "0.3"; }} />
+                {(data.image_urls?.length ? data.image_urls : data.image_url ? [data.image_url] : []).map((src, index) => (
+                  <img key={src} src={src} alt={`${data.title} — تصویر ${index + 1}`} loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.opacity = "0.3"; }} />
                 ))}
                 {!data.image_url && <div className="thumb-fallback">بدون تصویر</div>}
               </div>
