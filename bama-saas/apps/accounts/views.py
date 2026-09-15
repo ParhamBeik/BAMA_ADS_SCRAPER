@@ -13,13 +13,11 @@ decide between the app shell and the login screen.
 from __future__ import annotations
 
 import logging
-from urllib.parse import urlencode
 
 from django.contrib.auth import authenticate, login, logout, update_session_auth_hash
-from django.contrib.auth.password_validation import validate_password
 from django.contrib.sessions.models import Session
 from django.db import IntegrityError
-from django.db.models import OuterRef, Subquery
+from django.db.models import Subquery
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import ensure_csrf_cookie
@@ -30,10 +28,19 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
+from apps.accounts.digest import DIGEST_CAP, _digest_row, _digest_trends
 from apps.accounts.models import AlertDelivery, AlertRule, Favorite, User, Watchlist
-from apps.core import images, research
-from apps.core.models import Brand, MarketIndex, PriceDropEvent
-from apps.core.pricing import MIN_PEERS
+from apps.accounts.serializers import (
+    _LATEST_DROP,
+    AlertDeliverySerializer,
+    AlertRuleSerializer,
+    FavoriteSerializer,
+    LoginSerializer,
+    PasswordChangeSerializer,
+    RegisterSerializer,
+    WatchlistSerializer,
+)
+from apps.core.models import Brand
 
 log = logging.getLogger("bama.accounts")
 
@@ -62,26 +69,6 @@ class MeView(APIView):
             return Response({"user": None, "authenticated": False})
         payload = _user_payload(request.user)
         return Response({**payload, "user": payload, "authenticated": True})
-
-
-class LoginSerializer(serializers.Serializer):
-    email = serializers.EmailField()
-    password = serializers.CharField(trim_whitespace=False)
-
-
-class RegisterSerializer(serializers.Serializer):
-    email = serializers.EmailField()
-    password = serializers.CharField(trim_whitespace=False, write_only=True)
-
-    def validate_email(self, value):
-        email = value.strip().lower()
-        if User.objects.filter(email__iexact=email).exists():
-            raise serializers.ValidationError("An account with this email already exists.")
-        return email
-
-    def validate_password(self, value):
-        validate_password(value)
-        return value
 
 
 class LoginView(APIView):
@@ -206,22 +193,6 @@ class LogoutEverywhereView(APIView):
         return Response({"sessions_ended": killed, "tokens_revoked": tokens_revoked})
 
 
-class PasswordChangeSerializer(serializers.Serializer):
-    current_password = serializers.CharField(trim_whitespace=False)
-    new_password = serializers.CharField(trim_whitespace=False)
-
-    def validate_new_password(self, value):
-        validate_password(value, user=self.context["request"].user)
-        return value
-
-    def validate(self, attrs):
-        if attrs["current_password"] == attrs["new_password"]:
-            raise serializers.ValidationError(
-                {"new_password": "must be different from the current password"}
-            )
-        return attrs
-
-
 class PasswordChangeView(APIView):
     """Change the signed-in user's password.
 
@@ -251,35 +222,6 @@ class PasswordChangeView(APIView):
         update_session_auth_hash(request, user)
         tokens_revoked = _blacklist_tokens(user)
         return Response({"ok": True, "tokens_revoked": tokens_revoked})
-
-
-class FavoriteSerializer(serializers.ModelSerializer):
-    """One saved ad, plus its most recent price cut.
-
-    ``previous_price`` and ``price_changed_at`` are read off annotations the
-    viewset attaches (see ``_LATEST_DROP``), not looked up per row. They used to
-    be two ``SerializerMethodField``s that each ran their own query for the same
-    drop, so rendering a page of saved cars cost two queries per row on top of
-    the one that fetched them.
-    """
-
-    code = serializers.CharField(source="ad_id")
-    ad_title = serializers.CharField(source="ad.title", read_only=True)
-    ad_price = serializers.IntegerField(source="ad.current_price", read_only=True)
-    previous_price = serializers.IntegerField(read_only=True)
-    price_changed_at = serializers.DateTimeField(read_only=True)
-
-    class Meta:
-        model = Favorite
-        fields = ["code", "ad_title", "ad_price", "previous_price",
-                  "price_changed_at", "created_at"]
-        read_only_fields = ["created_at"]
-
-
-# The ad's newest price cut, as a correlated subquery. Served by
-# `PriceDropEvent`'s own (ad, -observed_at) index, so it is one index seek per
-# row inside the single list query rather than a round trip per row.
-_LATEST_DROP = PriceDropEvent.objects.filter(ad_id=OuterRef("ad_id")).order_by("-observed_at")
 
 
 class FavoriteViewSet(viewsets.ModelViewSet):
@@ -331,73 +273,6 @@ class FavoriteViewSet(viewsets.ModelViewSet):
 # the pattern; these follow it exactly rather than inventing a second one.
 
 
-class ScopeSerializerMixin(serializers.Serializer):
-    """The four scope fields, plus the labels a client needs to render them.
-
-    `scope_key` is read-only and derived in `Model.save()`. Exposing it is
-    deliberate: the frontend uses it to tell whether the scope currently on
-    screen is already being watched, and re-deriving that comparison in
-    TypeScript is how the two definitions drift.
-    """
-
-    model_name = serializers.CharField(source="model.name_fa", read_only=True, default="")
-    variant_name = serializers.CharField(source="variant.name_fa", read_only=True,
-                                         default="")
-    brand_name = serializers.CharField(source="model.brand.name_fa", read_only=True,
-                                       default="")
-    scope_key = serializers.CharField(read_only=True)
-
-
-class WatchlistSerializer(ScopeSerializerMixin, serializers.ModelSerializer):
-    class Meta:
-        model = Watchlist
-        fields = ["id", "brand_slug", "model", "variant", "year_jalali",
-                  "scope_key", "model_name", "variant_name", "brand_name",
-                  "created_at"]
-        read_only_fields = ["id", "created_at"]
-
-
-class AlertRuleSerializer(ScopeSerializerMixin, serializers.ModelSerializer):
-    class Meta:
-        model = AlertRule
-        fields = ["id", "name", "enabled", "brand_slug", "model", "variant",
-                  "year_jalali", "scope_key", "model_name", "variant_name",
-                  "brand_name", "min_discount_pct", "min_residual_pct",
-                  "min_peers", "price_min", "price_max", "mileage_max",
-                  "exclude_review", "telegram_chat_id", "created_at"]
-        read_only_fields = ["id", "created_at"]
-        extra_kwargs = {"min_residual_pct": {"allow_null": True, "required": False}}
-
-    def validate_min_discount_pct(self, value):
-        # 100% would be a free car; 0 would deliver every listing on the site.
-        if not 0 < value < 100:
-            raise serializers.ValidationError("must be between 0 and 100")
-        return value
-
-    def validate_min_peers(self, value):
-        # The same floor the operator singleton enforces, and for the same
-        # reason: below `MIN_PEERS` the median this is measured against is not
-        # one the app will quote, let alone interrupt somebody with.
-        if value < MIN_PEERS:
-            raise serializers.ValidationError(
-                f"must be at least {MIN_PEERS} — the fair-price engine's peer minimum"
-            )
-        return value
-
-    def validate_min_residual_pct(self, value):
-        if value is None:
-            return value
-        if not 0 < value < 100:
-            raise serializers.ValidationError("must be between 0 and 100")
-        return value
-
-    def validate(self, attrs):
-        lo = attrs.get("price_min", getattr(self.instance, "price_min", None))
-        hi = attrs.get("price_max", getattr(self.instance, "price_max", None))
-        if lo is not None and hi is not None and lo > hi:
-            raise serializers.ValidationError({"price_min": "must not exceed price_max"})
-        return attrs
-
 
 class _OwnedViewSet(viewsets.ModelViewSet):
     """Rows belonging to the signed-in user, and only those."""
@@ -409,124 +284,6 @@ class _OwnedViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
-
-
-DIGEST_DAYS = 30
-DIGEST_SPARK = 14
-DIGEST_CAP = 50
-
-
-def _from_stored_index(series: list) -> dict:
-    if len(series) < 2:
-        return {"available": False, "reason": "insufficient_clean_history", "series": series}
-    first, last = series[0]["index_value"], series[-1]["index_value"]
-    change = round((last / first - 1) * 100, 2) if first else None
-    return {
-        "available": True,
-        "change_pct": change,
-        "latest_index": last,
-        "series": series,
-        "window": {"days": len(series)},
-    }
-
-
-def _stored_scope(watch: Watchlist) -> tuple[str, str] | None:
-    """Which persisted index series answers this scope, if one does.
-
-    Trim and model-year scopes are not persisted (see ``research.cohort_series``)
-    and fall through to the on-demand path; a bare market scope has nothing
-    personal to say.
-    """
-    if watch.variant_id or watch.year_jalali:
-        return None
-    if watch.model_id:
-        return MarketIndex.Scope.MODEL, str(watch.model_id)
-    if watch.brand_slug:
-        return MarketIndex.Scope.BRAND, watch.brand_slug
-    return None
-
-
-def _digest_trends(rows: list[Watchlist]) -> dict[int, dict]:
-    """One trend per followed scope, in a bounded number of queries.
-
-    Two shapes of work hide behind a followed car, and both used to run once per
-    row. The stored brand and model series are read in one query per scope kind
-    (``research.read_indexes``) rather than one per row. The trim and model-year
-    scopes have no stored series and are computed from daily snapshots; those
-    stay one query each — an index range scan over a single cohort, served by
-    ``snap_cohort_date_idx`` — but they are cached now, so a reload is free.
-
-    Measured before this existed: fifteen followed cars cost seventeen queries,
-    one per row, none of them cached, on every load of Saved.
-    """
-    from apps.core.views import movement_payload
-
-    wanted: dict[str, set[str]] = {}
-    for watch in rows:
-        scope = _stored_scope(watch)
-        if scope is not None:
-            wanted.setdefault(scope[0], set()).add(scope[1])
-    stored = {
-        kind: research.read_indexes(kind, ids, days=DIGEST_DAYS)
-        for kind, ids in wanted.items()
-    }
-
-    trends: dict[int, dict] = {}
-    for watch in rows:
-        scope = _stored_scope(watch)
-        if scope is not None:
-            trends[watch.id] = _from_stored_index(stored[scope[0]].get(scope[1], []))
-        elif watch.variant_id or watch.year_jalali:
-            if not watch.model_id:
-                trends[watch.id] = {"available": False, "reason": "incomplete_scope"}
-            else:
-                trends[watch.id] = movement_payload(
-                    watch.model_id, watch.variant_id, watch.year_jalali, DIGEST_DAYS
-                )
-        else:
-            trends[watch.id] = {"available": False, "reason": "market_scope"}
-    return trends
-
-
-def _analyse_path(watch: Watchlist) -> str:
-    query = {}
-    if watch.brand_slug:
-        query["brand"] = watch.brand_slug
-    if watch.model_id:
-        query["model"] = str(watch.model_id)
-    if watch.variant_id:
-        query["variant"] = str(watch.variant_id)
-    if watch.year_jalali:
-        query["year"] = str(watch.year_jalali)
-    return "/analyse?" + urlencode(query) if query else "/analyse"
-
-
-def _digest_row(watch: Watchlist, trend: dict, brand_names: dict[str, str]) -> dict:
-    series = trend.get("series") or []
-    spark = [point.get("index_value") for point in series[-DIGEST_SPARK:]]
-    brand_name = ""
-    if watch.model_id and watch.model is not None and watch.model.brand is not None:
-        brand_name = watch.model.brand.name_fa
-    elif watch.brand_slug:
-        brand_name = brand_names.get(watch.brand_slug, watch.brand_slug)
-    return {
-        "id": watch.id,
-        "scope_key": watch.scope_key,
-        "brand_slug": watch.brand_slug,
-        "model": watch.model_id,
-        "variant": watch.variant_id,
-        "year_jalali": watch.year_jalali,
-        "brand_name": brand_name,
-        "model_name": watch.model.name_fa if watch.model_id and watch.model else "",
-        "variant_name": watch.variant.name_fa if watch.variant_id and watch.variant else "",
-        "analyse_path": _analyse_path(watch),
-        "available": bool(trend.get("available")),
-        "reason": trend.get("reason"),
-        "change_pct": trend.get("change_pct"),
-        "latest_index": trend.get("latest_index"),
-        "spark": spark,
-        "window_days": (trend.get("window") or {}).get("days"),
-    }
 
 
 class WatchlistViewSet(_OwnedViewSet):
@@ -584,43 +341,6 @@ class AlertRuleViewSet(_OwnedViewSet):
 
     serializer_class = AlertRuleSerializer
     queryset = AlertRule.objects.select_related("model", "variant", "model__brand")
-
-
-class AlertDeliverySerializer(serializers.ModelSerializer):
-    """One alert, carrying what was true when it fired.
-
-    `discount_pct` and `peer_median` are the stored copies, not a join to
-    `DealScoreCache`: that table is dropped and rebuilt on a schedule, so a feed
-    that joined to it would blank out an alert the moment the listing stopped
-    qualifying — which is the one moment the reader most needs to see what it
-    said.
-    """
-
-    code = serializers.CharField(source="ad_id", read_only=True)
-    title = serializers.CharField(source="ad.title", read_only=True)
-    price = serializers.IntegerField(source="ad.current_price", read_only=True)
-    year = serializers.IntegerField(source="ad.year_jalali", read_only=True)
-    mileage = serializers.IntegerField(source="ad.mileage", read_only=True)
-    city_name = serializers.CharField(source="ad.city.name_fa", read_only=True,
-                                      default="")
-    status = serializers.CharField(source="ad.status", read_only=True)
-    image_url = serializers.SerializerMethodField()
-    bama_url = serializers.SerializerMethodField()
-    rule_name = serializers.CharField(source="rule.name", read_only=True, default="")
-
-    class Meta:
-        model = AlertDelivery
-        fields = ["id", "code", "title", "price", "year", "mileage", "city_name",
-                  "status", "image_url", "bama_url", "discount_pct",
-                  "peer_median", "residual_pct", "rule_name", "created_at",
-                  "read_at"]
-        read_only_fields = fields
-
-    def get_image_url(self, obj) -> str:
-        return images.ad_image_paths(obj.ad)[0]
-
-    def get_bama_url(self, obj) -> str:
-        return obj.ad.bama_url
 
 
 class AlertViewSet(viewsets.ReadOnlyModelViewSet):
