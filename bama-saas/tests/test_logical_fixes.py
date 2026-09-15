@@ -207,7 +207,6 @@ def test_compose_gunicorn_flags_stay_on_the_same_process():
     """
     import json
     import subprocess
-    import time
     from pathlib import Path
 
     # Same newline layout docker inspect showed on the VPS command.
@@ -220,48 +219,12 @@ def test_compose_gunicorn_flags_stay_on_the_same_process():
     argv = []
     if proc.stdout.strip():
         argv = json.loads(proc.stdout.strip().splitlines()[0])
-    payload = {
-        "sessionId": "92a022", "runId": "pre-fix", "hypothesisId": "A",
-        "location": "tests/test_logical_fixes.py:compose_gunicorn",
-        "message": "sh -c gunicorn-shaped argv",
-        "data": {
-            "argv": argv,
-            "stderr": (proc.stderr or "")[:200],
-            "returncode": proc.returncode,
-            "has_worker_class": "--worker-class" in argv,
-            "has_access_logfile": "--access-logfile" in argv,
-            "has_gthread": "gthread" in argv,
-        },
-        "timestamp": int(time.time() * 1000),
-    }
-    # #region agent log
-    try:
-        with open(
-            "/Users/parham/Downloads/GITHUB_PROJECTS/BAMA_ADS_SCRAPER/.cursor/debug-92a022.log",
-            "a",
-        ) as logf:
-            logf.write(json.dumps(payload) + "\n")
-    except OSError:
-        pass
-    # #endregion
     # The split string is supposed to fail: `--worker-class` becomes a second command.
     assert "--worker-class" not in argv
     assert proc.returncode != 0
     compose = (
         Path(__file__).resolve().parents[1] / "docker-compose.prod.yml"
     ).read_text()
-    payload["data"]["compose_has_gthread"] = "--worker-class gthread" in compose
-    payload["data"]["compose_split_after_workers"] = "--workers 3\n" in compose
-    # #region agent log
-    try:
-        with open(
-            "/Users/parham/Downloads/GITHUB_PROJECTS/BAMA_ADS_SCRAPER/.cursor/debug-92a022.log",
-            "a",
-        ) as logf:
-            logf.write(json.dumps({**payload, "runId": "post-fix", "message": "compose gunicorn command"}) + "\n")
-    except OSError:
-        pass
-    # #endregion
     assert "--worker-class gthread" in compose
     assert "--access-logfile -" in compose
     assert "--workers 3\n" not in compose
