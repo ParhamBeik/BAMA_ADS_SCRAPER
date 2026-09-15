@@ -453,7 +453,7 @@ def scorable_rows():
     applied it either, which is why the app showed four different "active ads"
     totals on four screens, and why sorting the Explorer by cheapest-first
     returned eight حواله allocations priced at their deposit instead of cars.
-    `views` now reads this same function; AGENTS.md asserts they agree, and this
+    `views` now reads this same function; ARCHITECTURE.md asserts they agree, and this
     is what makes that true.
 
     Cohort outliers are deliberately NOT excluded here. They must be dropped

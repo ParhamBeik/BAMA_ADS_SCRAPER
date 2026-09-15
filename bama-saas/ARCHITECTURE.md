@@ -1,43 +1,52 @@
-# Agent notes
+# Architecture and invariants
 
-`README.md` describes what the app is and how to run it. This file is only the
-things that are expensive to rediscover and cheap to break. Update it when one
-of these decisions changes.
+`README.md` describes what the app is and how to run it. This file captures the
+architecture, dependency directions, and domain/system invariants that are expensive
+to rediscover and cheap to break. Update it when any of these decisions changes.
 
 ## Shape
 
 One module per concern, no `services/` packages, no per-command modules:
 
+- `apps/common/` — Framework-free leaves. No models, no migrations, no app imports:
+  `parsing.py`, `normalization.py`, `rules.py`, `verify.py`, `quality.py`.
 - `apps/core/` — `models.py` (all 20 models, four commented sections),
-  `views.py`, `serializers.py`, `filters.py`, plus the analytics:
-  `pricing.py` (fair price + deal board + the board's dynamic window),
-  `quality.py` (the read-side filters *and* the one condition-band rule ladder),
-  `research.py` (index, segments, survival, depreciation, the market read, the
-  budget search), `notify.py` (the operator channel *and* per-user alerts),
-  `images.py` (the Redis-cached photo proxy).
-- `apps/accounts/` — user, session auth, and the per-user layer: `Favorite`,
-  `Watchlist`, `AlertRule`, `AlertDelivery`. The last three share the
-  `ScopedToACar` abstract base.
-- `apps/ml/` — the learned layer, one module per concern: `features.py` (the
-  design matrix, shared by training and inference), `metrics.py` (pure judgement
-  functions), `train.py` (five fits), `registry.py` (artifacts + the promotion
-  gate), `inference.py` (batch scoring), `monitoring.py` (drift), `views.py`.
-  Everything in it degrades to a refusal when the `ml` extra is not installed.
-- `apps/jobs/` — `parsing.py` (no Django import), `fetcher.py` (HTTP + crawl
-  gate + coverage arithmetic), `ingest.py`, `verify.py`, `jobs.py` (one function
-  per job, each returning a dict), `pipeline.py` (which jobs, in what order),
-  `management/commands/bama.py` (the only scheduled-job command; the one other
-  command in the project is `accounts/…/wipe_users.py`, a guarded manual reset).
-- `config/settings.py` — one file. `DJANGO_DEBUG=1` selects the local profile;
-  the default is hardened, so a missing env var cannot fail open.
-- `ui/web/` — Tailwind v4 + shadcn/ui. Five destinations behind one floating
-  header (`components/AppHeader`), no sidebar. `Home` is the market pulse,
-  `Budget` is the "what can this much money buy" path, `Analyse` is one page
-  whose scope runs market → brand → model → trim → model year in the URL,
-  `Deals`, `Explorer`, plus staff-only `Control` in the account menu. The two
-  *personal* surfaces — `Saved` and `Alerts` — are icons in the right cluster
-  rather than tabs: seven Persian labels clip mid-word in the phone tab row, and
-  the alert badge has to be visible from every screen anyway.
+  `views.py`, `serializers.py`, `filters.py`, `api.py` (response envelope and
+  caching utilities), `coverage.py` (crawl state and gap arithmetic), plus analytics:
+  `pricing.py` (fair price + deal board + dynamic window), `research.py` (index,
+  segments, survival, depreciation, market read, budget search), `notify.py`
+  (operator channel and per-user alerts), `images.py` (Redis-cached photo proxy).
+- `apps/accounts/` — User, session auth, and per-user layer: `models.py`, `views.py`,
+  `serializers.py` (auth and watchlist serializers), `digest.py` (followed-car digest),
+  `Favorite`, `Watchlist`, `AlertRule`, `AlertDelivery`.
+- `apps/ml/` — The learned layer: `features.py`, `metrics.py`, `train.py`,
+  `registry.py`, `inference.py`, `monitoring.py`, `views.py`. Degrades to a refusal
+  when the `ml` extra is absent.
+- `apps/jobs/` — Crawler and scheduler: `fetcher.py`, `ingest.py`, `jobs.py`,
+  `health.py` (the eleven system health checks), `pipeline.py` (job registry and
+  cadences), `management/commands/bama.py`.
+- `config/settings.py` — One file. `DJANGO_DEBUG=1` selects local profile; default
+  is hardened so missing env vars cannot fail open.
+- `ui/web/` — React 19, Vite, Tailwind v4 + shadcn/ui.
+  - `src/` singletons: `api.ts`, `auth.tsx`, `theme.tsx`, `filters.ts`, `alerts.ts`, `format.ts`.
+  - `src/components/`: Reusable UI components including `Chart.tsx`, `FilterPanel.tsx`, and `AuthLayout.tsx`.
+  - `src/pages/`: Routed screens only (`Home`, `Budget`, `Deals`, `Explorer`, `Analyse`, etc.).
+
+## Dependency direction
+
+Dependencies flow strictly one way:
+
+```
+apps/common/  ←  apps/core/  ←  {apps/jobs/, apps/ml/, apps/accounts/}  ←  config/
+```
+
+- `apps/common` imports only stdlib, `re`, `django.db.models.Q`, and `jdatetime`.
+- `apps/core` depends on `apps/common`, and on no other application.
+  *Documented exception:* `apps/core/pricing.py` reads `apps.ml.models.AdPrediction`
+  to attach predictions to the deal board without needing an asynchronous event bus.
+- `apps/jobs`, `apps/ml`, and `apps/accounts` depend on `apps/core` and `apps/common`,
+  never on each other.
+- `config` orchestrates URLs, settings, and WSGI entry points across apps.
 
 ## The stylesheet
 
@@ -67,6 +76,30 @@ One module per concern, no `services/` packages, no per-command modules:
 `db_table` is pinned on every model (`catalog_*`, `history_*`, `market_*`,
 `analytics_*`). Moving a model between files is therefore free — the physical
 schema is independent of the Python layout. Do not remove those pins.
+
+## Architectural and system invariants
+
+- **`apps.ml.urls` must precede `apps.core.urls` in `config/urls.py`.** `apps/core`
+  registers a DRF `DefaultRouter` at `api/ads/` whose catch-all detail route
+  (`api/ads/<pk>/`) would otherwise swallow `api/ads/<code>/prediction/`. Putting
+  ML URLs first ensures prediction routes are matched before the catch-all.
+- **`ml_train` must sit immediately before `ml_score` in `pipeline.STEP_ORDER`.**
+  Cadence execution sorts steps by their position in `STEP_ORDER`, not the cadence's
+  declaration order. In the `train` cadence (`ml_train`, `ml_score`), running
+  `ml_train` first ensures the freshly refitted and promoted models are used to
+  score the board immediately rather than waiting for the next day's run.
+- **`NUM_PROXIES = 2` must match the deployed reverse proxy chain.** The production
+  stack routes traffic Caddy → nginx → gunicorn, appending two entries to
+  `X-Forwarded-For`. DRF's `BaseThrottle.get_ident` counts backwards by `NUM_PROXIES`
+  to identify the client IP. Setting it too low causes all traffic to share one
+  internal proxy IP (triggering denial of service via throttling); setting it too
+  high allows callers to spoof their IP by prepending fake headers. Verified via
+  the `forwarding` diagnostic on `GET /api/admin/health/`.
+- **`testenv.py` must use `os.environ.setdefault`, never assignment.** Loaded via
+  pytest `-p testenv` before initial conftest evaluation, it defaults `DJANGO_DEBUG=1`
+  and `API_PUBLIC_READS=1`. If it used direct assignment, it would overwrite the
+  hardened CI job (`backend-hardened`), which deliberately passes `API_PUBLIC_READS=""`
+  to test the locked-down production permission profile.
 
 ## Domain invariants
 
