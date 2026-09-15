@@ -23,7 +23,6 @@ from django.utils import timezone
 
 from apps.core.models import DealScoreCache, NotifiedAd, NotifierSettings
 from apps.core.quality import exclude_unclear_price, verified_by_ad
-from apps.jobs.parsing import absolute_ad_url
 
 log = logging.getLogger("bama.notify")
 
@@ -220,7 +219,7 @@ def format_message(row: DealScoreCache) -> str:
             lines.append(f"       {band_peers} similar · too few to quote a median")
     if ad.mileage:
         lines.append(f"Km     {ad.mileage:,}")
-    if url := absolute_ad_url(ad.url or ad.canonical_path):
+    if url := ad.bama_url:
         lines += ["", url]
     return "\n".join(lines)
 
@@ -256,7 +255,7 @@ def format_delivery_alert(delivery) -> str:
     ]
     if delivery.residual_pct is not None:
         lines.append(f"Model residual {delivery.residual_pct:.0f}% under predicted p50")
-    if url := absolute_ad_url(ad.url or ad.canonical_path):
+    if url := ad.bama_url:
         lines.append(url)
     return "\n".join(lines)
 

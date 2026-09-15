@@ -68,7 +68,6 @@ from apps.jobs.fetcher import (
     known_feed_depth,
     uncovered_ranks,
 )
-from apps.jobs.parsing import absolute_ad_url
 from apps.jobs.verify import MAX_JALALI_YEAR, MIN_JALALI_YEAR
 from apps.ml.models import AdPrediction
 
@@ -604,7 +603,7 @@ def _deal_score_row(obj, *, now=None):
         # year_jalali, never Ad.year: the raw column mixes 1399 and 2025.
         "year": obj.ad.year_jalali,
         "mileage": obj.ad.mileage,
-        "bama_url": absolute_ad_url(obj.ad.url or obj.ad.canonical_path),
+        "bama_url": obj.ad.bama_url,
         "title": obj.ad.title,
         "model_name": getattr(obj, "model_name", None),
         "brand_name": getattr(obj, "brand_name", None),

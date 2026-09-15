@@ -14,6 +14,7 @@ from django.db.models.functions import Upper
 from django.utils import timezone
 
 from apps.core.rules import HARD_RULE_IDS
+from apps.jobs.parsing import absolute_ad_url
 
 _HARD_RULE_SQL = ", ".join(repr(rule) for rule in sorted(HARD_RULE_IDS))
 _IS_VERIFIED_SQL = f"NOT (excluded_from_analytics OR quality_flags ?| ARRAY[{_HARD_RULE_SQL}])"
@@ -239,6 +240,22 @@ class Ad(models.Model):
     source_modified_at = models.DateTimeField(null=True, blank=True)
     url = models.URLField(max_length=500, blank=True)
     canonical_path = models.CharField(max_length=400, blank=True)
+
+    @property
+    def bama_url(self) -> str:
+        """This ad's absolute link on bama.ir, or "" when it has neither field.
+
+        Both columns are `blank=True`, and which one is populated depends on
+        when the row was ingested — so every caller that wants a link has to
+        prefer `url` and fall back to `canonical_path`. That expression was
+        written out at six call sites across serializers, the deal board, the
+        Telegram formatter, the alert feed and the sold probe; a seventh would
+        have been written the next time one was needed.
+
+        Derived, not stored: no field, no migration. `absolute_ad_url` is what
+        resolves a stored relative path against the source site.
+        """
+        return absolute_ad_url(self.url or self.canonical_path)
 
     raw_payload = models.JSONField(null=True, blank=True)
 

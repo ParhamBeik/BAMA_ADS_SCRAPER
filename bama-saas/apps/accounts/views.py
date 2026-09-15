@@ -34,7 +34,6 @@ from apps.accounts.models import AlertDelivery, AlertRule, Favorite, User, Watch
 from apps.core import images, research
 from apps.core.models import Brand, MarketIndex, PriceDropEvent
 from apps.core.pricing import MIN_PEERS
-from apps.jobs.parsing import absolute_ad_url
 
 log = logging.getLogger("bama.accounts")
 
@@ -621,7 +620,7 @@ class AlertDeliverySerializer(serializers.ModelSerializer):
         return images.ad_image_paths(obj.ad)[0]
 
     def get_bama_url(self, obj) -> str:
-        return absolute_ad_url(obj.ad.url or obj.ad.canonical_path)
+        return obj.ad.bama_url
 
 
 class AlertViewSet(viewsets.ReadOnlyModelViewSet):

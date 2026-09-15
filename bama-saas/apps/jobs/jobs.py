@@ -67,7 +67,6 @@ from apps.jobs.fetcher import (
     uncovered_ranks,
     warmup,
 )
-from apps.jobs.parsing import absolute_ad_url
 
 # Same channel the fetcher and the pipeline write to, so one `docker logs` is
 # the whole story of a tick rather than three interleaved ones.
@@ -665,7 +664,7 @@ def probe_sold() -> dict:
                 if cache.get(key):
                     skipped_recent += 1
                     continue
-                url = absolute_ad_url(row.ad.url or row.ad.canonical_path)
+                url = row.ad.bama_url
                 if not url:
                     continue
                 try:

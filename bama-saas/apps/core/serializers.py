@@ -6,7 +6,6 @@ from apps.core import images
 from apps.core.models import Ad, Brand, Model, NotifierSettings, Variant
 from apps.core.pricing import MIN_PEERS
 from apps.core.quality import condition_discounted
-from apps.jobs.parsing import absolute_ad_url
 from apps.jobs.verify import MAX_PLAUSIBLE_MILEAGE
 
 
@@ -84,7 +83,7 @@ class AdSerializer(serializers.ModelSerializer):
         return images.ad_image_paths(obj)[1]
 
     def get_bama_url(self, obj) -> str:
-        return absolute_ad_url(obj.url or obj.canonical_path)
+        return obj.bama_url
 
     def get_mileage_implausible(self, obj) -> bool:
         # The stored column, not a re-derivation: `verify` decided this from the
