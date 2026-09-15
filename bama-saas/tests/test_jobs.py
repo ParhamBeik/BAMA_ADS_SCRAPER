@@ -17,6 +17,7 @@ import pytest
 import requests
 from django.utils import timezone
 
+from apps.core.coverage import known_feed_depth
 from apps.core.models import (
     Ad,
     AdObservation,
@@ -30,7 +31,6 @@ from apps.core.models import (
 )
 from apps.jobs import fetcher
 from apps.jobs import pipeline as P
-from apps.jobs.fetcher import known_feed_depth
 from apps.jobs.jobs import (
     BACKUP_STALE_AFTER,
     COVERAGE_STARVED_AFTER,
@@ -760,7 +760,7 @@ def test_sweep_freshness_passes_within_gap_tolerance():
     `_cover(1, 100)` writes page_index=0. Updating page_index=1 matched nothing
     and the test never opened a gap.
     """
-    from apps.jobs.fetcher import COVERAGE_GAP_TOLERANCE_RANKS
+    from apps.core.coverage import COVERAGE_GAP_TOLERANCE_RANKS
 
     run = _run()
     _cover(1, 100, at=NOW - timedelta(hours=1), run=run)
@@ -773,7 +773,7 @@ def test_sweep_freshness_passes_within_gap_tolerance():
 
 @pytest.mark.django_db
 def test_sweep_freshness_fails_when_the_gap_exceeds_one_page():
-    from apps.jobs.fetcher import COVERAGE_GAP_TOLERANCE_RANKS
+    from apps.core.coverage import COVERAGE_GAP_TOLERANCE_RANKS
 
     run = _run()
     _cover(1, 100, at=NOW - timedelta(hours=1), run=run)

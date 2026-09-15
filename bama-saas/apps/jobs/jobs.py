@@ -21,6 +21,16 @@ from django.db.models import Count, Q, Sum
 from django.utils import timezone
 
 from apps.core import research
+from apps.core.coverage import (
+    COVERAGE_GAP_TOLERANCE_RANKS,
+    COVERAGE_REFRESH_HOURS,
+    COVERAGE_WINDOW_HOURS,
+    coverage_is_complete,
+    coverage_state,
+    find_gaps,
+    known_feed_depth,
+    plan_backfill,
+)
 from apps.core.models import (
     Ad,
     AdObservation,
@@ -46,25 +56,17 @@ from apps.core.pricing import compute_deal_scores, deal_window, refresh_cohort_d
 from apps.core.quality import verified
 from apps.core.research import build_index
 from apps.jobs.fetcher import (
-    COVERAGE_GAP_TOLERANCE_RANKS,
-    COVERAGE_REFRESH_HOURS,
-    COVERAGE_WINDOW_HOURS,
     FIRST_PAGE,
     PAGE_SIZE,
     CrawlBlocked,
     _fetch_lease,
     check_gate,
-    coverage_is_complete,
-    coverage_state,
     create_session,
     detail_says_sold,
     fetch_ad_page_with_backoff,
     fetch_live,
     fetch_page_with_backoff,
-    find_gaps,
     is_waf_block,
-    known_feed_depth,
-    plan_backfill,
     warmup,
 )
 
@@ -917,7 +919,7 @@ def prune(*, days: int = PRUNE_DEFAULT_DAYS, dry_run: bool = False) -> dict:
     inside that window would lower the ceiling and silently stall removal
     detection.
     """
-    from apps.jobs.fetcher import FEED_DEPTH_WINDOW_DAYS
+    from apps.core.coverage import FEED_DEPTH_WINDOW_DAYS
 
     now = timezone.now()
     cutoff = now - timedelta(days=days)

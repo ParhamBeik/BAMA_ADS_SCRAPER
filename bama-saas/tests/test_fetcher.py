@@ -20,18 +20,14 @@ import pytest
 import requests
 from django.utils import timezone as djtz
 
+from apps.core import coverage
+from apps.core.coverage import find_gaps, plan_backfill
 from apps.core.models import AdObservation, FetchRun, PageCoverage
 from apps.core.pricing import refresh_cohort_deal_scores
 from apps.jobs import fetcher
 from apps.jobs import fetcher as F
 from apps.jobs import fetcher as crawl_gate
-from apps.jobs.fetcher import (
-    PAGE_SIZE,
-    CrawlBlocked,
-    fetch_live,
-    find_gaps,
-    plan_backfill,
-)
+from apps.jobs.fetcher import PAGE_SIZE, CrawlBlocked, fetch_live
 from tests.conftest import gallery
 
 
@@ -942,7 +938,7 @@ def test_a_sliver_of_a_gap_does_not_switch_removal_detection_off():
     The gap is still *reported*, so the coverage job still closes it; what
     changed is only whether it invalidates the window.
     """
-    from apps.jobs.fetcher import COVERAGE_GAP_TOLERANCE_RANKS, coverage_is_complete
+    from apps.core.coverage import COVERAGE_GAP_TOLERANCE_RANKS, coverage_is_complete
 
     window = djtz.now() - timedelta(hours=24)
     run = _run()
@@ -984,16 +980,16 @@ def test_a_closed_window_is_judged_against_the_feed_it_actually_walked():
     # Both windows are complete while the feed is 300 deep.
     recent_run = _run(started_at=recent_start + timedelta(minutes=5))
     _cover(recent_run, range(0, 10), fetched_at=recent_start + timedelta(minutes=5))
-    assert F.coverage_is_complete(since=older_start, until=recent_start) is True
+    assert coverage.coverage_is_complete(since=older_start, until=recent_start) is True
 
     # Now the feed grows by two pages, and only the recent window sees them.
     _cover(recent_run, [10, 11], fetched_at=now - timedelta(minutes=5))
-    assert F.known_feed_depth() == 360
+    assert coverage.known_feed_depth() == 360
 
     # The older window still covered everything there was to cover.
-    assert F.known_feed_depth(as_of=recent_start) == 300
-    assert F.coverage_is_complete(since=older_start, until=recent_start) is True
-    assert F.coverage_is_complete(since=recent_start) is True
+    assert coverage.known_feed_depth(as_of=recent_start) == 300
+    assert coverage.coverage_is_complete(since=older_start, until=recent_start) is True
+    assert coverage.coverage_is_complete(since=recent_start) is True
 
 
 @pytest.mark.django_db
@@ -1009,10 +1005,10 @@ def test_a_window_that_genuinely_missed_the_tail_still_fails():
     _cover(run, range(7, 10), fetched_at=older_start + timedelta(minutes=6))
     PageCoverage.objects.filter(page_index__gte=7).delete()
 
-    assert F.known_feed_depth(as_of=recent_start) == 210
+    assert coverage.known_feed_depth(as_of=recent_start) == 210
     # Ask for the real ceiling of the day: the tail is missing and it matters.
-    assert F.uncovered_ranks(
-        F.find_gaps(since=older_start, until=recent_start, max_rank=300)
+    assert coverage.uncovered_ranks(
+        coverage.find_gaps(since=older_start, until=recent_start, max_rank=300)
     ) == 90
 
 
@@ -1096,7 +1092,7 @@ def test_a_deep_backfill_that_walks_off_the_feed_lowers_the_ceiling():
     # A deeper feed, observed three days ago: inside the 30-day depth window, so
     # it still sets the ceiling, but outside the 24h coverage window.
     _cover(_run(), [4], fetched_at=djtz.now() - timedelta(days=3))
-    assert F.known_feed_depth() == 150
+    assert coverage.known_feed_depth() == 150
 
     # The feed now ends after page 3. A bounded backfill walks into the empty page.
     run = run_with(FakeSession(make_feed(3, "R")), mode="backfill",
@@ -1108,7 +1104,7 @@ def test_a_deep_backfill_that_walks_off_the_feed_lowers_the_ceiling():
     # as feed_end_rank, not deepest_rank: this run observed no ads at all.
     assert run.feed_end_rank == 90
     assert run.deepest_rank is None
-    assert F.known_feed_depth() == 90
+    assert coverage.known_feed_depth() == 90
 
 
 @pytest.mark.django_db
@@ -1124,7 +1120,7 @@ def test_a_shallow_empty_page_never_lowers_the_ceiling():
     run = run_with(FakeSession(make_feed(1, "S")), mode="delta")
 
     assert run.reached_end is False
-    assert F.known_feed_depth() == 150
+    assert coverage.known_feed_depth() == 150
 
 
 @pytest.mark.django_db
@@ -1137,16 +1133,16 @@ def test_retiring_the_phantom_tail_completes_coverage():
     stale = djtz.now() - timedelta(days=3)
     _cover(_run(), [4], fetched_at=stale)
     _cover(_run(), [0, 1, 2], fetched_at=djtz.now())
-    window = djtz.now() - timedelta(hours=F.COVERAGE_WINDOW_HOURS)
+    window = djtz.now() - timedelta(hours=coverage.COVERAGE_WINDOW_HOURS)
 
-    assert F.find_gaps(since=window, max_rank=F.known_feed_depth()) == [(91, 150)]
-    assert F.coverage_is_complete(since=window) is False
+    assert coverage.find_gaps(since=window, max_rank=coverage.known_feed_depth()) == [(91, 150)]
+    assert coverage.coverage_is_complete(since=window) is False
 
     run_with(FakeSession(make_feed(3, "T")), mode="backfill", start_page=3, end_page=5)
 
-    assert F.known_feed_depth() == 90
-    assert F.find_gaps(since=window, max_rank=F.known_feed_depth()) == []
-    assert F.coverage_is_complete(since=window) is True
+    assert coverage.known_feed_depth() == 90
+    assert coverage.find_gaps(since=window, max_rank=coverage.known_feed_depth()) == []
+    assert coverage.coverage_is_complete(since=window) is True
 
 
 @pytest.mark.django_db
@@ -1159,7 +1155,7 @@ def test_a_backfill_range_that_simply_ends_claims_nothing():
 
     assert run.reached_end is False
     assert run.stop_reason == FetchRun.StopReason.MAX_PAGES
-    assert F.known_feed_depth() == 150
+    assert coverage.known_feed_depth() == 150
 
 
 def test_a_bounded_run_is_held_to_a_tighter_bar_than_a_full_sweep():
@@ -1188,14 +1184,14 @@ def test_a_spurious_mid_feed_empty_page_cannot_collapse_the_ceiling():
     coverage of the deep feed, and mark_inactive is rank-blind — it would
     retire live ads nobody had re-verified."""
     _cover(_run(), [40], fetched_at=djtz.now() - timedelta(days=3))
-    assert F.known_feed_depth() == 1230
+    assert coverage.known_feed_depth() == 1230
 
     # Feed "ends" at page 20 — half the ceiling, and a lie.
     run = run_with(FakeSession(make_feed(20, "V")), mode="backfill",
                    start_page=20, end_page=25)
 
     assert run.reached_end is False
-    assert F.known_feed_depth() == 1230
+    assert coverage.known_feed_depth() == 1230
     # The reading is *recorded* — one disagreement is evidence, not proof — but
     # `reached_end` stays False, so the ratchet does not see it.
     assert run.feed_end_rank == 600
@@ -1215,7 +1211,7 @@ def test_repeated_agreement_lowers_the_ceiling():
     """2026-08-25: the feed really did shrink 17% in one step and every run
     said so, but each was judged alone and disbelieved forever."""
     _cover(_run(), [40], fetched_at=djtz.now() - timedelta(days=3))
-    assert F.known_feed_depth() == 1230
+    assert coverage.known_feed_depth() == 1230
     assert F.end_of_feed_is_credible(20, 40, bounded=True) is False
 
     # Three *real* runs against a feed that truly ends at page 20, so the whole
@@ -1228,12 +1224,12 @@ def test_repeated_agreement_lowers_the_ceiling():
     first, second = sweep(), sweep()
     assert [r.stop_reason for r in (first, second)] == [
         FetchRun.StopReason.END_UNCONFIRMED] * 2
-    assert F.known_feed_depth() == 1230, "two runs must not be enough"
+    assert coverage.known_feed_depth() == 1230, "two runs must not be enough"
 
     third = sweep()
     assert third.reached_end is True
     assert third.stop_reason == FetchRun.StopReason.END_OF_FEED
-    assert F.known_feed_depth() == 600
+    assert coverage.known_feed_depth() == 600
 
 
 @pytest.mark.django_db

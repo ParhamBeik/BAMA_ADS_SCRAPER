@@ -26,9 +26,9 @@ from rest_framework.response import Response
 from rest_framework.settings import api_settings
 from rest_framework.throttling import BaseThrottle
 
+from apps.core.coverage import COVERAGE_WINDOW_HOURS, coverage_state
 from apps.core.models import Ad, AdVersion, Brand, FetchRun, IngestReject, JobRun, Model
 from apps.jobs import jobs, pipeline
-from apps.jobs.fetcher import COVERAGE_WINDOW_HOURS, coverage_state
 
 logger = logging.getLogger("bama.jobs")
 
