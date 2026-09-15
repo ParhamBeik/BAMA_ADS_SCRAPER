@@ -20,6 +20,7 @@ from django.db import transaction
 from django.db.models import Count, Q, Sum
 from django.utils import timezone
 
+from apps.common.parsing import image_urls
 from apps.core import research
 from apps.core.coverage import (
     COVERAGE_GAP_TOLERANCE_RANKS,
@@ -958,14 +959,13 @@ def backfill_images(*, limit: int | None = None, prune: bool = True) -> dict:
     reversing that order would destroy the ~28.5k rows whose photos were merely
     unread.
 
-    Runs through the same ``_image_urls`` the live path uses, so a row filled
+    Runs through the same ``image_urls`` the live path uses, so a row filled
     here and a row filled by a fetch cannot disagree. Idempotent: it only reads
     rows that have no primary image, and a second pass over a filled row is a
     no-op.
 
     ``prune=False`` fills only, for checking what a run would remove first.
     """
-    from apps.jobs.ingest import _image_urls
 
     qs = (
         Ad.objects.filter(primary_image_url="", raw_payload__isnull=False)
@@ -979,7 +979,7 @@ def backfill_images(*, limit: int | None = None, prune: bool = True) -> dict:
         if limit is not None and scanned >= limit:
             break
         scanned += 1
-        primary, gallery = _image_urls(ad.raw_payload or {})
+        primary, gallery = image_urls(ad.raw_payload or {})
         if not primary:
             continue
         ad.primary_image_url = primary[:500]
@@ -1067,7 +1067,8 @@ def check_source_block(now=None) -> Check:
     Its own check because the operator response is completely different from a
     normal failure: nothing in this codebase can fix a 403 from the source's CDN.
     """
-    from apps.jobs.fetcher import consecutive_blocks, cooldown_until
+    from apps.core.coverage import consecutive_blocks
+    from apps.jobs.fetcher import cooldown_until
 
     now = now or timezone.now()
     streak = consecutive_blocks()

@@ -43,7 +43,7 @@ from apps.common.parsing import (
     extract_ad,
     parse_publish_time,
 )
-from apps.core.coverage import known_feed_depth
+from apps.core.coverage import consecutive_blocks, known_feed_depth, recent_runs
 from apps.core.models import FetchRun, PageCoverage
 from apps.jobs.ingest import ingest_ad, reset_cache, reset_price_cache
 
@@ -87,8 +87,6 @@ MAX_COOLDOWN = timedelta(seconds=settings.BAMA_BLOCK_COOLDOWN_MAX)
 # mode that let this run unattended for six hours.
 MAX_BACKOFF_DOUBLINGS = 8
 
-# Longer than the max cooldown, so a streak survives its own quiet period.
-STREAK_LOOKBACK = timedelta(hours=48)
 
 
 class CrawlBlocked(RuntimeError):
@@ -108,42 +106,12 @@ def is_waf_block(exc: BaseException) -> bool:
             and getattr(exc.response, "status_code", None) == WAF_STATUS)
 
 
-def _last_runs(limit: int = 40):
-    return list(
-        FetchRun.objects.filter(
-            source__in=(FetchRun.Source.LIVE_FETCH, FetchRun.Source.SOLD_PROBE),
-            created_at__gte=djtz.now() - STREAK_LOOKBACK,
-        )
-        .order_by("-created_at")
-        .values("status", "stop_reason", "finished_at", "started_at", "created_at")[:limit]
-    )
-
-
-def consecutive_blocks() -> int:
-    """How many runs in a row ended blocked, counting back from the newest.
-
-    Counts across modes: a blocked delta and a blocked backfill are the same ban,
-    and separating them would let two schedules each probe at full rate.
-    """
-    streak = 0
-    for run in _last_runs():
-        if run["stop_reason"] == FetchRun.StopReason.BLOCKED:
-            streak += 1
-        elif run["status"] == FetchRun.Status.RUNNING:
-            # The in-flight run asking this question. Ignore it rather than
-            # letting it break its own streak.
-            continue
-        else:
-            break
-    return streak
-
-
 def cooldown_until():
     """When the breaker reopens, or None if fetching is allowed now."""
     streak = consecutive_blocks()
     if streak == 0:
         return None
-    last = next((r for r in _last_runs()
+    last = next((r for r in recent_runs()
                  if r["stop_reason"] == FetchRun.StopReason.BLOCKED), None)
     if last is None:
         return None
@@ -186,7 +154,7 @@ def consecutive_failures() -> int:
     A blocked run is not counted here — that is the other breaker's streak.
     """
     streak = 0
-    for run in _last_runs():
+    for run in recent_runs():
         if run["stop_reason"] == FetchRun.StopReason.BLOCKED:
             break
         if run["status"] == FetchRun.Status.FAILED:
@@ -204,7 +172,7 @@ def upstream_cooldown_until():
     streak = consecutive_failures()
     if streak < UPSTREAM_FAILURES_BEFORE_BACKOFF:
         return None
-    last = next((r for r in _last_runs()
+    last = next((r for r in recent_runs()
                  if r["status"] == FetchRun.Status.FAILED), None)
     if last is None:
         return None

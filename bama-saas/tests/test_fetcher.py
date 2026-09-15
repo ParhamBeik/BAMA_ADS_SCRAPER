@@ -688,7 +688,7 @@ def test_403_is_a_waf_block_and_429_is_not():
 @pytest.mark.django_db
 def test_a_clean_history_does_not_gate():
     make_run(pages=5, ago_minutes=5)
-    assert crawl_gate.consecutive_blocks() == 0
+    assert coverage.consecutive_blocks() == 0
     assert crawl_gate.cooldown_until() is None
     assert crawl_gate.check_gate() is None  # returns without raising
 
@@ -756,7 +756,7 @@ def test_a_waf_block_is_not_counted_as_an_outage():
     make_run(blocked=True, ago_minutes=1)
 
     assert crawl_gate.consecutive_failures() == 0
-    assert crawl_gate.consecutive_blocks() == 2
+    assert coverage.consecutive_blocks() == 2
 
 
 @pytest.mark.django_db
@@ -776,7 +776,7 @@ def test_one_block_costs_one_tick_then_reopens():
 def test_the_cooldown_doubles_with_the_streak():
     for i in range(3):
         make_run(blocked=True, ago_minutes=3 - i)
-    assert crawl_gate.consecutive_blocks() == 3
+    assert coverage.consecutive_blocks() == 3
     # 3 blocks -> 2 doublings -> 4x base (60 min), measured from the newest.
     until = crawl_gate.cooldown_until()
     assert until is not None
@@ -803,7 +803,7 @@ def test_a_success_clears_the_streak():
     make_run(blocked=True, ago_minutes=9)
     make_run(pages=3, ago_minutes=1)
 
-    assert crawl_gate.consecutive_blocks() == 0
+    assert coverage.consecutive_blocks() == 0
     assert crawl_gate.check_gate() is None
 
 
@@ -813,21 +813,21 @@ def test_blocks_are_counted_across_modes():
     each schedule probe at full rate, which is what actually happened."""
     make_run(blocked=True, mode="delta", ago_minutes=2)
     make_run(blocked=True, mode="backfill", ago_minutes=1)
-    assert crawl_gate.consecutive_blocks() == 2
+    assert coverage.consecutive_blocks() == 2
 
 
 @pytest.mark.django_db
 def test_a_blocked_sold_probe_counts_toward_the_shared_cooldown():
     make_run(blocked=True, source=FetchRun.Source.SOLD_PROBE, ago_minutes=1)
 
-    assert crawl_gate.consecutive_blocks() == 1
+    assert coverage.consecutive_blocks() == 1
 
 
 @pytest.mark.django_db
 def test_an_ordinary_failure_does_not_trip_the_breaker():
     """A parser bug should be retried on the next tick, not cooled down for hours."""
     make_run(failed=True, ago_minutes=1)
-    assert crawl_gate.consecutive_blocks() == 0
+    assert coverage.consecutive_blocks() == 0
     assert crawl_gate.check_gate() is None
 
 

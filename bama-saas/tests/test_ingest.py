@@ -12,7 +12,7 @@ from datetime import timezone as tz
 import pytest
 from django.utils import timezone as djtz
 
-from apps.common.parsing import extract_ad, parse_publish_time
+from apps.common.parsing import _MAX_GALLERY, extract_ad, parse_publish_time
 from apps.core.models import (
     Ad,
     Brand,
@@ -27,8 +27,7 @@ from apps.core.models import (
 )
 from apps.core.pricing import compute_deal_scores
 from apps.jobs.ingest import (
-    _MAX_GALLERY,
-    _image_urls,
+    image_urls,
     ingest_ad,
     reset_cache,
     reset_price_cache,
@@ -317,7 +316,7 @@ def test_gallery_is_read_from_the_top_level_not_from_detail():
     This was handed `detail` alone, so _MAX_GALLERY had never once applied and
     every listing in the database had at most one photo.
     """
-    primary, gallery = _image_urls(_gallery_payload(3))
+    primary, gallery = image_urls(_gallery_payload(3))
 
     assert len(gallery) == 3
     assert all("w_600" in url for url in gallery)     # detail-page size
@@ -326,7 +325,7 @@ def test_gallery_is_read_from_the_top_level_not_from_detail():
 
 def test_a_payload_with_only_detail_image_still_yields_a_photo():
     """The shape behind the 14,658 rows that render "No photo" today."""
-    primary, gallery = _image_urls(
+    primary, gallery = image_urls(
         {"detail": {"image": f"{_CDN}/x/only.jpg?x-img=resize,w_450"}}
     )
     assert primary.startswith(_CDN)
@@ -334,7 +333,7 @@ def test_a_payload_with_only_detail_image_still_yields_a_photo():
 
 
 def test_a_non_bama_host_is_refused():
-    primary, gallery = _image_urls(
+    primary, gallery = image_urls(
         {"images": [{"large": "https://evil.example.com/x.jpg"}],
          "detail": {"image": "http://cdn-sth1.bama.ir/insecure.jpg"}}
     )
@@ -342,7 +341,7 @@ def test_a_non_bama_host_is_refused():
 
 
 def test_gallery_is_capped():
-    _, gallery = _image_urls(_gallery_payload(40))
+    _, gallery = image_urls(_gallery_payload(40))
     assert len(gallery) == _MAX_GALLERY
 
 

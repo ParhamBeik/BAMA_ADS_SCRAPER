@@ -33,7 +33,7 @@ from rest_framework.response import Response
 
 from apps.common.verify import MAX_JALALI_YEAR, MIN_JALALI_YEAR
 from apps.core import images, pricing, research
-from apps.core.coverage import coverage_state
+from apps.core.coverage import consecutive_blocks, coverage_state
 from apps.core.filters import AdFilter
 from apps.core.models import (
     Ad,
@@ -62,7 +62,6 @@ from apps.core.serializers import (
     NotifierSettingsSerializer,
     VariantSerializer,
 )
-from apps.jobs.fetcher import consecutive_blocks
 from apps.ml.models import AdPrediction
 
 # Bumped whenever a formula changes, so a screenshotted answer can be traced to

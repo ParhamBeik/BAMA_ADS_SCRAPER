@@ -20,7 +20,7 @@ from django.utils.text import slugify
 from apps.common.parsing import (
     SEMANTIC_HASH_VERSION,
     fingerprint,
-    is_cdn_url,
+    image_urls,
     listing_fingerprint,
     normalize_model_year,
     parse_int,
@@ -247,9 +247,6 @@ PRICE_DROP_SANITY_FACTOR = 3.0
 # as UTC would shift every value by Tehran's offset.
 _SOURCE_TZ = ZoneInfo("Asia/Tehran")
 
-_MAX_GALLERY = 12
-
-
 def reset_price_cache() -> None:
     _PRICE_FP_CACHE.clear()
     _VERSION_CACHE.clear()
@@ -311,69 +308,6 @@ def parse_source_datetime(raw) -> datetime | None:
     return parsed.astimezone(dt_timezone.utc)
 
 
-def _cdn_urls(candidates: list) -> list[str]:
-    """Keep the HTTPS Bama-CDN URLs, in order, deduped, capped."""
-    urls: list[str] = []
-    for raw in candidates:
-        if not isinstance(raw, str):
-            continue
-        u = raw.strip()
-        if not is_cdn_url(u):
-            continue
-        if u not in urls:
-            urls.append(u)
-        if len(urls) >= _MAX_GALLERY:
-            break
-    return urls
-
-
-def _image_urls(payload: dict) -> tuple[str, list[str]]:
-    """``(primary, gallery)`` for one ad, from the WHOLE payload.
-
-    The gallery is ``payload["images"]``, a top level up from ``detail`` — this
-    used to be handed ``detail`` alone, which carries only the single
-    ``detail.image`` string, so ``_MAX_GALLERY`` had never once applied and
-    every listing in the database had at most one photo.
-
-    Each gallery entry is the same picture at three widths. ``small``
-    (``resize,w_450``) is what a card renders, ``large`` (``w_600``) is what the
-    detail gallery renders, so the primary comes from the first entry's small
-    and the gallery collects the larges. ``detail.image`` is the fallback for
-    payloads that predate the gallery or arrive without it.
-    """
-    detail = payload.get("detail") or {}
-    entries = payload.get("images")
-    smalls: list = []
-    larges: list = []
-    if isinstance(entries, list):
-        for item in entries:
-            if isinstance(item, str):
-                smalls.append(item)
-                larges.append(item)
-            elif isinstance(item, dict):
-                smalls.append(item.get("small") or item.get("thumb") or item.get("large"))
-                larges.append(item.get("large") or item.get("small") or item.get("thumb"))
-
-    gallery = _cdn_urls(larges)
-    if gallery:
-        return (next(iter(_cdn_urls(smalls)), "") or gallery[0]), gallery
-
-    # Fallback, NOT an addition: `detail.image` is `images[0]` at another width,
-    # so appending it to a real gallery would put a second copy of the first
-    # photo at the end of every listing. It is the only source for the rows
-    # ingested before the gallery was read.
-    fallback: list = []
-    for key in ("image", "media"):
-        raw = detail.get(key)
-        if isinstance(raw, str):
-            fallback.append(raw)
-        elif isinstance(raw, list):
-            fallback.extend(raw)
-
-    gallery = _cdn_urls(fallback)
-    return (gallery[0] if gallery else ""), gallery
-
-
 def _ad_defaults(extracted: dict, dims: dict, observed_at, publish_at, quality_flags: list) -> dict:
     g = extracted.get
     detail = (g("raw_payload") or {}).get("detail") or {}
@@ -384,7 +318,7 @@ def _ad_defaults(extracted: dict, dims: dict, observed_at, publish_at, quality_f
     # parse_mileage, unlike parse_int(positive=True), keeps a genuine 0 for
     # "صفر کیلومتر" instead of collapsing every brand-new car to NULL.
     mileage = parse_mileage(detail.get("mileage"))
-    primary, gallery = _image_urls(g("raw_payload") or {})
+    primary, gallery = image_urls(g("raw_payload") or {})
     authenticated = detail.get("authenticated")
     if isinstance(authenticated, str):
         authenticated = authenticated.strip().lower() in {"true", "1", "yes"}

@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from apps.common.parsing import (
+    image_urls,
     normalize_model_year,
     parse_int,
     parse_mileage,
@@ -136,9 +137,7 @@ def _photo_missing(extracted, payload):
     Checked against the same extractor ingest stores from, so a row can never be
     accepted here and then written with an empty ``primary_image_url``.
     """
-    from apps.jobs.ingest import _image_urls  # local: verify must not import ORM
-
-    primary, _ = _image_urls(payload or {})
+    primary, _ = image_urls(payload or {})
     if not primary:
         return Rejection("photo_missing", "no bama-CDN image in the payload", True)
 

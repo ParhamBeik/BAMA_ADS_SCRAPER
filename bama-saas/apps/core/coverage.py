@@ -262,3 +262,48 @@ def plan_backfill(gaps: list[tuple[int, int]],
     return _merge([
         ((max(lo, 1) - 1) // page_size, (max(hi, 1) - 1) // page_size) for lo, hi in gaps
     ])
+
+
+# ---------------------------------------------------------------------------
+# Whether bama.ir is refusing us
+# ---------------------------------------------------------------------------
+#
+# Here rather than with the crawl gate that acts on it, for the same reason as
+# the coverage arithmetic above: this reads FetchRun, which is a core table, and
+# both sides ask the question. apps/jobs uses it to decide whether to fetch at
+# all; apps/core reports it on the provenance envelope, because a source that is
+# refusing us is the *cause* of the staleness a reader is looking at, and it
+# implies removal detection is paused — so a listing shown as active may be sold.
+
+# Longer than the max cooldown, so a streak survives its own quiet period.
+STREAK_LOOKBACK = timedelta(hours=48)
+
+
+def recent_runs(limit: int = 40):
+    return list(
+        FetchRun.objects.filter(
+            source__in=(FetchRun.Source.LIVE_FETCH, FetchRun.Source.SOLD_PROBE),
+            created_at__gte=djtz.now() - STREAK_LOOKBACK,
+        )
+        .order_by("-created_at")
+        .values("status", "stop_reason", "finished_at", "started_at", "created_at")[:limit]
+    )
+
+
+def consecutive_blocks() -> int:
+    """How many runs in a row ended blocked, counting back from the newest.
+
+    Counts across modes: a blocked delta and a blocked backfill are the same ban,
+    and separating them would let two schedules each probe at full rate.
+    """
+    streak = 0
+    for run in recent_runs():
+        if run["stop_reason"] == FetchRun.StopReason.BLOCKED:
+            streak += 1
+        elif run["status"] == FetchRun.Status.RUNNING:
+            # The in-flight run asking this question. Ignore it rather than
+            # letting it break its own streak.
+            continue
+        else:
+            break
+    return streak

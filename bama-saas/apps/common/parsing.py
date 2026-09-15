@@ -372,3 +372,71 @@ def parse_publish_time(value: str | None, observed_at: datetime) -> datetime | N
     number, unit = int(match.group(1)), match.group(2)
     # A month is 30 days here; the feed only ever means "roughly that long ago".
     return observed_at - timedelta(**{_RELATIVE_UNITS[unit]: number * (30 if unit == "ماه" else 1)})
+
+
+# At most this many photos per listing. A gallery is the same car from a dozen
+# angles; past that it is a dealer padding the page.
+_MAX_GALLERY = 12
+
+
+def _cdn_urls(candidates: list) -> list[str]:
+    """Keep the HTTPS Bama-CDN URLs, in order, deduped, capped."""
+    urls: list[str] = []
+    for raw in candidates:
+        if not isinstance(raw, str):
+            continue
+        u = raw.strip()
+        if not is_cdn_url(u):
+            continue
+        if u not in urls:
+            urls.append(u)
+        if len(urls) >= _MAX_GALLERY:
+            break
+    return urls
+
+
+def image_urls(payload: dict) -> tuple[str, list[str]]:
+    """``(primary, gallery)`` for one ad, from the WHOLE payload.
+
+    The gallery is ``payload["images"]``, a top level up from ``detail`` — this
+    used to be handed ``detail`` alone, which carries only the single
+    ``detail.image`` string, so ``_MAX_GALLERY`` had never once applied and
+    every listing in the database had at most one photo.
+
+    Each gallery entry is the same picture at three widths. ``small``
+    (``resize,w_450``) is what a card renders, ``large`` (``w_600``) is what the
+    detail gallery renders, so the primary comes from the first entry's small
+    and the gallery collects the larges. ``detail.image`` is the fallback for
+    payloads that predate the gallery or arrive without it.
+    """
+    detail = payload.get("detail") or {}
+    entries = payload.get("images")
+    smalls: list = []
+    larges: list = []
+    if isinstance(entries, list):
+        for item in entries:
+            if isinstance(item, str):
+                smalls.append(item)
+                larges.append(item)
+            elif isinstance(item, dict):
+                smalls.append(item.get("small") or item.get("thumb") or item.get("large"))
+                larges.append(item.get("large") or item.get("small") or item.get("thumb"))
+
+    gallery = _cdn_urls(larges)
+    if gallery:
+        return (next(iter(_cdn_urls(smalls)), "") or gallery[0]), gallery
+
+    # Fallback, NOT an addition: `detail.image` is `images[0]` at another width,
+    # so appending it to a real gallery would put a second copy of the first
+    # photo at the end of every listing. It is the only source for the rows
+    # ingested before the gallery was read.
+    fallback: list = []
+    for key in ("image", "media"):
+        raw = detail.get(key)
+        if isinstance(raw, str):
+            fallback.append(raw)
+        elif isinstance(raw, list):
+            fallback.extend(raw)
+
+    gallery = _cdn_urls(fallback)
+    return (gallery[0] if gallery else ""), gallery
