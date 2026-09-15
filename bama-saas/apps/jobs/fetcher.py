@@ -38,14 +38,18 @@ from django.db import connection, transaction
 from django.db.models import Max, Q
 from django.utils import timezone as djtz
 
-from apps.common.parsing import extract_ad, parse_publish_time
+from apps.common.parsing import (
+    FIRST_PAGE,
+    HEADERS,
+    PAGE_SIZE,
+    extract_ad,
+    parse_publish_time,
+)
 from apps.core.models import FetchRun, PageCoverage
 from apps.jobs.ingest import ingest_ad, reset_cache, reset_price_cache
 
 logger = logging.getLogger("bama.worker")
 
-PAGE_SIZE = 30
-FIRST_PAGE = 0
 
 # ===========================================================================
 # Coverage arithmetic over PageCoverage — pure, no network, no writes
@@ -513,16 +517,6 @@ WARMUP_URL = "https://bama.ir/car?image=1&priced=1"
 # `1`, not `true` — the API answers 500 to the boolean spelling.
 FEED_FILTERS = "image=1&priced=1"
 
-HEADERS: dict[str, str] = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "fa,en;q=0.9",
-    "Referer": "https://bama.ir/car",
-    "X-Requested-With": "XMLHttpRequest",
-}
 
 # Adaptive backoff on 429 / 5xx. Measured over 39 days, 55 runs died on a 503
 # and 54 on connection-retry exhaustion: 3 retries capped at 30s gave up after

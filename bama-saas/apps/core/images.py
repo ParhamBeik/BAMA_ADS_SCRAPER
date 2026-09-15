@@ -29,8 +29,8 @@ import requests
 from django.conf import settings
 from django.core.cache import cache
 
-from apps.common.parsing import is_cdn_url
-from apps.jobs.fetcher import HEADERS, consecutive_blocks
+from apps.common.parsing import HEADERS, is_cdn_url
+from apps.jobs.fetcher import consecutive_blocks
 
 log = logging.getLogger("bama.images")
 

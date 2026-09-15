@@ -33,6 +33,26 @@ SITE_ROOT = "https://bama.ir"
 # both broke encapsulation and coupled the read path to the writer.
 CDN_HOSTS = ("cdn.bama.ir", "bama.ir", "media.bama.ir")
 
+# Feed facts, verified against the live API. `pageIndex` is 0-based — starting at
+# 1 silently skips the newest ~30 ads on every run — and a full page carries 30
+# ads, which is what makes a rank interval and a page index interchangeable.
+PAGE_SIZE = 30
+FIRST_PAGE = 0
+
+# What bama.ir is willing to answer. Shared by the crawler and by the image
+# proxy: the CDN applies the same checks to a photo request as to a feed page,
+# so a photo fetched without these is refused while the crawl succeeds.
+HEADERS: dict[str, str] = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "fa,en;q=0.9",
+    "Referer": "https://bama.ir/car",
+    "X-Requested-With": "XMLHttpRequest",
+}
+
 
 def is_cdn_url(url: str) -> bool:
     """True for an HTTPS URL served from Bama's own image CDN.
