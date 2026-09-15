@@ -281,6 +281,23 @@ BAMA_WORKER_FETCH_ADS = int(os.environ.get("BAMA_WORKER_FETCH_ADS", "1500"))
 # accumulates across many short runs instead of relying on one ~936-page sweep.
 BAMA_COVERAGE_CHUNK_PAGES = int(os.environ.get("BAMA_COVERAGE_CHUNK_PAGES", "120"))
 
+# Crawl-gate cooldowns, in seconds. `apps/jobs/fetcher.py` turns each into a
+# timedelta at import; they live here so that every tunable in this project is
+# visible in one file rather than five of them hiding in the module that happens
+# to use them.
+#
+# The block gate: bama.ir answered 403 (WAF), so back off and retry later.
+# First cooldown is one pipeline tick, then it doubles — 15m, 30m, 1h, ... 6h.
+BAMA_BLOCK_COOLDOWN = int(os.environ.get("BAMA_BLOCK_COOLDOWN", "900"))
+BAMA_BLOCK_COOLDOWN_MAX = int(os.environ.get("BAMA_BLOCK_COOLDOWN_MAX", "21600"))
+# The upstream gate: bama.ir is merely failing, not refusing us. Capped below one
+# hot tick on purpose, so recovery costs at most one missed fetch.
+BAMA_UPSTREAM_COOLDOWN = int(os.environ.get("BAMA_UPSTREAM_COOLDOWN", "120"))
+BAMA_UPSTREAM_COOLDOWN_MAX = int(os.environ.get("BAMA_UPSTREAM_COOLDOWN_MAX", "600"))
+
+# How many bargain-board detail pages one `probe_sold` tick may visit.
+BAMA_SOLD_PROBE_ADS = int(os.environ.get("BAMA_SOLD_PROBE_ADS", "20"))
+
 # Episodes that started before this date have untrustworthy end dates and are
 # excluded from survival analysis. Set it to the date rolling coverage went live.
 BAMA_EPISODE_CLEAN_START = os.environ.get("BAMA_EPISODE_CLEAN_START", "2026-08-14")

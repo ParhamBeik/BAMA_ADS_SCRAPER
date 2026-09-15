@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import logging
 import math
-import os
 import random
 import signal
 import time
@@ -284,8 +283,8 @@ def plan_backfill(gaps: list[tuple[int, int]],
 WAF_STATUS = 403
 
 # First cooldown is one pipeline tick, then it doubles: 15m, 30m, 1h, ... 6h.
-BASE_COOLDOWN = timedelta(seconds=int(os.environ.get("BAMA_BLOCK_COOLDOWN", 900)))
-MAX_COOLDOWN = timedelta(seconds=int(os.environ.get("BAMA_BLOCK_COOLDOWN_MAX", 21600)))
+BASE_COOLDOWN = timedelta(seconds=settings.BAMA_BLOCK_COOLDOWN)
+MAX_COOLDOWN = timedelta(seconds=settings.BAMA_BLOCK_COOLDOWN_MAX)
 
 # Never stop probing entirely. The ban lifts on bama.ir's schedule, not ours,
 # and a breaker that latches open needs a human to notice — exactly the failure
@@ -378,10 +377,8 @@ def cooldown_until():
 # cooldown is capped below one hot tick so recovery costs at most one missed
 # fetch after bama.ir returns, and any single success clears the streak.
 UPSTREAM_FAILURES_BEFORE_BACKOFF = 2
-UPSTREAM_BASE_COOLDOWN = timedelta(
-    seconds=int(os.environ.get("BAMA_UPSTREAM_COOLDOWN", 120)))
-UPSTREAM_MAX_COOLDOWN = timedelta(
-    seconds=int(os.environ.get("BAMA_UPSTREAM_COOLDOWN_MAX", 600)))
+UPSTREAM_BASE_COOLDOWN = timedelta(seconds=settings.BAMA_UPSTREAM_COOLDOWN)
+UPSTREAM_MAX_COOLDOWN = timedelta(seconds=settings.BAMA_UPSTREAM_COOLDOWN_MAX)
 
 
 def consecutive_failures() -> int:

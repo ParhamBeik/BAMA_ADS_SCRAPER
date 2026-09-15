@@ -8,7 +8,6 @@ management commands, stdout capture or cadences.
 from __future__ import annotations
 
 import logging
-import os
 import statistics
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field
@@ -616,7 +615,7 @@ def ml_score(*, limit: int | None = None, incremental: bool = False) -> dict:
     return score_all(limit=limit, model_ids=model_ids)
 
 
-SOLD_PROBE_BATCH = int(os.environ.get("BAMA_SOLD_PROBE_ADS", "20"))
+SOLD_PROBE_BATCH = settings.BAMA_SOLD_PROBE_ADS
 SOLD_PROBE_TTL = 6 * 60 * 60
 SOLD_PROBE_KEY = "sold_probe:{code}"
 
