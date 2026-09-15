@@ -445,9 +445,9 @@ def percentile(values: list[float], p: int) -> float:
 def scorable_rows():
     """The population every screen counts, lists, ranks and averages over.
 
-    One definition, because it drifted apart twice already. First `cohort_peers`
-    used `current_price > 0` and no instalment filter while the board used the
-    10M sentinel and `exclude_unclear_price`, so the listing page quoted a
+    One definition, because it drifted apart twice already. First the per-cohort
+    peer query used `current_price > 0` and no instalment filter while the board
+    used the 10M sentinel and `exclude_unclear_price`, so the listing page quoted a
     median dragged down by down-payments the board had thrown out — 11.7% of
     active priced ads. Then the *browse* endpoints turned out never to have
     applied it either, which is why the app showed four different "active ads"
@@ -460,7 +460,7 @@ def scorable_rows():
     from a *baseline* (an unbelievable price cannot help define believability)
     but kept as *candidates* — an outlier-low row is a genuinely underpriced car,
     and hiding it from the one board a buyer reads is the opposite of the job.
-    `cohort_peers` adds that filter; `compute_deal_scores` applies it per cohort.
+    `laddered_peers` adds that filter; `compute_deal_scores` applies it per cohort.
     """
     return exclude_unclear_price(
         verified(Ad.objects).filter(
@@ -470,25 +470,6 @@ def scorable_rows():
             publish_at__isnull=False,
         )
     )
-
-
-def cohort_peers(*, model_id: int, variant_id, year_jalali
-                 ) -> list[tuple[int, int, str | None, object]]:
-    """Priced, active, verified ``(price, mileage, condition_band, last_seen)``.
-
-    Cohort outliers excluded: a price that is not believable must not help define
-    the baseline that judges believability.
-
-    ``last_seen`` rides along so the baseline can tell a cohort of forty cars
-    seen this morning from forty nobody has laid eyes on in a week. It costs one
-    more column on a query that was already running.
-    """
-    return [
-        (price, mileage, condition_band(status), last_seen)
-        for price, mileage, status, last_seen in without_cohort_outliers(scorable_rows())
-        .filter(model_id=model_id, variant_id=variant_id, year_jalali=year_jalali)
-        .values_list("current_price", "mileage", "body_status", "last_seen_at")
-    ]
 
 
 def cap_confidence(label: str, basis: str) -> str:

@@ -155,10 +155,10 @@ def _refusal(name: str, reason: str, **detail) -> dict:
 def _median_table(rows: list[dict]) -> dict:
     """Cohort medians at three widths, for looking a peer median up later.
 
-    Split out of ``_peer_median_baseline`` because the price model now needs the
-    same lookup for its *own* target, not only for the baseline it is judged
-    against — and both must be built from the same rows in the same way or the
-    comparison stops being like-for-like.
+    Built once and used twice: the price model's *own* target is the gap to this
+    median, and the baseline it is judged against is this same median. Both must
+    come from the same rows in the same way or the comparison stops being
+    like-for-like.
     """
     by_cohort: dict[tuple, list[int]] = defaultdict(list)
     by_model_year: dict[tuple, list[int]] = defaultdict(list)
@@ -187,18 +187,6 @@ def _median_for(table: dict, row: dict) -> float | None:
             return float(ordered[mid] if len(ordered) % 2 else
                          (ordered[mid - 1] + ordered[mid]) / 2)
     return None
-
-
-def _peer_median_baseline(train: list[dict], holdout: list[dict]) -> list[float | None]:
-    """What the existing method would predict for each holdout row.
-
-    The cohort median from the *training* rows only, backing off model+year and
-    then model when a cohort is unseen — which is generous to the baseline on
-    purpose. A gate the incumbent can only pass by being handed an unfair
-    comparison is not a gate.
-    """
-    table = _median_table(train)
-    return [_median_for(table, r) for r in holdout]
 
 
 def train_price() -> dict:

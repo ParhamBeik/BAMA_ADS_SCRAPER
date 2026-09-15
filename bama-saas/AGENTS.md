@@ -290,7 +290,7 @@ schema is independent of the Python layout. Do not remove those pins.
   argument as `views._model_year`). `views.BUDGET_CACHE_GRID` rounds to 10M
   before keying and `MAX_BUDGET` caps it. `research.affordable()` groups
   `scorable_rows()` by cohort in **one** grouped aggregate — the first version
-  called `cohort_peers` per cohort, which is the N+1 this codebase keeps
+  ran a peer query per cohort, which is the N+1 this codebase keeps
   re-learning — and ranks by `reach_pct` (what percentile of that cohort the
   budget buys) rather than by raw count.
 - **Alert dedup is per user, not per ad.** `NotifiedAd` stays as the *operator*
