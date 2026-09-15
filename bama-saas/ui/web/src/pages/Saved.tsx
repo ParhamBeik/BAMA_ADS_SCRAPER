@@ -18,7 +18,8 @@ import { Trash2, TrendingDown } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import type { Paginated } from "../api";
-import { Async, Card, Fa, Table, faDate, pct, toman } from "../ui";
+import { Async, Card, Fa, Table } from "../ui";
+import { faDate, pct, toman } from "../format";
 import { Sparkline } from "../components/Sparkline";
 
 interface SavedAd {

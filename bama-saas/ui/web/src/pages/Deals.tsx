@@ -33,10 +33,8 @@ import { api } from "../api";
 import { useAuth } from "../auth";
 import { FilterPanel } from "../FilterPanel";
 import { qs, useFilters } from "../filters";
-import {
-  Async, BamaLink, Card, ConfidenceDots, Fa, ListingActions, NumberInput, Pager,
-  Provenance, Table, fa, pct, toman,
-} from "../ui";
+import { Async, BamaLink, Card, ConfidenceDots, Fa, ListingActions, NumberInput, Pager, Provenance, Table } from "../ui";
+import { fa, pct, toman } from "../format";
 import { DealCard, conditionNote, type Deal, type DealBoard } from "../components/DealCard";
 import { ViewToggle, useListView } from "../components/ViewToggle";
 import { Button } from "../components/ui/button";

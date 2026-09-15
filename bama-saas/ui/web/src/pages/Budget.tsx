@@ -30,7 +30,8 @@ import { Wallet } from "lucide-react";
 import { api } from "../api";
 import type { Envelope } from "../api";
 import { qs, useFilters } from "../filters";
-import { Async, Card, Fa, NumberInput, Provenance, Stat, Table, fa, km, num, pct, toman } from "../ui";
+import { Async, Card, Fa, NumberInput, Provenance, Stat, Table } from "../ui";
+import { fa, km, num, pct, toman } from "../format";
 import { Button } from "../components/ui/button";
 
 interface Option {

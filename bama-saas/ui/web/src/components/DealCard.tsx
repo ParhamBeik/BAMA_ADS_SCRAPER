@@ -15,9 +15,8 @@
 import { Link } from "react-router-dom";
 import { AlertTriangle, Sparkles, Timer } from "lucide-react";
 import type { Envelope } from "@/api";
-import {
-  BamaLink, ConfidenceDots, Fa, Thumb, km, pct, toman,
-} from "@/ui";
+import { BamaLink, ConfidenceDots, Fa, Thumb } from "@/ui";
+import { km, pct, toman } from "@/format";
 
 /**
  * The thresholds the deal board is standing on, so a screen can state them

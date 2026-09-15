@@ -11,7 +11,7 @@
 import { describe, expect, it } from "vitest";
 import { scopeKey } from "./components/FollowButton";
 import { qs } from "./filters";
-import { pct, toman } from "./ui";
+import { pct, toman } from "./format";
 
 /**
  * Exactly the strings `ScopedToACar.build_scope_key` produces.

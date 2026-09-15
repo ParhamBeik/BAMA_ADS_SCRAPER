@@ -13,7 +13,8 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { api } from "../api";
-import { Async, Card, Stat, humanError, num } from "../ui";
+import { Async, Card, Stat, humanError } from "../ui";
+import { num } from "../format";
 import { Button } from "../components/ui/button";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,

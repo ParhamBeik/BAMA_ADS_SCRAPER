@@ -21,7 +21,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, CircleDashed, Info, XCircle } from "lucide-react";
 import { api } from "@/api";
-import { Async, Card, Fa, Provenance, fa, faDate, num, pct } from "@/ui";
+import { Async, Card, Fa, Provenance } from "@/ui";
+import { fa, faDate, num, pct } from "@/format";
 import type { Envelope } from "@/api";
 
 interface Promotion {

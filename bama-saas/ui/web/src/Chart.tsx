@@ -49,7 +49,7 @@ function cssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
-export interface Series {
+interface Series {
   name: string;
   data: (number | null)[];
   type?: "line" | "bar";
@@ -67,7 +67,7 @@ export interface Series {
  * (0.26, 0.27, 0.36, 1.05, … 9.98 days) were drawn as if evenly spaced, which
  * is a picture of the sort order rather than of time.
  */
-export type AxisType = "category" | "time" | "value";
+type AxisType = "category" | "time" | "value";
 
 /** Gregorian ISO in, Jalali out — the calendar the rest of the app writes in. */
 const JALALI = new Intl.DateTimeFormat("fa-IR-u-ca-persian", {

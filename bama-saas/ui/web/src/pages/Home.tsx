@@ -29,7 +29,8 @@ import {
 import { api } from "../api";
 import type { Envelope } from "../api";
 import { qs, useFilters } from "../filters";
-import { Async, Card, Fa, Provenance, SeriesCaveats, Stat, Table, fa, num, pct, type IndexSample } from "../ui";
+import { Async, Card, Fa, Provenance, SeriesCaveats, Stat, Table, type IndexSample } from "../ui";
+import { fa, num, pct } from "../format";
 import { Sparkline } from "../components/Sparkline";
 import { WindowPicker } from "../components/WindowPicker";
 import { ModelCombobox } from "../components/ModelCombobox";

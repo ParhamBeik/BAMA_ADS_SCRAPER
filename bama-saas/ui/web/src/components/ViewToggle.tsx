@@ -12,7 +12,7 @@ import { LayoutGrid, List } from "lucide-react";
 import { useFilters } from "@/filters";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
-export type ListView = "cards" | "table";
+type ListView = "cards" | "table";
 
 export function useListView(): ListView {
   return useFilters().get("view") === "table" ? "table" : "cards";

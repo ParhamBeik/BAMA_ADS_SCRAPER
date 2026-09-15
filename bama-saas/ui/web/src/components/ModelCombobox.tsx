@@ -17,7 +17,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronsUpDown } from "lucide-react";
 import { api } from "@/api";
 import { qs } from "@/filters";
-import { Fa, num } from "@/ui";
+import { Fa } from "@/ui";
+import { num } from "@/format";
 import { Button } from "@/components/ui/button";
 import {
   Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,

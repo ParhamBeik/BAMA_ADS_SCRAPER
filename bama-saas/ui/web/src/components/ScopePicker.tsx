@@ -19,7 +19,8 @@ import { useBrands } from "@/catalogue";
 import { useQuery } from "@tanstack/react-query";
 import { api, type Brand, type Variant } from "@/api";
 import { useFilters } from "@/filters";
-import { Fa, num } from "@/ui";
+import { Fa } from "@/ui";
+import { num } from "@/format";
 import { ModelCombobox, useModelLabel } from "@/components/ModelCombobox";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,

@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
-import { Async, BamaLink, FLAG_LABEL, Fa, ListingActions, PriceBar, PriceVerdict, Provenance, fa, faDate, num, pct, toman } from "../ui";
+import { Async, BamaLink, FLAG_LABEL, Fa, ListingActions, PriceBar, PriceVerdict, Provenance } from "../ui";
+import { fa, faDate, num, pct, toman } from "../format";
 import type { Basis, Distribution, Verdict } from "../ui";
 
 type Ad = {

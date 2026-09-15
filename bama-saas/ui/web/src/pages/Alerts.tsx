@@ -24,9 +24,8 @@ import { Link } from "react-router-dom";
 import { BellOff, Plus, Trash2 } from "lucide-react";
 import { api } from "../api";
 import type { Paginated } from "../api";
-import {
-  Async, BamaLink, Card, Fa, NumberInput, Table, Thumb, km, pct, toman,
-} from "../ui";
+import { Async, BamaLink, Card, Fa, NumberInput, Table, Thumb } from "../ui";
+import { km, pct, toman } from "../format";
 import { ModelCombobox } from "../components/ModelCombobox";
 import { Button } from "../components/ui/button";
 import { Label } from "../components/ui/label";
