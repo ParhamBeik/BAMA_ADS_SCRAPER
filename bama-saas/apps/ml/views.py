@@ -33,8 +33,8 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAdminUser
 from rest_framework.response import Response
 
+from apps.core.api import cached, envelope
 from apps.core.models import Ad
-from apps.core.views import cached, envelope
 from apps.ml import inference, monitoring, registry
 from apps.ml.models import AdPrediction, MLModel, ReviewDecision
 

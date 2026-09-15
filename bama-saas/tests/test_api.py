@@ -23,6 +23,7 @@ from rest_framework.test import APIClient
 from apps.accounts.models import AlertDelivery, AlertRule, User, Watchlist
 from apps.common.verify import MAX_JALALI_YEAR, MIN_JALALI_YEAR
 from apps.core import images, pricing
+from apps.core.api import cache_key
 from apps.core.models import (
     Ad,
     Brand,
@@ -38,7 +39,6 @@ from apps.core.models import (
     Variant,
 )
 from apps.core.pricing import compute_deal_scores
-from apps.core.views import cache_key
 from tests.conftest import CDN, NOW, UTC
 
 # A fixed "now" so publish_at / observed_at derived from it are deterministic.
@@ -1843,7 +1843,7 @@ def test_coverage_is_computed_once_per_answer_not_once_per_request(api_client):
     replaced did. Two endpoints therefore hold two readings, and that is the
     price of neither of them wearing the other's provenance.
     """
-    with patch("apps.core.views._coverage", return_value={"complete_sweep": True}) as spy:
+    with patch("apps.core.api._coverage", return_value={"complete_sweep": True}) as spy:
         api_client.get("/api/analytics/arrivals/?days=30")
         api_client.get("/api/analytics/arrivals/?days=30")
         api_client.get("/api/analytics/arrivals/?days=30")
@@ -1905,13 +1905,13 @@ def test_coverage_shares_the_vintage_of_the_answer_it_qualifies(api_client):
     holed = {"complete_sweep": False, "uncovered_ranks": 400}
     swept = {"complete_sweep": True, "uncovered_ranks": 0}
 
-    with patch("apps.core.views._coverage", return_value=holed):
+    with patch("apps.core.api._coverage", return_value=holed):
         first = api_client.get("/api/analytics/arrivals/?days=30").json()
     assert first["coverage"] == holed
 
     # The crawl fills the hole, but the answer on offer is still the one computed
     # across it — so it must keep carrying the coverage it was computed under.
-    with patch("apps.core.views._coverage", return_value=swept):
+    with patch("apps.core.api._coverage", return_value=swept):
         second = api_client.get("/api/analytics/arrivals/?days=30").json()
     assert second["coverage"] == holed, "a stale answer wore fresh provenance"
 
