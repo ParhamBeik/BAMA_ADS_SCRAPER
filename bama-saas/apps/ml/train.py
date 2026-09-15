@@ -848,7 +848,7 @@ def train_anomaly() -> dict:
     do.
 
     A data-quality flag is what this *is* for, and those exist independently:
-    ``apps.jobs.verify`` writes ``quality_flags`` from hand-written rules —
+    ``apps.common.verify`` writes ``quality_flags`` from hand-written rules —
     zero kilometres on an old car, a mileage impossible for the age. So the
     question is answerable and well matched: of the listings this isolates,
     what share carry a flag a rule found separately, against the base rate? A

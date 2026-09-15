@@ -16,7 +16,7 @@ import re
 
 from django.db.models import Q
 
-from apps.core.rules import HARD_RULE_IDS  # noqa: F401 - public compatibility export
+from apps.common.rules import HARD_RULE_IDS  # noqa: F401 - public compatibility export
 
 # ---------------------------------------------------------------------------
 # Row-level trust

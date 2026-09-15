@@ -38,9 +38,9 @@ from django.db import connection, transaction
 from django.db.models import Max, Q
 from django.utils import timezone as djtz
 
+from apps.common.parsing import extract_ad, parse_publish_time
 from apps.core.models import FetchRun, PageCoverage
 from apps.jobs.ingest import ingest_ad, reset_cache, reset_price_cache
-from apps.jobs.parsing import extract_ad, parse_publish_time
 
 logger = logging.getLogger("bama.worker")
 

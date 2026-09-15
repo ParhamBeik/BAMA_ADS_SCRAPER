@@ -13,8 +13,8 @@ from django.db.models.expressions import RawSQL
 from django.db.models.functions import Upper
 from django.utils import timezone
 
-from apps.core.rules import HARD_RULE_IDS
-from apps.jobs.parsing import absolute_ad_url
+from apps.common.parsing import absolute_ad_url
+from apps.common.rules import HARD_RULE_IDS
 
 _HARD_RULE_SQL = ", ".join(repr(rule) for rule in sorted(HARD_RULE_IDS))
 _IS_VERIFIED_SQL = f"NOT (excluded_from_analytics OR quality_flags ?| ARRAY[{_HARD_RULE_SQL}])"
@@ -214,7 +214,7 @@ class Ad(models.Model):
     reposted_from = models.ForeignKey("self", on_delete=models.SET_NULL,
                                       related_name="reposts", null=True, blank=True)
     # Content identity across ad codes — how a relist is recognised when Bama
-    # issues a fresh code for the same car. See jobs.parsing.listing_fingerprint.
+    # issues a fresh code for the same car. See common.parsing.listing_fingerprint.
     listing_fingerprint = models.CharField(max_length=64, blank=True, db_index=True)
 
     trim = models.CharField(max_length=200, blank=True)

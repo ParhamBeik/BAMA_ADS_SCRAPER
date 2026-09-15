@@ -17,6 +17,18 @@ from zoneinfo import ZoneInfo
 from django.db import IntegrityError, transaction
 from django.utils.text import slugify
 
+from apps.common.parsing import (
+    SEMANTIC_HASH_VERSION,
+    fingerprint,
+    is_cdn_url,
+    listing_fingerprint,
+    normalize_model_year,
+    parse_int,
+    parse_mileage,
+    payload_hashes,
+    pure_ad,
+)
+from apps.common.verify import verify_extracted
 from apps.core.models import (
     Ad,
     AdObservation,
@@ -33,18 +45,6 @@ from apps.core.models import (
 )
 from apps.core.normalization import search_document
 from apps.core.quality import price_basis_unclear
-from apps.jobs.parsing import (
-    SEMANTIC_HASH_VERSION,
-    fingerprint,
-    is_cdn_url,
-    listing_fingerprint,
-    normalize_model_year,
-    parse_int,
-    parse_mileage,
-    payload_hashes,
-    pure_ad,
-)
-from apps.jobs.verify import verify_extracted
 
 # ---------------------------------------------------------------------------
 # Dimension resolution

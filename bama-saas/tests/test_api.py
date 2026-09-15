@@ -21,6 +21,7 @@ from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.test import APIClient
 
 from apps.accounts.models import AlertDelivery, AlertRule, User, Watchlist
+from apps.common.verify import MAX_JALALI_YEAR, MIN_JALALI_YEAR
 from apps.core import images, pricing
 from apps.core.models import (
     Ad,
@@ -38,7 +39,6 @@ from apps.core.models import (
 )
 from apps.core.pricing import compute_deal_scores
 from apps.core.views import cache_key
-from apps.jobs.verify import MAX_JALALI_YEAR, MIN_JALALI_YEAR
 from tests.conftest import CDN, NOW, UTC
 
 # A fixed "now" so publish_at / observed_at derived from it are deterministic.

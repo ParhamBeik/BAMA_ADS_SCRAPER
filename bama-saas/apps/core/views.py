@@ -31,6 +31,7 @@ from rest_framework.generics import ListAPIView
 from rest_framework.permissions import IsAdminUser
 from rest_framework.response import Response
 
+from apps.common.verify import MAX_JALALI_YEAR, MIN_JALALI_YEAR
 from apps.core import images, pricing, research
 from apps.core.filters import AdFilter
 from apps.core.models import (
@@ -61,7 +62,6 @@ from apps.core.serializers import (
     VariantSerializer,
 )
 from apps.jobs.fetcher import consecutive_blocks, coverage_state
-from apps.jobs.verify import MAX_JALALI_YEAR, MIN_JALALI_YEAR
 from apps.ml.models import AdPrediction
 
 # Bumped whenever a formula changes, so a screenshotted answer can be traced to

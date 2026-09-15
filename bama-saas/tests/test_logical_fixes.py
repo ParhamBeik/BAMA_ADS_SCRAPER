@@ -10,6 +10,7 @@ import pytest
 from django.db import connection
 from django.utils import timezone
 
+from apps.common.rules import HARD_RULE_IDS
 from apps.core.filters import AdFilter
 from apps.core.models import Ad, Brand, Model
 from apps.core.normalization import (
@@ -20,7 +21,6 @@ from apps.core.normalization import (
 )
 from apps.core.pricing import MILEAGE_BUCKETS, Baseline, _monotone
 from apps.core.quality import CLEAN, COSMETIC, PAINTED, STRUCTURAL, condition_band, verified
-from apps.core.rules import HARD_RULE_IDS
 
 
 def test_normalization_digits_and_characters():

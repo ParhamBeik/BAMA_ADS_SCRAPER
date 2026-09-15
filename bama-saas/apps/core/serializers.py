@@ -2,11 +2,11 @@
 
 from rest_framework import serializers
 
+from apps.common.verify import MAX_PLAUSIBLE_MILEAGE
 from apps.core import images
 from apps.core.models import Ad, Brand, Model, NotifierSettings, Variant
 from apps.core.pricing import MIN_PEERS
 from apps.core.quality import condition_discounted
-from apps.jobs.verify import MAX_PLAUSIBLE_MILEAGE
 
 
 class BrandSerializer(serializers.ModelSerializer):

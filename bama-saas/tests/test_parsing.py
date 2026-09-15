@@ -1,4 +1,4 @@
-"""Unit tests for apps.jobs.parsing.
+"""Unit tests for apps.common.parsing.
 
 Unit level throughout: every function here is a side-effect-free
 string -> value transform with no DB or Django dependency, so this is the
@@ -12,8 +12,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from apps.jobs import parsing as P
-from apps.jobs.parsing import (
+from apps.common import parsing as P
+from apps.common.parsing import (
     JALALI_GREGORIAN_OFFSET,
     extract_ad,
     fingerprint,

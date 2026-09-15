@@ -12,6 +12,7 @@ from datetime import timezone as tz
 import pytest
 from django.utils import timezone as djtz
 
+from apps.common.parsing import extract_ad, parse_publish_time
 from apps.core.models import (
     Ad,
     Brand,
@@ -39,7 +40,6 @@ from apps.jobs.jobs import (
     mark_inactive,
     sweep_cutoff,
 )
-from apps.jobs.parsing import extract_ad, parse_publish_time
 from tests.conftest import gallery
 
 NOW = datetime(2026, 8, 8, 12, 0, tzinfo=tz.utc)
@@ -828,8 +828,8 @@ def test_stale_observation_does_not_move_last_seen_backwards(catalog):
     into last_seen_at put 5,009 production ads in a state where
     last_seen_at < first_seen_at and every duration came out negative.
     """
+    from apps.common.parsing import extract_ad
     from apps.jobs.ingest import ingest_ad
-    from apps.jobs.parsing import extract_ad
 
     recent = NOW
     older = NOW - timedelta(days=10)
@@ -851,8 +851,8 @@ def test_stale_observation_does_not_move_last_seen_backwards(catalog):
 @pytest.mark.django_db
 def test_stale_observation_does_not_resurrect_a_removed_ad(catalog):
     """A backfill of old pages must not undo mark_inactive_ads."""
+    from apps.common.parsing import extract_ad
     from apps.jobs.ingest import ingest_ad
-    from apps.jobs.parsing import extract_ad
 
     recent = NOW
     run = FetchRun.objects.create(source=FetchRun.Source.LIVE_FETCH)
@@ -876,8 +876,8 @@ def test_stale_observation_does_not_resurrect_a_removed_ad(catalog):
 @pytest.mark.django_db
 def test_fresh_observation_still_reactivates(catalog):
     """The guard must not break the legitimate case: a genuinely re-seen ad."""
+    from apps.common.parsing import extract_ad
     from apps.jobs.ingest import ingest_ad
-    from apps.jobs.parsing import extract_ad
 
     older = NOW - timedelta(days=5)
     run = FetchRun.objects.create(source=FetchRun.Source.LIVE_FETCH)

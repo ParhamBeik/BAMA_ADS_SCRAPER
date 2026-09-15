@@ -33,6 +33,7 @@ from statistics import median
 from django.core.cache import cache
 from django.utils import timezone
 
+from apps.common.verify import MAX_PLAUSIBLE_MILEAGE, MIN_PLAUSIBLE_PRICE
 from apps.core.models import Ad, DealScoreCache
 from apps.core.quality import (
     COHORT_FLAGS,
@@ -47,7 +48,6 @@ from apps.core.quality import (
     verified_by_ad,
     without_cohort_outliers,
 )
-from apps.jobs.verify import MAX_PLAUSIBLE_MILEAGE, MIN_PLAUSIBLE_PRICE
 
 # A cohort needs this many priced peers before it has an opinion worth quoting.
 MIN_PEERS = 8

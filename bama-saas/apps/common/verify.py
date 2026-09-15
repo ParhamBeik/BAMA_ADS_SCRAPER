@@ -22,13 +22,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from apps.core.rules import HARD_RULE_IDS  # noqa: F401 - public compatibility export
-from apps.jobs.parsing import (
+from apps.common.parsing import (
     normalize_model_year,
     parse_int,
     parse_mileage,
     parse_publish_time,
 )
+from apps.common.rules import HARD_RULE_IDS  # noqa: F401 - public compatibility export
 
 # Bama ad codes are short lowercase alphanumerics, e.g. "6mnwbfv5".
 CODE_PATTERN = re.compile(r"^[a-z0-9]{6,12}$")
