@@ -12,7 +12,7 @@ import {
   Requirements,
   passwordChecks,
   strengthOf,
-} from "./AuthLayout";
+} from "@/components/AuthLayout";
 
 export function Signup() {
   const { register } = useAuth();

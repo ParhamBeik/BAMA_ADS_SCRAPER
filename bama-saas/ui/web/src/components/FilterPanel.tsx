@@ -21,16 +21,16 @@ import { useState } from "react";
 import { useBrands } from "@/catalogue";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, Search, SlidersHorizontal, X } from "lucide-react";
-import { api, type Variant } from "./api";
-import { useFilters } from "./filters";
-import { Fa, NumberInput } from "./ui";
-import { num, toman } from "./format";
-import { ModelCombobox, useModelLabel } from "./components/ModelCombobox";
-import { Button } from "./components/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "./components/ui/popover";
+import { api, type Variant } from "@/api";
+import { useFilters } from "@/filters";
+import { Fa, NumberInput } from "@/ui";
+import { num, toman } from "@/format";
+import { ModelCombobox, useModelLabel } from "@/components/ModelCombobox";
+import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "./components/ui/select";
+} from "@/components/ui/select";
 
 const TRANSMISSIONS = ["اتوماتیک", "دنده ای"];
 const FUELS = ["بنزینی", "هیبریدی", "برقی", "دوگانه سوز", "پلاگین هیبرید", "بردافزا", "هیبرید ملایم", "دیزلی"];

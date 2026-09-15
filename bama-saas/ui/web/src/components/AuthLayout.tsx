@@ -13,7 +13,7 @@
  */
 import { type ReactNode } from "react";
 import { Eye, EyeOff } from "lucide-react";
-import { BrandMark } from "../ui";
+import { BrandMark } from "@/ui";
 
 export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 

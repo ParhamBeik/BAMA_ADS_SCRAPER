@@ -43,7 +43,7 @@ echarts.use([
   CanvasRenderer,
 ]);
 import { useMemo } from "react";
-import { useTheme } from "./theme";
+import { useTheme } from "@/theme";
 
 function cssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();

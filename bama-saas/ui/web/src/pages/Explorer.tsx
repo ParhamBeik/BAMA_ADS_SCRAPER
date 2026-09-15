@@ -28,7 +28,7 @@ import { Link } from "react-router-dom";
 import { AlertTriangle, ArrowUpDown, Gauge, Wallet } from "lucide-react";
 import { api } from "../api";
 import type { Envelope, Paginated } from "../api";
-import { FilterPanel } from "../FilterPanel";
+import { FilterPanel } from "@/components/FilterPanel";
 import { qs, useFilters } from "../filters";
 import { Async, BamaLink, Card, FLAG_LABEL, Fa, ListingActions, Pager, PriceBar, Provenance, Sheet, Table, Thumb } from "../ui";
 import { km, num, toman } from "../format";

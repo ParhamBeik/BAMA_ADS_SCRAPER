@@ -31,7 +31,7 @@ import { Link } from "react-router-dom";
 import { AlertTriangle, Bell } from "lucide-react";
 import { api } from "../api";
 import { useAuth } from "../auth";
-import { FilterPanel } from "../FilterPanel";
+import { FilterPanel } from "@/components/FilterPanel";
 import { qs, useFilters } from "../filters";
 import { Async, BamaLink, Card, ConfidenceDots, Fa, ListingActions, NumberInput, Pager, Provenance, Table } from "../ui";
 import { fa, pct, toman } from "../format";

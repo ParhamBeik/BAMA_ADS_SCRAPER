@@ -38,7 +38,7 @@ import { DealCard, type DealBoard } from "../components/DealCard";
 import { Button } from "../components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 
-const Chart = lazy(() => import("../Chart").then((m) => ({ default: m.Chart })));
+const Chart = lazy(() => import("@/components/Chart").then((m) => ({ default: m.Chart })));
 
 const DEFAULT_DAYS = 30;
 const SHORTLIST = 6;

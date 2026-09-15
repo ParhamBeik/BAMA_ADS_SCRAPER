@@ -14,7 +14,7 @@ import {
   PasswordField,
   Requirements,
   passwordChecks,
-} from "./AuthLayout";
+} from "@/components/AuthLayout";
 import { Button } from "../components/ui/button";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,

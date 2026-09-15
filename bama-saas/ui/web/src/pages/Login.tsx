@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 import { ArrowRight } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth";
-import { AuthLayout, EMAIL_RE, EmailField, FormError, PasswordField } from "./AuthLayout";
+import { AuthLayout, EMAIL_RE, EmailField, FormError, PasswordField } from "@/components/AuthLayout";
 
 export function Login() {
   const { login } = useAuth();
