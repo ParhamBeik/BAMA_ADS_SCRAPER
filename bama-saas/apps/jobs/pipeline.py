@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from django.utils import timezone
 
 from apps.core.models import JobRun
-from apps.jobs import jobs
+from apps.jobs import health, jobs
 from apps.jobs.fetcher import CrawlBlocked, _retryable
 
 logger = logging.getLogger("bama.worker")
@@ -54,7 +54,7 @@ JOBS: dict[str, Callable[..., dict]] = {
     "coverage": jobs.coverage,
     "backfill_images": jobs.backfill_images,
     "prune": jobs.prune,
-    "health": jobs.health,
+    "health": health.health,
     "probe_depth": jobs.probe_depth,
     "reap_orphans": jobs.reap_orphan_runs,
 }

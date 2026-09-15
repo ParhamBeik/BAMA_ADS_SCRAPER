@@ -28,7 +28,7 @@ from rest_framework.throttling import BaseThrottle
 
 from apps.core.coverage import COVERAGE_WINDOW_HOURS, coverage_state
 from apps.core.models import Ad, AdVersion, Brand, FetchRun, IngestReject, JobRun, Model
-from apps.jobs import jobs, pipeline
+from apps.jobs import health, pipeline
 
 logger = logging.getLogger("bama.jobs")
 
@@ -306,7 +306,7 @@ def crawl_health(request):
 
     503 when unhealthy, so an uptime monitor can watch this URL directly.
     """
-    result = jobs.health(alert=False)
+    result = health.health(alert=False)
     return Response(result, status=status.HTTP_200_OK if result["ok"]
                     else status.HTTP_503_SERVICE_UNAVAILABLE)
 
@@ -423,6 +423,6 @@ def system_health(request):
             "coverage_gap_count": len(coverage.gaps),
             "coverage_window_hours": COVERAGE_WINDOW_HOURS,
         },
-        "crawl": jobs.health(alert=False)["checks"],
+        "crawl": health.health(alert=False)["checks"],
         "forwarding": _forwarding(request),
     })

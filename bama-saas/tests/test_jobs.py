@@ -31,7 +31,7 @@ from apps.core.models import (
 )
 from apps.jobs import fetcher
 from apps.jobs import pipeline as P
-from apps.jobs.jobs import (
+from apps.jobs.health import (
     BACKUP_STALE_AFTER,
     COVERAGE_STARVED_AFTER,
     REJECT_SPIKE_MIN_COUNT,
@@ -46,8 +46,10 @@ from apps.jobs.jobs import (
     check_telegram_configured,
     check_upstream_outage,
     health,
-    prune,
     run_checks,
+)
+from apps.jobs.jobs import (
+    prune,
 )
 
 NOW = timezone.now()
@@ -1021,7 +1023,7 @@ def _health_alerts(monkeypatch):
     """Record what the health job would have sent, without a network call."""
     sent = []
     monkeypatch.setattr(
-        "apps.jobs.jobs.deliver_health_alert",
+        "apps.jobs.health.deliver_health_alert",
         lambda *, newly_red, recovered, dry_run=False: (
             sent.append((sorted(c["name"] for c in newly_red), list(recovered)))
             or {"changed": len(newly_red) + len(recovered), "sent": 1}
@@ -1051,7 +1053,7 @@ def test_health_alerts_on_the_transition_and_then_goes_quiet(_health_alerts):
 
 @pytest.mark.django_db
 def test_a_check_going_red_is_announced_once(_health_alerts):
-    from apps.jobs import jobs as J
+    from apps.jobs import health as J
 
     red = J.Check("upstream_outage", False, "bama.ir failed 3 fetch(es).")
     green = J.Check("upstream_outage", True, "bama.ir is answering.")
@@ -1072,7 +1074,7 @@ def test_a_check_going_red_is_announced_once(_health_alerts):
 @pytest.mark.django_db
 def test_recovery_is_announced_too(_health_alerts):
     """Half a monitor is one that only ever tells you things are getting worse."""
-    from apps.jobs import jobs as J
+    from apps.jobs import health as J
 
     red = J.Check("upstream_outage", False, "bama.ir failed 3 fetch(es).")
     green = J.Check("upstream_outage", True, "bama.ir is answering.")
@@ -1091,7 +1093,7 @@ def test_a_red_health_check_does_not_print_as_ok(_health_alerts):
     """The maintenance tick used to log `health=ok` on the same line as
     `step=health FAIL ... ok=False`. The summary an operator actually reads was
     the one asserting the red check was green."""
-    from apps.jobs import jobs as J
+    from apps.jobs import health as J
 
     red = J.Check("removal_detection", False, "Cannot prove any ad is gone.")
     with patch.object(J, "run_checks", return_value=[red]):
@@ -1106,7 +1108,7 @@ def test_a_red_health_check_does_not_print_as_ok(_health_alerts):
 def test_a_failing_alert_channel_never_takes_the_health_job_down(monkeypatch):
     """A monitor that crashes on a Telegram outage is a monitor that is loudest
     exactly when it is least able to speak."""
-    from apps.jobs import jobs as J
+    from apps.jobs import health as J
 
     P.run(steps=["health"])
     monkeypatch.setattr(J, "deliver_health_alert",
@@ -1123,7 +1125,7 @@ def test_a_pre_upgrade_health_row_is_not_a_green_baseline(_health_alerts):
     """Old rows say `ok=False` with no `red=` token. Treating that as
     'nothing was red' would page the standing backlog on the first warm
     tick after deploy."""
-    from apps.jobs import jobs as J
+    from apps.jobs import health as J
 
     JobRun.objects.create(name="health", status=JobRun.Status.OK, detail="ok=False")
     red = J.Check("upstream_outage", False, "bama.ir failed 3 fetch(es).")
@@ -1136,7 +1138,7 @@ def test_a_pre_upgrade_health_row_is_not_a_green_baseline(_health_alerts):
 def test_a_read_does_not_page_even_after_a_real_transition(_health_alerts):
     """Control polls and `bama health` write no JobRun. If they alerted,
     the same 'went red' message would repeat until the next warm tick."""
-    from apps.jobs import jobs as J
+    from apps.jobs import health as J
 
     green = J.Check("upstream_outage", True, "bama.ir is answering.")
     red = J.Check("upstream_outage", False, "bama.ir failed 3 fetch(es).")
