@@ -21,7 +21,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, CircleDashed, Info, XCircle } from "lucide-react";
 import { api } from "@/api";
-import { Async, Card, Fa, Provenance, fa, num, pct } from "@/ui";
+import { Async, Card, Fa, Provenance, fa, faDate, num, pct } from "@/ui";
 import type { Envelope } from "@/api";
 
 interface Promotion {
@@ -378,13 +378,13 @@ function ModelSection({ card }: { card: ModelCard }) {
                   <td>آموزش‌دیده تا</td>
                   <td>
                     {card.trained_through
-                      ? new Date(card.trained_through).toLocaleDateString("fa-IR")
+                      ? faDate(card.trained_through)
                       : "—"}
                   </td>
                 </tr>
                 <tr>
                   <td>تاریخ آموزش</td>
-                  <td>{new Date(card.trained_at).toLocaleDateString("fa-IR")}</td>
+                  <td>{faDate(card.trained_at)}</td>
                 </tr>
               </tbody>
             </table>

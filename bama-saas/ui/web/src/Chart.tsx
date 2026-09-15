@@ -75,7 +75,14 @@ const JALALI = new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
   day: "numeric",
 });
 
-export function faDate(value: string | number | Date): string {
+/**
+ * One axis tick: month and day only, no year.
+ *
+ * Not `ui.tsx`'s `faDate`, which is a full calendar date — a time axis has no
+ * room for the year on every tick, and the range it spans is stated in the
+ * caption beside the chart. Local to this module; nothing else draws an axis.
+ */
+function axisDate(value: string | number | Date): string {
   const date = value instanceof Date ? value : new Date(value);
   return Number.isNaN(date.getTime()) ? String(value) : JALALI.format(date);
 }
@@ -137,7 +144,7 @@ export function Chart({
           // ISO dates are Gregorian, and this app writes ۱۴۰۵/۶/۶ everywhere
           // else; one chart axis in the other calendar makes the two
           // uncomparable by eye.
-          formatter: xType === "time" ? (v: number) => faDate(v) : undefined,
+          formatter: xType === "time" ? (v: number) => axisDate(v) : undefined,
         },
         axisTick: { show: false },
       },

@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
-import { Async, BamaLink, FLAG_LABEL, Fa, ListingActions, PriceBar, PriceVerdict, Provenance, fa, num, pct, toman } from "../ui";
+import { Async, BamaLink, FLAG_LABEL, Fa, ListingActions, PriceBar, PriceVerdict, Provenance, fa, faDate, num, pct, toman } from "../ui";
 import type { Basis, Distribution, Verdict } from "../ui";
 
 type Ad = {
@@ -87,7 +87,7 @@ function ListingState({
       <p className="badge warn">
         این آگهی را از دست داده‌ایم — آخرین بررسی کامل ما از باما ناقص بوده، پس
         نمی‌توانیم بگوییم هنوز برای فروش هست یا نه.
-        {lastSeen && <> آخرین بار {new Date(lastSeen).toLocaleDateString("fa-IR")} دیده شد.</>}
+        {lastSeen && <> آخرین بار {faDate(lastSeen)} دیده شد.</>}
       </p>
     );
   }
@@ -101,7 +101,7 @@ function ListingState({
   return (
     <p className="badge warn">
       دیگر در باما فهرست نشده است
-      {lastSeen && <> — آخرین بار {new Date(lastSeen).toLocaleDateString("fa-IR")} دیده شد</>}
+      {lastSeen && <> — آخرین بار {faDate(lastSeen)} دیده شد</>}
       {reason && guess[reason] && (
         <>
           {"، "}
@@ -353,7 +353,7 @@ export function ListingDetail() {
                 <tbody>
                   {list.slice(0, 20).map((r, i) => (
                     <tr key={i}>
-                      <td>{new Date(r.observed_at).toLocaleDateString("fa-IR")}</td>
+                      <td>{faDate(r.observed_at)}</td>
                       <td>{toman(r.price)}</td>
                     </tr>
                   ))}

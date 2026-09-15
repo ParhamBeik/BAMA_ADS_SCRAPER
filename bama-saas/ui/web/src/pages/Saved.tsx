@@ -18,7 +18,7 @@ import { Trash2, TrendingDown } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import type { Paginated } from "../api";
-import { Async, Card, Fa, Table, pct, toman } from "../ui";
+import { Async, Card, Fa, Table, faDate, pct, toman } from "../ui";
 import { Sparkline } from "../components/Sparkline";
 
 interface SavedAd {
@@ -202,7 +202,7 @@ export function Saved() {
                 ]}>
                   {drops.map(({ row, change }) => {
                     const when = row.price_changed_at
-                      ? new Date(row.price_changed_at).toLocaleDateString("fa-IR")
+                      ? faDate(row.price_changed_at)
                       : "—";
                     return (
                       <tr key={row.code}>

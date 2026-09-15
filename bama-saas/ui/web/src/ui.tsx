@@ -166,6 +166,31 @@ export function num(value: number | null | undefined): string {
 }
 
 /**
+ * A stored timestamp as a Jalali calendar date — "۱۴۰۵/۶/۲۴".
+ *
+ * Date only, no time: these label when something was last seen, trained or
+ * repriced, and the clock time is noise at that granularity. Written out as
+ * `new Date(x).toLocaleDateString("fa-IR")` at six sites across three pages.
+ *
+ * Deliberately *not* merged with the other three Persian date renderings in
+ * this app, which produce different strings and were checked against each
+ * other rather than assumed equivalent:
+ *
+ *   - `Chart.axisDate`  month and day only, for a time axis tick
+ *   - `Provenance`      full date *and* time, for an "as of" stamp
+ *   - `Control.when`    date and time pinned to Asia/Tehran, because those are
+ *                       raw UTC rows on a Tehran operator screen
+ *
+ * An invalid date renders as the original value rather than "Invalid Date",
+ * matching what the call sites did by guarding on a truthy input.
+ */
+export function faDate(value: string | number | Date | null | undefined): string {
+  if (!value) return "—";
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString("fa-IR");
+}
+
+/**
  * A number set in Persian digits, for prose.
  *
  * `toman`, `pct` and `km` stay Latin on purpose — they sit in `tabular-nums`
