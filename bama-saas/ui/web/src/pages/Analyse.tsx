@@ -27,7 +27,7 @@ import { Async, Card, Fa, Provenance, SeriesCaveats, Stat, Table, fa, num, pct, 
 import { ScopePicker, useScopeLabel } from "../components/ScopePicker";
 import { WindowPicker } from "../components/WindowPicker";
 import { useModelLabel } from "../components/ModelCombobox";
-import { DealCard, type Deal } from "../components/DealCard";
+import { DealCard, type DealBoard } from "../components/DealCard";
 import { FollowButton } from "../components/FollowButton";
 import { Button } from "../components/ui/button";
 
@@ -114,12 +114,6 @@ interface Survival extends Partial<Envelope> {
   clean_days: number;
   naive_mean_days_finished_only: number | null;
   curve: { day: number; still_listed: number; at_risk: number }[];
-}
-
-interface DealBoard extends Envelope {
-  count: number;
-  window: { ceiling_pct: number };
-  results: Deal[];
 }
 
 /**

@@ -18,10 +18,10 @@
  * `Ad`: the backend matches `transmission` case-sensitively.
  */
 import { useState } from "react";
+import { useBrands } from "@/catalogue";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, Search, SlidersHorizontal, X } from "lucide-react";
-import { api } from "./api";
-import type { Paginated } from "./api";
+import { api, type Variant } from "./api";
 import { useFilters } from "./filters";
 import { Fa, NumberInput, num, toman } from "./ui";
 import { ModelCombobox, useModelLabel } from "./components/ModelCombobox";
@@ -88,9 +88,6 @@ export const FILTER_KEYS = [
   "year_min", "year_max", "mileage_min", "mileage_max", "transmission", "fuel",
   "body_type", "condition", "seller_type", "confidence",
 ];
-
-interface Brand { slug: string; name_fa: string }
-interface Variant { id: number; name_fa: string }
 
 /** Which controls a screen wants. The board has no body-type question; the
  *  explorer has no confidence one. */
@@ -262,14 +259,7 @@ export function FilterPanel({
   const filters = useFilters();
   const brand = filters.get("brand");
 
-  const brands = useQuery({
-    queryKey: ["brands"],
-    staleTime: 10 * 60_000,
-    queryFn: ({ signal }) => api.get<Paginated<Brand> | Brand[]>("/api/brands/", signal),
-  });
-  const brandList: Brand[] = Array.isArray(brands.data)
-    ? brands.data
-    : (brands.data?.results ?? []);
+  const { list: brandList } = useBrands();
 
   const priceMin = filters.get("price_min");
   const priceMax = filters.get("price_max");

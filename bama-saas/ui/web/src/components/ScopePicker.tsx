@@ -15,18 +15,15 @@
  * 1399 and 2025 in one column and is provenance, never a key.
  */
 import { useEffect } from "react";
+import { useBrands } from "@/catalogue";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/api";
-import type { Paginated } from "@/api";
+import { api, type Brand, type Variant } from "@/api";
 import { useFilters } from "@/filters";
 import { Fa, num } from "@/ui";
 import { ModelCombobox, useModelLabel } from "@/components/ModelCombobox";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-
-interface Brand { slug: string; name_fa: string }
-interface Variant { id: number; name_fa: string }
 
 const ANY = "__any__";
 
@@ -46,14 +43,7 @@ export function ScopePicker({ years }: { years?: { year_jalali: number; n: numbe
   const variant = filters.get("variant");
   const year = filters.get("year");
 
-  const brands = useQuery({
-    queryKey: ["brands"],
-    staleTime: 10 * 60_000,
-    queryFn: ({ signal }) => api.get<Paginated<Brand> | Brand[]>("/api/brands/", signal),
-  });
-  const brandList: Brand[] = Array.isArray(brands.data)
-    ? brands.data
-    : (brands.data?.results ?? []);
+  const { list: brandList } = useBrands();
 
   const variants = useQuery({
     queryKey: ["variants", model],
@@ -192,15 +182,7 @@ export function useScopeLabel(modelName?: string, brandNameFromModel?: string): 
   // model is chosen, so a brand-only scope printed "دامنه تحلیل — کل بازار"
   // over panels that were filtered to that one brand. Same cached query the
   // picker already runs, so this costs no request.
-  const brands = useQuery({
-    queryKey: ["brands"],
-    enabled: Boolean(brand) && !brandNameFromModel,
-    staleTime: 10 * 60_000,
-    queryFn: ({ signal }) => api.get<Paginated<Brand> | Brand[]>("/api/brands/", signal),
-  });
-  const list: Brand[] = Array.isArray(brands.data)
-    ? brands.data
-    : (brands.data?.results ?? []);
+  const { list } = useBrands({ enabled: Boolean(brand) && !brandNameFromModel });
 
   if (!brand && !filters.get("model")) return "کل بازار";
   const parts = [

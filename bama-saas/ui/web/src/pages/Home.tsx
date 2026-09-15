@@ -33,7 +33,7 @@ import { Async, Card, Fa, Provenance, SeriesCaveats, Stat, Table, fa, num, pct, 
 import { Sparkline } from "../components/Sparkline";
 import { WindowPicker } from "../components/WindowPicker";
 import { ModelCombobox } from "../components/ModelCombobox";
-import { DealCard, type Deal } from "../components/DealCard";
+import { DealCard, type DealBoard } from "../components/DealCard";
 import { Button } from "../components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 
@@ -179,11 +179,6 @@ interface ArrivalRow {
 interface Arrivals extends Partial<Envelope> {
   window_days: number;
   models: ArrivalRow[];
-}
-
-interface DealBoard extends Envelope {
-  window: { window_days: number; min_discount_pct: number; ceiling_pct: number };
-  results: Deal[];
 }
 
 function toneOf(change: number | null | undefined) {

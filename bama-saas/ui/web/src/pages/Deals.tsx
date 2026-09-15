@@ -30,7 +30,6 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { AlertTriangle, Bell } from "lucide-react";
 import { api } from "../api";
-import type { Envelope } from "../api";
 import { useAuth } from "../auth";
 import { FilterPanel } from "../FilterPanel";
 import { qs, useFilters } from "../filters";
@@ -38,7 +37,7 @@ import {
   Async, BamaLink, Card, ConfidenceDots, Fa, ListingActions, NumberInput, Pager,
   Provenance, Table, fa, pct, toman,
 } from "../ui";
-import { DealCard, conditionNote, type Deal } from "../components/DealCard";
+import { DealCard, conditionNote, type Deal, type DealBoard } from "../components/DealCard";
 import { ViewToggle, useListView } from "../components/ViewToggle";
 import { Button } from "../components/ui/button";
 import { Label } from "../components/ui/label";
@@ -83,23 +82,6 @@ interface NotifierSettings {
   price_min: number | null;
   price_max: number | null;
   telegram_chat_id: string;
-}
-
-interface DealWindow {
-  window_days: number;
-  min_discount_pct: number;
-  ceiling_pct: number;
-  candidates: number;
-  scored: number;
-}
-
-interface DealBoard extends Envelope {
-  count: number;
-  limit: number;
-  offset: number;
-  band: string;
-  window: DealWindow;
-  results: Deal[];
 }
 
 function NumberField({

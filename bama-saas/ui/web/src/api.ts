@@ -91,3 +91,16 @@ export interface Paginated<T> {
   previous: string | null;
   results: T[];
 }
+
+/** A catalogue brand, as `/api/brands/` returns it. */
+export interface Brand {
+  slug: string;
+  name_fa: string;
+}
+
+/** One trim of a model, as `/api/models/<id>/variants/` returns it. */
+export interface Variant {
+  id: number;
+  name_fa: string;
+}
+

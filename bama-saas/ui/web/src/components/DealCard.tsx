@@ -14,9 +14,44 @@
  */
 import { Link } from "react-router-dom";
 import { AlertTriangle, Sparkles, Timer } from "lucide-react";
+import type { Envelope } from "@/api";
 import {
   BamaLink, ConfidenceDots, Fa, Thumb, km, pct, toman,
 } from "@/ui";
+
+/**
+ * The thresholds the deal board is standing on, so a screen can state them
+ * rather than describe a filter whose value it does not know.
+ */
+export interface DealWindow {
+  window_days: number;
+  min_discount_pct: number;
+  ceiling_pct: number;
+  candidates: number;
+  scored: number;
+}
+
+/**
+ * `/api/analytics/deal-scores/`, in full.
+ *
+ * Declared three times before this — once in Deals, Home and Analyse — each
+ * naming only the fields that page read, so one endpoint had three shapes and
+ * adding a field meant finding all three. Checked against the view before
+ * merging: `deal_scores` returns count, limit, offset, band, the whole window
+ * and results on every request and every band, so this is the union of three
+ * narrowings rather than three different contracts.
+ *
+ * Here rather than in `api.ts` because it is `Deal[]`, and every page already
+ * imports `Deal` from this module alongside the card that renders it.
+ */
+export interface DealBoard extends Envelope {
+  count: number;
+  limit: number;
+  offset: number;
+  band: string;
+  window: DealWindow;
+  results: Deal[];
+}
 
 export interface Deal {
   code: string;
