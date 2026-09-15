@@ -28,7 +28,7 @@ from rest_framework.throttling import BaseThrottle
 
 from apps.core.models import Ad, AdVersion, Brand, FetchRun, IngestReject, JobRun, Model
 from apps.jobs import jobs, pipeline
-from apps.jobs.fetcher import COVERAGE_WINDOW_HOURS, find_gaps, known_feed_depth
+from apps.jobs.fetcher import COVERAGE_WINDOW_HOURS, coverage_state
 
 logger = logging.getLogger("bama.jobs")
 
@@ -385,9 +385,10 @@ def system_health(request):
         .values("mode", "status", "stop_reason", "reached_end", "pages_fetched",
                 "deepest_rank", "finished_at").first()
     )
-    depth = known_feed_depth()
-    gaps = find_gaps(since=timezone.now() - timedelta(hours=COVERAGE_WINDOW_HOURS),
-                     max_rank=depth) if depth else []
+    # Reports depth and gap *count* only, deliberately: this screen shows raw
+    # coverage, and the complete/incomplete verdict is the `sweep_freshness`
+    # check listed under "crawl" below rather than a second opinion here.
+    coverage = coverage_state()
     status_counts = {
         row["status"]: row["n"]
         for row in Ad.objects.values("status").annotate(n=Count("code"))
@@ -418,8 +419,8 @@ def system_health(request):
         },
         "fetch": {
             "latest": latest_fetch,
-            "coverage_depth": depth,
-            "coverage_gap_count": len(gaps),
+            "coverage_depth": coverage.depth,
+            "coverage_gap_count": len(coverage.gaps),
             "coverage_window_hours": COVERAGE_WINDOW_HOURS,
         },
         "crawl": jobs.health(alert=False)["checks"],

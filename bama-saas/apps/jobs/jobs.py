@@ -55,6 +55,7 @@ from apps.jobs.fetcher import (
     _fetch_lease,
     check_gate,
     coverage_is_complete,
+    coverage_state,
     create_session,
     detail_says_sold,
     fetch_ad_page_with_backoff,
@@ -64,7 +65,6 @@ from apps.jobs.fetcher import (
     is_waf_block,
     known_feed_depth,
     plan_backfill,
-    uncovered_ranks,
     warmup,
 )
 
@@ -1095,17 +1095,15 @@ def check_sweep_freshness(now=None) -> Check:
     as a failed sweep while removal detection is green.
     """
     now = now or timezone.now()
-    depth = known_feed_depth()
-    if not depth:
+    state = coverage_state(now)
+    if not state.depth:
         return Check(
             "sweep_freshness", False,
             "No pages fetched in the depth window, so feed depth is unknown. "
             "Nothing can be proven about coverage and removal detection stays disabled.",
         )
-    since = now - timedelta(hours=COVERAGE_WINDOW_HOURS)
-    gaps = find_gaps(since=since, max_rank=depth)
-    missing = uncovered_ranks(gaps)
-    complete = missing <= COVERAGE_GAP_TOLERANCE_RANKS
+    depth, gaps, missing, complete = (
+        state.depth, state.gaps, state.missing, state.complete)
     detail = (
         f"Feed fully covered in the last {COVERAGE_WINDOW_HOURS:.0f}h "
         f"(ceiling {depth}, ≤{COVERAGE_GAP_TOLERANCE_RANKS} rank slack)."

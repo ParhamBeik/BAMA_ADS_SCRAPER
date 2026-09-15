@@ -27,6 +27,7 @@ import signal
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -240,6 +241,47 @@ def coverage_is_complete(since: datetime, until: datetime | None = None) -> bool
         return False
     return uncovered_ranks(find_gaps(since=since, until=until, max_rank=depth)) \
         <= COVERAGE_GAP_TOLERANCE_RANKS
+
+
+@dataclass(frozen=True)
+class CoverageState:
+    """How well the recent window covered the feed, as one answer.
+
+    ``depth`` is whatever ``known_feed_depth`` returned, passed through
+    unchanged so a caller that merely reports it says exactly what it used to.
+    When it is falsy nothing can be proven, so ``complete`` is False and the
+    caller fails closed — the same rule ``coverage_is_complete`` follows.
+    """
+
+    depth: int | None
+    gaps: list[tuple[int, int]]
+    missing: int
+    complete: bool
+
+
+def coverage_state(now: datetime | None = None) -> CoverageState:
+    """Depth, gaps, uncovered ranks and the completeness verdict, computed once.
+
+    This chain — ``known_feed_depth`` then ``find_gaps`` over
+    ``COVERAGE_WINDOW_HOURS`` then ``uncovered_ranks`` then compare to
+    ``COVERAGE_GAP_TOLERANCE_RANKS`` — was written out in three places: the
+    provenance envelope on every research answer, the ``sweep_freshness`` health
+    check, and the operator health screen. The first two carried comments saying
+    they must agree with what ``mark_inactive`` acts on, and that agreement was
+    being maintained by hand across an app boundary.
+
+    The verdict is deliberately the same slack ``mark_inactive`` uses and not a
+    stricter one: reporting "no complete sweep" off a hole the worker itself
+    tolerates put a permanent warning strip on every screen.
+    """
+    now = now or djtz.now()
+    depth = known_feed_depth()
+    if not depth:
+        return CoverageState(depth=depth, gaps=[], missing=0, complete=False)
+    gaps = find_gaps(since=now - timedelta(hours=COVERAGE_WINDOW_HOURS), max_rank=depth)
+    missing = uncovered_ranks(gaps)
+    return CoverageState(depth=depth, gaps=gaps, missing=missing,
+                         complete=missing <= COVERAGE_GAP_TOLERANCE_RANKS)
 
 
 def plan_backfill(gaps: list[tuple[int, int]],

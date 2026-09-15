@@ -60,14 +60,7 @@ from apps.core.serializers import (
     NotifierSettingsSerializer,
     VariantSerializer,
 )
-from apps.jobs.fetcher import (
-    COVERAGE_GAP_TOLERANCE_RANKS,
-    COVERAGE_WINDOW_HOURS,
-    consecutive_blocks,
-    find_gaps,
-    known_feed_depth,
-    uncovered_ranks,
-)
+from apps.jobs.fetcher import consecutive_blocks, coverage_state
 from apps.jobs.verify import MAX_JALALI_YEAR, MIN_JALALI_YEAR
 from apps.ml.models import AdPrediction
 
@@ -102,17 +95,14 @@ def _coverage() -> dict:
     # removal detection is paused, so a listing shown as active may be sold.
     blocked = consecutive_blocks()
 
-    depth = known_feed_depth()
-    if not depth:
+    # The same judgement `mark_inactive` acts on, not a stricter one — see
+    # `coverage_state`, which is also what the sweep_freshness check reads.
+    state = coverage_state(now)
+    if not state.depth:
         return {"complete_sweep": False, "reason": "no pages fetched recently",
                 "source_blocked": bool(blocked)}
 
-    gaps = find_gaps(since=now - timedelta(hours=COVERAGE_WINDOW_HOURS), max_rank=depth)
-    missing = uncovered_ranks(gaps)
-    # The same judgement `mark_inactive` acts on, not a stricter one. Reporting
-    # "no complete sweep" off a six-rank hole the worker itself tolerates put a
-    # permanent warning strip on every screen.
-    swept = missing <= COVERAGE_GAP_TOLERANCE_RANKS
+    depth, missing, swept = state.depth, state.missing, state.complete
     last_fetch = (
         PageCoverage.objects.order_by("-fetched_at")
         .values_list("fetched_at", flat=True).first()
