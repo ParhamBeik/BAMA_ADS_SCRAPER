@@ -1,10 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
-import {
-  Async, BamaLink, FLAG_LABEL, Fa, ListingActions, PriceBar, PriceVerdict, Provenance,
-  fa, pct, toman,
-} from "../ui";
+import { Async, BamaLink, FLAG_LABEL, Fa, ListingActions, PriceBar, PriceVerdict, Provenance, fa, num, pct, toman } from "../ui";
 import type { Basis, Distribution, Verdict } from "../ui";
 
 type Ad = {
@@ -195,7 +192,7 @@ export function ListingDetail() {
                         number the reader has to guess the meaning of. */}
                     <li>
                       کارکرد: {data.mileage != null
-                        ? `${data.mileage.toLocaleString("en-US")} کیلومتر`
+                        ? `${num(data.mileage)} کیلومتر`
                         : "—"}
                       {data.mileage_implausible && (
                         <span className="badge warn" style={{ marginInlineStart: 6 }}>

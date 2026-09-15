@@ -23,7 +23,7 @@ import { ChevronDown, Search, SlidersHorizontal, X } from "lucide-react";
 import { api } from "./api";
 import type { Paginated } from "./api";
 import { useFilters } from "./filters";
-import { Fa, NumberInput, toman } from "./ui";
+import { Fa, NumberInput, num, toman } from "./ui";
 import { ModelCombobox, useModelLabel } from "./components/ModelCombobox";
 import { Button } from "./components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "./components/ui/popover";
@@ -470,8 +470,8 @@ function chipLabel(key: string, value: string, modelName?: string): string {
     case "price_max": return `تا ${toman(Number(value))} تومان`;
     case "year_min": return `از سال ${value}`;
     case "year_max": return `تا سال ${value}`;
-    case "mileage_min": return `کارکرد از ${Number(value).toLocaleString("en-US")}`;
-    case "mileage_max": return `کارکرد زیر ${Number(value).toLocaleString("en-US")}`;
+    case "mileage_min": return `کارکرد از ${num(Number(value))}`;
+    case "mileage_max": return `کارکرد زیر ${num(Number(value))}`;
     case "condition":
       return `بدنه: ${CONDITIONS.find((c) => c.value === value)?.label ?? value}`;
     case "transmission": return `گیربکس: ${value}`;

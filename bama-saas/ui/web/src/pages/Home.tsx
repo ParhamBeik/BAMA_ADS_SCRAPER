@@ -29,10 +29,7 @@ import {
 import { api } from "../api";
 import type { Envelope } from "../api";
 import { qs, useFilters } from "../filters";
-import {
-  Async, Card, Fa, Provenance, SeriesCaveats, Stat, Table, fa, pct,
-  type IndexSample,
-} from "../ui";
+import { Async, Card, Fa, Provenance, SeriesCaveats, Stat, Table, fa, num, pct, type IndexSample } from "../ui";
 import { Sparkline } from "../components/Sparkline";
 import { WindowPicker } from "../components/WindowPicker";
 import { ModelCombobox } from "../components/ModelCombobox";
@@ -281,7 +278,7 @@ function MarketReadPanel({ days }: { days: number }) {
                   value={FLOW_LABEL[data.flow] ?? "—"}
                   sub={
                     data.absorption != null
-                      ? `${data.departed.toLocaleString("en-US")} خروج در برابر ${data.arrived.toLocaleString("en-US")} ورود`
+                      ? `${num(data.departed)} خروج در برابر ${num(data.arrived)} ورود`
                       : "تعداد آگهی‌های ثبت و حذف‌شده کم است"
                   }
                 />
@@ -378,8 +375,8 @@ function MoversTable({
           <td>
             <Sparkline values={row.series} direction={direction} />
           </td>
-          <td className="num">{row.ad_count.toLocaleString("en-US")}</td>
-          <td className="num">{row.cohort_count.toLocaleString("en-US")}</td>
+          <td className="num">{num(row.ad_count)}</td>
+          <td className="num">{num(row.cohort_count)}</td>
         </tr>
       ))}
     </Table>
@@ -450,7 +447,7 @@ function MoversPanel({ days }: { days: number }) {
                 )}
 
                 <p className="empty-hint">
-                  از میان {data.scopes_ranked.toLocaleString("en-US")} دسته‌ای که
+                  از میان {num(data.scopes_ranked)} دسته‌ای که
                   سابقه کافی داشتند. «تغییر» حرکت شاخص هم‌ترکیب بین ابتدا و انتهای
                   بازه است و «روند فعلی» شیب همه روزها — یک دسته می‌تواند در کل
                   بازه بالا رفته باشد ولی همین حالا رو به پایین باشد. ستون‌های
@@ -498,8 +495,8 @@ function SupplyAndDemand({ days }: { days: number }) {
                         <div className="stat-sub"><Fa>{row.brand_name}</Fa></div>
                       )}
                     </td>
-                    <td className="num">{row.new_listings.toLocaleString("en-US")}</td>
-                    <td className="num">{row.listed_now.toLocaleString("en-US")}</td>
+                    <td className="num">{num(row.new_listings)}</td>
+                    <td className="num">{num(row.listed_now)}</td>
                   </tr>
                 ))}
               </Table>
@@ -540,7 +537,7 @@ function SupplyAndDemand({ days }: { days: number }) {
                       )}
                     </td>
                     <td className="num up">{pct(row.left_pct, 0)}</td>
-                    <td className="num">{row.n.toLocaleString("en-US")}</td>
+                    <td className="num">{num(row.n)}</td>
                   </tr>
                 ))}
               </Table>
@@ -675,12 +672,12 @@ export function Home() {
                     {(o) => (
                       <Stat
                         label="آگهی‌های فعال"
-                        value={o.active_listings.toLocaleString("en-US")}
+                        value={num(o.active_listings)}
                         // The sub-label used to read "N آگهی قیمت‌دار" over the
                         // same N: it counted priced ads inside a population
                         // that was already priced, so the tile captioned
                         // itself. This is a number that can differ.
-                        sub={`${o.instalment_listings.toLocaleString("en-US")} آگهی اقساطی کنار گذاشته شده`}
+                        sub={`${num(o.instalment_listings)} آگهی اقساطی کنار گذاشته شده`}
                       />
                     )}
                   </Async>
@@ -688,7 +685,7 @@ export function Home() {
                     {(o) => (
                       <Stat
                         label="برند و مدل"
-                        value={`${o.brands.toLocaleString("en-US")} / ${o.models.toLocaleString("en-US")}`}
+                        value={`${num(o.brands)} / ${num(o.models)}`}
                         sub="برند / مدل با آگهی فعال"
                       />
                     )}
@@ -701,8 +698,8 @@ export function Home() {
                 <SeriesCaveats window={data.window} sample={data.sample} />
                 {last && (
                   <p className="stat-sub">
-                    ساخته‌شده از {data.sample.cohort_count.toLocaleString("en-US")} دسته
-                    و {data.sample.ad_count.toLocaleString("en-US")} آگهی در آخرین روزِ
+                    ساخته‌شده از {num(data.sample.cohort_count)} دسته
+                    و {num(data.sample.ad_count)} آگهی در آخرین روزِ
                     دارای پوشش کامل. هر دسته فقط با خودش مقایسه می‌شود، تا تغییر در
                     ترکیب آگهی‌های موجود به‌اشتباه حرکت قیمت به نظر نرسد.
                   </p>
@@ -762,7 +759,7 @@ export function Home() {
               {data.top_brands.map((b) => (
                 <tr key={b.brand__name_fa}>
                   <td><Fa>{b.brand__name_fa}</Fa></td>
-                  <td className="num">{b.n.toLocaleString("en-US")}</td>
+                  <td className="num">{num(b.n)}</td>
                   <td style={{ width: "45%" }}>
                     <span
                       className="bar"

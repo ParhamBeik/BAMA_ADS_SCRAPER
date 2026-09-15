@@ -30,10 +30,7 @@ import { api } from "../api";
 import type { Envelope, Paginated } from "../api";
 import { FilterPanel } from "../FilterPanel";
 import { qs, useFilters } from "../filters";
-import {
-  Async, BamaLink, Card, FLAG_LABEL, Fa, ListingActions, Pager,
-  PriceBar, Provenance, Sheet, Table, Thumb, km, toman,
-} from "../ui";
+import { Async, BamaLink, Card, FLAG_LABEL, Fa, ListingActions, Pager, PriceBar, Provenance, Sheet, Table, Thumb, km, num, toman } from "../ui";
 import type { Distribution } from "../ui";
 import { ViewToggle, useListView } from "../components/ViewToggle";
 import { conditionNote } from "../components/DealCard";
@@ -125,9 +122,9 @@ function componentDetail(name: string, facts?: Record<string, unknown>): string 
         CONDITION_BAND[String(facts.band)] ?? String(facts.band ?? "")
       }${peers ? `، ${peers} آگهی مشابه هم همین وضعیت را دارند` : ""}`;
     case "mileage":
-      return `بر پایه ${peers} آگهی در بازه کارکرد ${Number(
+      return `بر پایه ${peers} آگهی در بازه کارکرد ${num(Number(
         facts.bucket ?? 0,
-      ).toLocaleString("en-US")} کیلومتر به بالا`;
+      ))} کیلومتر به بالا`;
     default:
       return "";
   }
@@ -317,7 +314,7 @@ export function Explorer() {
                       <td className="num">
                         {ad.mileage == null ? "—" : (
                           <span className={ad.mileage_implausible ? "warn" : undefined}>
-                            {ad.mileage.toLocaleString("en-US")} km
+                            {num(ad.mileage)} km
                             {ad.mileage_implausible && "؟"}
                           </span>
                         )}

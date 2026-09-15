@@ -23,9 +23,7 @@ import { AlertTriangle } from "lucide-react";
 import { api } from "../api";
 import type { Envelope } from "../api";
 import { qs, useFilters } from "../filters";
-import {
-  Async, Card, Fa, Provenance, SeriesCaveats, Stat, Table, fa, pct, toman,
-} from "../ui";
+import { Async, Card, Fa, Provenance, SeriesCaveats, Stat, Table, fa, num, pct, toman } from "../ui";
 import { ScopePicker, useScopeLabel } from "../components/ScopePicker";
 import { WindowPicker } from "../components/WindowPicker";
 import { useModelLabel } from "../components/ModelCombobox";
@@ -195,8 +193,8 @@ function TrendPanel({ url }: { url: string }) {
               {last && (
                 <p className="empty-hint">
                   در آخرین روزِ دارای پوشش کامل از{" "}
-                  {data.sample.cohort_count.toLocaleString("en-US")} دسته و{" "}
-                  {data.sample.ad_count.toLocaleString("en-US")} آگهی ساخته شده است.
+                  {num(data.sample.cohort_count)} دسته و{" "}
+                  {num(data.sample.ad_count)} آگهی ساخته شده است.
                   هر دسته تنها با خودش مقایسه می‌شود، پس ورود و خروج آگهی‌ها شاخص را
                   جابه‌جا نمی‌کند — روزهای کم‌پوشش هم اصلاً وارد محاسبه نمی‌شوند،
                   چون آنجا «ترکیب آگهی‌ها» همان بخشی است که خزنده به آن نرسیده.
@@ -289,7 +287,7 @@ function BasisNote({ basis }: { basis: Distribution["basis"] }) {
   if (basis.mode === "filtered") {
     return (
       <p className="stat-sub">
-        بر پایه {basis.filtered_n?.toLocaleString("en-US")} آگهی واقعی با همین
+        بر پایه {num(basis.filtered_n)} آگهی واقعی با همین
         وضعیت — بدون تخمین.
       </p>
     );
@@ -319,7 +317,7 @@ function DistributionPanel({ query }: { query: ReturnType<typeof useQuery<Distri
                   face, which has no Persian glyphs, so a word placed there gets
                   a fallback family and reads as broken text beside the digits. */}
               <div className="grid cols-4" style={{ marginBottom: 10 }}>
-                <Stat label="میانه" value={toman(d.median)} sub={`${d.count.toLocaleString("en-US")} آگهی`} />
+                <Stat label="میانه" value={toman(d.median)} sub={`${num(d.count)} آگهی`} />
                 <Stat label="نیمه میانی" value={`${toman(d.p25)} – ${toman(d.p75)}`} sub="از چارک اول تا سوم" />
                 <Stat label="ارزان‌ترین ده درصد" value={toman(d.p10)} sub="و پایین‌تر" />
                 <Stat label="گران‌ترین ده درصد" value={toman(d.p90)} sub="و بالاتر" />
@@ -328,7 +326,7 @@ function DistributionPanel({ query }: { query: ReturnType<typeof useQuery<Distri
                 <Chart
                   x={h.buckets.map((b) => toman(b.from))}
                   series={[{ name: "تعداد آگهی", data: h.buckets.map((b) => b.n), type: "bar" }]}
-                  yFormatter={(v) => v.toLocaleString("en-US")}
+                  yFormatter={(v) => num(v)}
                   height={200}
                 />
               </Suspense>
@@ -337,9 +335,9 @@ function DistributionPanel({ query }: { query: ReturnType<typeof useQuery<Distri
                   toman would otherwise put every real car in the first bar. */}
               <p className="empty-hint">
                 نمودار بازه {toman(h.from)} تا {toman(h.to)} تومان را نشان می‌دهد.
-                {h.below > 0 && ` ${h.below.toLocaleString("en-US")} آگهی ارزان‌تر`}
+                {h.below > 0 && ` ${num(h.below)} آگهی ارزان‌تر`}
                 {h.below > 0 && h.above > 0 && " و"}
-                {h.above > 0 && ` ${h.above.toLocaleString("en-US")} آگهی گران‌تر`}
+                {h.above > 0 && ` ${num(h.above)} آگهی گران‌تر`}
                 {(h.below > 0 || h.above > 0) && " بیرون از این بازه‌اند و در نمودار دیده نمی‌شوند."}
                 {" "}آگهی‌های اقساطی کنار گذاشته شده‌اند، چون عددشان پیش‌پرداخت است نه
                 قیمت خودرو.
@@ -350,7 +348,7 @@ function DistributionPanel({ query }: { query: ReturnType<typeof useQuery<Distri
                   {data.cities.map((c) => (
                     <tr key={c.name}>
                       <td><Fa>{c.name}</Fa></td>
-                      <td className="num">{c.n.toLocaleString("en-US")}</td>
+                      <td className="num">{num(c.n)}</td>
                       <td style={{ width: "45%" }}>
                         <span className="bar" style={{ width: `${(c.n / data.cities[0].n) * 100}%` }} />
                       </td>
@@ -392,14 +390,14 @@ function RetentionPanel({ model, variant }: { model: string; variant?: string })
               {data.points.map((p) => (
                 <tr key={p.year_jalali}>
                   <td>{p.year_jalali}</td>
-                  <td className="num">{p.n.toLocaleString("en-US")}</td>
+                  <td className="num">{num(p.n)}</td>
                   <td className="num">{toman(p.median_price)}</td>
                   <td className="num">{p.pct_of_newest}%</td>
                 </tr>
               ))}
             </Table>
             <p className="stat-sub">
-              در {data.span_years.toLocaleString("en-US")} سال،{" "}
+              در {num(data.span_years)} سال،{" "}
               {data.retained_over_span_pct}٪ از ارزش حفظ شده است
               {data.avg_annual_decline_pct != null &&
                 ` (حدود ${data.avg_annual_decline_pct}٪ در سال)`}
@@ -461,7 +459,7 @@ function SurvivalPanel({
                       : "—"}
                 </div>
                 <div className="stat-sub">
-                  از {data.n.toLocaleString("en-US")} آگهی
+                  از {num(data.n)} آگهی
                   {data.median_days == null && (
                     <> — بیش از نیمی از آنها هنوز فعال‌اند، پس میانه واقعی از این
                       عدد بزرگ‌تر است</>
@@ -479,8 +477,8 @@ function SurvivalPanel({
                     the two is the size of the error every simpler version of
                     this number carries. */}
                 <div className="stat-sub">
-                  تنها {data.delisted.toLocaleString("en-US")} آگهی پایان‌یافته را
-                  می‌شمارد و {data.censored.toLocaleString("en-US")} آگهی هنوز فعال را
+                  تنها {num(data.delisted)} آگهی پایان‌یافته را
+                  می‌شمارد و {num(data.censored)} آگهی هنوز فعال را
                   نادیده می‌گیرد
                 </div>
               </div>

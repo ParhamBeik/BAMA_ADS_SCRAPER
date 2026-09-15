@@ -30,9 +30,7 @@ import { Wallet } from "lucide-react";
 import { api } from "../api";
 import type { Envelope } from "../api";
 import { qs, useFilters } from "../filters";
-import {
-  Async, Card, Fa, NumberInput, Provenance, Stat, Table, fa, km, pct, toman,
-} from "../ui";
+import { Async, Card, Fa, NumberInput, Provenance, Stat, Table, fa, km, num, pct, toman } from "../ui";
 import { Button } from "../components/ui/button";
 
 interface Option {
@@ -187,12 +185,12 @@ export function Budget() {
                   />
                   <Stat
                     label="دسته‌های در دسترس"
-                    value={data.cohorts_matched.toLocaleString("en-US")}
+                    value={num(data.cohorts_matched)}
                     sub="مدل، تیپ و سال ساخت"
                   />
                   <Stat
                     label="آگهی در این محدوده"
-                    value={data.listings_matched.toLocaleString("en-US")}
+                    value={num(data.listings_matched)}
                     sub="فعال و قیمت‌دار"
                   />
                 </div>
@@ -232,12 +230,12 @@ export function Budget() {
                           />
                         </div>
                         <div className="stat-sub">
-                          {o.n.toLocaleString("en-US")} از{" "}
-                          {o.cohort_size.toLocaleString("en-US")} آگهی
+                          {num(o.n)} از{" "}
+                          {num(o.cohort_size)} آگهی
                         </div>
                       </td>
                       <td className="num">
-                        {o.within_budget.toLocaleString("en-US")}
+                        {num(o.within_budget)}
                       </td>
                       <td className="num">{toman(o.median_price)}</td>
                       <td className="num">{toman(o.cheapest)}</td>

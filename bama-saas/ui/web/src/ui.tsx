@@ -137,11 +137,32 @@ export function toman(value: number | null | undefined): string {
   if (value == null) return "—";
   if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(2)}B`;
   if (value >= 1_000_000) return `${Math.round(value / 1_000_000)}M`;
-  return value.toLocaleString("en-US");
+  return num(value);
 }
 
 export function pct(value: number | null | undefined, digits = 1): string {
   return value == null ? "—" : `${value.toFixed(digits)}%`;
+}
+
+/**
+ * A grouped count in Latin digits — "12,480".
+ *
+ * The plain one, and the one almost every number on this site wants: counts of
+ * ads, cohorts, brands, models. It was written inline as a raw
+ * `toLocaleString("en-US")` at 45 places across 11 files, with `pages/Control`
+ * keeping a private copy of it as well.
+ *
+ * Latin rather than Persian digits, and that is the whole reason this is not
+ * `fa`: these sit in `tabular-nums` columns next to Latin magnitude suffixes
+ * from `toman` ("3.90B"), and switching numeral systems mid-column is exactly
+ * what `fa`'s own note warns against. `fa` stays the one for prose.
+ *
+ * Null yields "" rather than an em dash, because the call sites that can pass
+ * null were written with `?.` and rendered nothing at all. React renders "" and
+ * undefined identically, so those keep the output they had.
+ */
+export function num(value: number | null | undefined): string {
+  return value == null ? "" : value.toLocaleString("en-US");
 }
 
 /**
@@ -186,8 +207,8 @@ export function since(hours: number | null | undefined): string {
 export function km(value: number | null | undefined): string {
   if (value == null) return "—";
   if (value === 0) return "0 km";
-  if (value < 1000) return `${value.toLocaleString("en-US")} km`;
-  return `${Math.round(value / 1000).toLocaleString("en-US")}k km`;
+  if (value < 1000) return `${num(value)} km`;
+  return `${num(Math.round(value / 1000))}k km`;
 }
 
 export function Card({
@@ -274,7 +295,7 @@ export function Provenance({
       <Database size={13} />
       {coverage.complete_sweep ? (
         <span>
-          {coverage.ads_covered?.toLocaleString("en-US")} آگهی، آخرین بررسی{" "}
+          {num(coverage.ads_covered)} آگهی، آخرین بررسی{" "}
           {since(coverage.age_hours)}
         </span>
       ) : (
@@ -607,7 +628,7 @@ export function Pager({
           onBlur={commit}
           onKeyDown={(e) => e.key === "Enter" && commit()}
         />
-        از {lastPage.toLocaleString("en-US")} · {total.toLocaleString("en-US")} {label}
+        از {num(lastPage)} · {num(total)} {label}
       </span>
       <button disabled={page >= lastPage} onClick={() => onChange(page + 1)}>
         بعدی

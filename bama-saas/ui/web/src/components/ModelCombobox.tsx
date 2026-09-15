@@ -17,7 +17,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronsUpDown } from "lucide-react";
 import { api } from "@/api";
 import { qs } from "@/filters";
-import { Fa } from "@/ui";
+import { Fa, num } from "@/ui";
 import { Button } from "@/components/ui/button";
 import {
   Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
@@ -159,7 +159,7 @@ export function ModelCombobox({
                     <Fa>{model.brand_name} {model.name_fa}</Fa>
                   </span>
                   <span className="text-muted-foreground ms-auto font-mono text-[11.5px]">
-                    {model.ad_count.toLocaleString("en-US")}
+                    {num(model.ad_count)}
                   </span>
                 </CommandItem>
               ))}

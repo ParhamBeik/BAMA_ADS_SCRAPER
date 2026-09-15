@@ -21,7 +21,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, CircleDashed, Info, XCircle } from "lucide-react";
 import { api } from "@/api";
-import { Async, Card, Fa, Provenance, fa, pct } from "@/ui";
+import { Async, Card, Fa, Provenance, fa, num, pct } from "@/ui";
 import type { Envelope } from "@/api";
 
 interface Promotion {
@@ -120,7 +120,7 @@ const PURPOSE: Record<string, string> = {
  * Latin, and `ui.tsx` records what happens when the two are mixed inside one
  * card — «۷ روز» on a chip above "30 روز" in the label beneath it.
  */
-function num(value: number | null | undefined, digits = 3): string {
+function dec(value: number | null | undefined, digits = 3): string {
   return value == null ? "—" : value.toFixed(digits).replace(/\.?0+$/, "");
 }
 
@@ -133,20 +133,20 @@ const HEADLINE: Record<string, { key: string; label: string; render: (v: number)
     { key: "median_interval_width_pct", label: "پهنای معمول بازه", render: (v) => pct(v, 1) },
   ],
   sell_fast: [
-    { key: "brier", label: "خطای برایر مدل", render: (v) => num(v, 4) },
-    { key: "brier_baseline", label: "خطای برایر حدس پایه", render: (v) => num(v, 4) },
-    { key: "roc_auc", label: "AUC", render: (v) => num(v, 3) },
+    { key: "brier", label: "خطای برایر مدل", render: (v) => dec(v, 4) },
+    { key: "brier_baseline", label: "خطای برایر حدس پایه", render: (v) => dec(v, 4) },
+    { key: "roc_auc", label: "AUC", render: (v) => dec(v, 3) },
     { key: "base_rate", label: "نرخ پایه", render: (v) => pct(v * 100, 1) },
   ],
   anomaly: [],
   model_text: [
-    { key: "macro_f1", label: "ماکرو F1", render: (v) => num(v, 3) },
+    { key: "macro_f1", label: "ماکرو F1", render: (v) => dec(v, 3) },
     { key: "accuracy", label: "دقت", render: (v) => pct(v * 100, 1) },
-    { key: "classes", label: "تعداد مدل‌ها", render: (v) => num(v, 0) },
+    { key: "classes", label: "تعداد مدل‌ها", render: (v) => dec(v, 0) },
   ],
   value_tier: [
-    { key: "mean_silhouette", label: "میانگین سیلوئت", render: (v) => num(v, 3) },
-    { key: "variants_fitted", label: "تیپ‌های دسته‌بندی‌شده", render: (v) => num(v, 0) },
+    { key: "mean_silhouette", label: "میانگین سیلوئت", render: (v) => dec(v, 3) },
+    { key: "variants_fitted", label: "تیپ‌های دسته‌بندی‌شده", render: (v) => dec(v, 0) },
   ],
 };
 
@@ -216,15 +216,15 @@ function Gate({ promotion }: { promotion?: Promotion }) {
         <tbody>
           <tr>
             <td>این نسخه</td>
-            <td className="num">{num(promotion.challenger, 4)}</td>
+            <td className="num">{dec(promotion.challenger, 4)}</td>
           </tr>
           <tr>
             <td>نسخه‌ی فعال قبلی</td>
-            <td className="num">{num(promotion.incumbent, 4)}</td>
+            <td className="num">{dec(promotion.incumbent, 4)}</td>
           </tr>
           <tr>
             <td>روش آماری (بدون یادگیری)</td>
-            <td className="num">{num(promotion.baseline, 4)}</td>
+            <td className="num">{dec(promotion.baseline, 4)}</td>
           </tr>
         </tbody>
       </table>
@@ -263,7 +263,7 @@ function Reliability({ curve }: { curve: ReliabilityBin[] }) {
             <tr key={b.bin_lower}>
               <td className="num">{pct(b.mean_predicted * 100, 1)}</td>
               <td className="num">{pct(b.observed * 100, 1)}</td>
-              <td className="num muted">{num(b.n, 0)}</td>
+              <td className="num muted">{dec(b.n, 0)}</td>
             </tr>
           ))}
         </tbody>
@@ -349,7 +349,7 @@ function ModelSection({ card }: { card: ModelCard }) {
               </tr>
               <tr>
                 <td>نسبت به تصادف (باید بالای ۱ باشد)</td>
-                <td className="num">{num(precision.lift, 2)}</td>
+                <td className="num">{dec(precision.lift, 2)}</td>
               </tr>
             </tbody>
           </table>
@@ -372,7 +372,7 @@ function ModelSection({ card }: { card: ModelCard }) {
                 </tr>
                 <tr>
                   <td>تعداد ردیف آموزش</td>
-                  <td className="num">{card.training_rows.toLocaleString("en-US")}</td>
+                  <td className="num">{num(card.training_rows)}</td>
                 </tr>
                 <tr>
                   <td>آموزش‌دیده تا</td>

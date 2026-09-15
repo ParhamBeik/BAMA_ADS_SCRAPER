@@ -19,7 +19,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api";
 import type { Paginated } from "@/api";
 import { useFilters } from "@/filters";
-import { Fa } from "@/ui";
+import { Fa, num } from "@/ui";
 import { ModelCombobox, useModelLabel } from "@/components/ModelCombobox";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -165,7 +165,7 @@ export function ScopePicker({ years }: { years?: { year_jalali: number; n: numbe
               >
                 {y.year_jalali}
                 <span className="text-muted-foreground ms-2 font-mono text-[11px]">
-                  {y.n.toLocaleString("en-US")} آگهی
+                  {num(y.n)} آگهی
                 </span>
               </SelectItem>
             ))}

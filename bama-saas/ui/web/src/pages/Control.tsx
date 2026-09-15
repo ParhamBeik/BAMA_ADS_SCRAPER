@@ -13,7 +13,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { api } from "../api";
-import { Async, Card, Stat, humanError } from "../ui";
+import { Async, Card, Stat, humanError, num } from "../ui";
 import { Button } from "../components/ui/button";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
@@ -96,7 +96,7 @@ const TRIGGERS = [
 ];
 
 function n(value: number | undefined) {
-  return (value ?? 0).toLocaleString("en-US");
+  return num(value ?? 0);
 }
 
 /**
