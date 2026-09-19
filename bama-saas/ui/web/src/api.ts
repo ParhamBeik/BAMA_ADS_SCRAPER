@@ -103,4 +103,3 @@ export interface Variant {
   id: number;
   name_fa: string;
 }
-
