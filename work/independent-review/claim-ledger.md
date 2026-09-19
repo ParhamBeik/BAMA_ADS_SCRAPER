@@ -19,8 +19,8 @@ Status vocabulary: `VERIFIED`, `REFUTED`, `PARTIAL`, `BLOCKED`, `NOT TESTED`.
 | Frontend checks passed | 30 tests, typecheck, contrast, build | Re-ran all four on current local HEAD | VERIFIED |
 | Backend was fully verified | Original run had 307 pass and 488 DB connection errors | Fresh PostgreSQL 16 suite | VERIFIED AFTER CORRECTION: 795 passed | None locally |
 | Latest remote revision passed CI and deployment | GitHub workflow results | Inspected terminal jobs and steps | VERIFIED for `9979008` | Does not prove current host health |
-| Local, remote, and VPS revisions were aligned | Historical SSH and refs | Current local/remote inspection; SSH unavailable | REFUTED current | Local is three commits ahead; deployed SHA unknown |
-| Containers, migrations, worker, and ML were healthy | Historical VPS inspection | Fresh SSH and HTTPS attempts | BLOCKED | Recover VPS access and inspect directly |
+| Local, remote, and VPS revisions were aligned | Historical SSH and refs | Current local/remote inspection; previous VPS is decommissioned and replacement identity is unavailable | REFUTED current | Local is ahead; replacement deployed SHA is unknown |
+| Containers, migrations, worker, and ML were healthy | Historical VPS inspection | Fresh probes targeted the now-retired host | BLOCKED | Obtain the replacement endpoint and inspect it directly |
 | No current worker errors, coverage failures, or ML warnings remained | Historical three-hour log sample | Fresh logs unavailable | NOT TESTED | Inspect bounded recent logs after recovery |
 | Performance was acceptable | Warm route and interaction samples | Historical figures reviewed; no current browser | NOT TESTED current | Remeasure representative routes and interactions |
 | The end-to-end goal was complete | Final message despite explicit blockers | Requirement-by-requirement completion audit | REFUTED | Complete current live, browser, CRUD, persistence, and cleanup checks |

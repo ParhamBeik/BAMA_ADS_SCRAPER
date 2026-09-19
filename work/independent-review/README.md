@@ -4,7 +4,8 @@ Audit date: 2026-09-19 (Asia/Tehran)
 
 Current verdict: **NOT VERIFIED**. The recovered remediation is locally sound, but the exact
 deployed revision, current containers, logs, rendered UI, and production persistence cannot be
-verified while the shared VPS is unreachable.
+verified until the replacement VPS has a stable public hostname and its Iran-specific TLS path is
+diagnosed.
 
 ## Recovered work
 
@@ -30,8 +31,8 @@ verified while the shared VPS is unreachable.
 | Other branches/worktrees | None; one worktree | Verified |
 | Latest remote CI | Run `34971861903`, terminal success for `9979008` | Verified historically |
 | Latest deploy workflow | Run `34971862165`, terminal success for `9979008` | Verified historically |
-| Deployed revision now | SSH unavailable before key exchange | BLOCKED |
-| Current production health | TLS handshakes time out across all known domains on the VPS | FAIL/BLOCKED |
+| Deployed revision now | Replacement VPS identity is not present in the repository or audit context | BLOCKED |
+| Current production health | Legacy host is retired; replacement DNS and Iran TLS path are unresolved | BLOCKED |
 
 The three local-only commits add the root README, rename architecture documentation, remove the
 superseded production checklist, and add the final refactor report. They are not pushed, not known
@@ -59,19 +60,29 @@ defect was found in those changes.
 
 ## Findings, ordered by severity
 
-### Critical: shared VPS is currently unreachable
+### Critical: production cutover identity and network path are unresolved
 
-- SSH reaches TCP port 22 but closes or times out before server key exchange.
-- HTTPS reaches TCP port 443 but never completes TLS for BAMA, Portfolio, Twitter, or News.
+- The owner confirmed that the previously probed VPS is decommissioned and a replacement VPS is
+  in place. The failed SSH and HTTPS probes therefore do not describe the replacement host.
+- The legacy BAMA hostname embeds the retired public IP, and deployment documentation, the
+  production environment example, the frontend site-URL fallback, and Lighthouse instructions
+  still reference it.
+- On the current Iranian network, the legacy hostname resolves to private address `10.10.34.36`.
+  Queries addressed to Cloudflare, Google, and Quad9 DNS receive the same rewritten answer, while
+  DNS-over-HTTPS attempts time out or reset. This is consistent with DNS interception or
+  sinkholing, not an authoritative `sslip.io` answer.
+- The owner also reports SNI-dependent TLS blocking by the Iranian ISP. DNS resolution and TLS SNI
+  are independent failure layers and need separate probes against the replacement endpoint.
+- Before that clarification, SSH reached TCP port 22 but closed or timed out before server key
+  exchange, and HTTPS reached TCP port 443 without completing TLS on the retired host.
 - An external HTTP probe from Austria, Hong Kong, Iran, Sweden, and the US returned `No route to
-  host` or timeout from every node.
-- An external TCP/22 probe failed from four of five nodes; one Ukrainian node completed TCP only.
-- Because multiple applications and protocols fail together, this is evidence of a VPS/network
-  incident, not evidence that the reviewed BAMA changes caused the outage.
+  host` or timeout from every node against the retired host.
+- An external TCP/22 probe against the retired host failed from four of five nodes; one Ukrainian
+  node completed TCP only.
 
 Impact: current deployed SHA, containers, migrations, logs, persisted data, browser behavior, and
-performance cannot be verified. No restart or redeploy was attempted without a working diagnostic
-channel or evidence that BAMA caused the host-wide failure.
+performance cannot be verified. The replacement public IP and intended hostname are required
+before the DNS cutover, SNI behavior, SSH access, or application health can be tested accurately.
 
 ### High: the prior goal's completion claim was false
 
@@ -139,20 +150,25 @@ gates, Lighthouse, and lint for remote revision `9979008`.
 
 ## Questions and decisions
 
-- No product, compatibility, API, security-policy, retention, cost, or architecture choice is
-  currently required for the local remediation.
+- The replacement public IP and intended public hostname are required to continue the live audit.
+- DNS correctness and SNI-dependent TLS reachability must be tested separately from both an Iranian
+  network and an external network; a successful external certificate handshake would not prove
+  reachability through the affected ISP.
 - When production and browser access return, the task requires action-time approval immediately
   before creating and later deleting an isolated production test account. Approval has not been
   requested early because the action is not yet reachable.
-- Operational recovery of the VPS may require the hosting control plane. A blind reboot or deploy
-  was not chosen because the host-wide failure has no application-level diagnosis.
+- No replacement value was guessed for the retired IP or hostname because that could redirect
+  deployment, CSRF, CORS, canonical metadata, and health checks to the wrong endpoint.
 
 ## Remaining limitations and next evidence
 
-1. Restore an authoritative VPS access path or recover the host through its provider control plane.
-2. Verify the deployed SHA, service state, migrations, disk/memory, edge proxy, and recent logs.
-3. Restore Browser or Computer Use connectivity.
-4. Re-run changed, critical, and previously blocked browser workflows.
-5. Request action-time approval, then create an isolated account, exercise user-owned CRUD and
+1. Record the replacement public IP and intended public hostname.
+2. Compare authoritative DNS with Iranian recursive DNS, then probe TCP/443 and TLS with and without
+   the intended SNI from Iranian and external networks.
+3. Update the DNS record, deployment secrets, allowed origins/hosts, canonical site URL, health
+   check, and deployment documentation only after the endpoint is confirmed.
+4. Verify the deployed SHA, service state, migrations, disk/memory, edge proxy, and recent logs.
+5. Restore Browser or Computer Use connectivity and re-run changed and critical browser workflows.
+6. Request action-time approval, then create an isolated account, exercise user-owned CRUD and
    persistence, clean up the account, and verify deletion.
-6. Recheck production latency and update the claim ledger before declaring completion.
+7. Recheck production latency and update the claim ledger before declaring completion.
