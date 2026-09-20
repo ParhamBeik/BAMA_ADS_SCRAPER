@@ -240,8 +240,9 @@ def send_telegram(text: str, chat_id: str) -> bool:
         return True
     except requests.RequestException as exc:
         # A failed send must not mark the ad notified, and must not take the
-        # pipeline down: the deal is still on the board either way.
-        log.warning("notify: telegram send failed: %s", exc)
+        # pipeline down. RequestException text can contain the credential-bearing
+        # request URL, so log only the safe exception class.
+        log.warning("notify: telegram send failed: %s", type(exc).__name__)
         return False
 
 

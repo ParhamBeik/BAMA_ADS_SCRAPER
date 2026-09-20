@@ -468,7 +468,7 @@ def check_backup_freshness(now=None) -> Check:
 
 
 def check_telegram_configured(now=None) -> Check:
-    """Can any live sender actually reach Telegram?
+    """Do enabled senders have the required token and chat ID?
 
     The chat id and ``enabled`` flag live in the database and can look fully
     configured while the token is an empty string. Compose spells it
@@ -502,7 +502,7 @@ def check_telegram_configured(now=None) -> Check:
                      "No live sender needs a token; an empty one is expected.", data)
     if has_token and (not cfg.enabled or has_chat):
         return Check("telegram_configured", True,
-                     "A sender is live and the token is present.", data)
+                     "Sender credentials are configured; delivery is not verified.", data)
     missing = []
     if not has_token:
         missing.append("token")

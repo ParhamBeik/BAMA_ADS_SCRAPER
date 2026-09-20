@@ -30,6 +30,7 @@ from apps.core.models import (
     PageCoverage,
 )
 from apps.jobs import fetcher
+from apps.jobs import jobs as J
 from apps.jobs import pipeline as P
 from apps.jobs.health import (
     BACKUP_STALE_AFTER,
@@ -159,6 +160,25 @@ def test_a_failed_fetch_does_not_cascade(stub_jobs, monkeypatch):
 
     assert JobRun.objects.get(name="fetch").status == JobRun.Status.FAILED
     assert JobRun.objects.get(name="snapshot").status == JobRun.Status.OK
+
+
+@pytest.mark.django_db
+def test_a_failed_sold_probe_persists_its_cause(monkeypatch):
+    monkeypatch.setattr(J, "check_gate", lambda: None)
+    monkeypatch.setattr(J, "create_session", lambda *_: object())
+
+    def fail(*_args):
+        raise requests.ConnectionError("upstream unavailable")
+
+    monkeypatch.setattr(J, "warmup", fail)
+
+    with pytest.raises(requests.ConnectionError):
+        J.probe_sold()
+
+    run = FetchRun.objects.get(source=FetchRun.Source.SOLD_PROBE)
+    assert run.status == FetchRun.Status.FAILED
+    assert run.stop_reason == FetchRun.StopReason.ERROR
+    assert run.error == "upstream unavailable"
 
 
 def test_a_403_fetch_is_not_retried():
@@ -682,6 +702,7 @@ def test_telegram_configured_passes_when_both_halves_are_present(settings):
     _notifier(settings, enabled=True, chat="78455553", token="123:placeholder")
     check = check_telegram_configured()
     assert check.ok is True
+    assert "delivery is not verified" in check.detail
     assert check.data["has_token"] is True
     assert check.data["has_chat"] is True
     assert "123:placeholder" not in check.detail

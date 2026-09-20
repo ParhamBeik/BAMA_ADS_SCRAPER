@@ -468,6 +468,10 @@ def rank_of(ad: dict[str, Any], page: int, offset: int) -> int:
         rank = int((ad.get("detail") or {})["rank"])
     except (KeyError, TypeError, ValueError):
         return fallback
+    # Bama currently numbers every page 1..30. This is expected source data,
+    # not a warning per ad: use page arithmetic for global coverage positions.
+    if page > FIRST_PAGE and rank <= PAGE_SIZE and rank >= 1:
+        return fallback
     if rank < 1 or abs(rank - fallback) > MAX_RANK_DRIFT:
         logger.warning("event=bama_rank_invalid page=%d offset=%d rank=%s fallback=%d",
                        page, offset, rank, fallback)

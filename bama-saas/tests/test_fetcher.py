@@ -238,6 +238,15 @@ def test_invalid_rank_falls_back_to_page_arithmetic():
     assert fetcher.rank_of(ad, page=0, offset=1) == 1
 
 
+def test_page_local_rank_falls_back_after_the_first_page(caplog):
+    ad = make_ad("localrank", rank=1)
+    assert fetcher.rank_of(ad, page=4, offset=1) == 4 * PAGE_SIZE + 1
+    assert "bama_rank_invalid" not in caplog.text
+
+    ad["detail"]["rank"] = 4 * PAGE_SIZE + 1
+    assert fetcher.rank_of(ad, page=4, offset=1) == 4 * PAGE_SIZE + 1
+
+
 @pytest.mark.django_db
 def test_duplicate_page_ranks_use_page_arithmetic_for_coverage():
     page = make_feed(1, "R")[0]

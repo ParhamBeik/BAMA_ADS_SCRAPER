@@ -700,11 +700,12 @@ def probe_sold() -> dict:
         run.save(update_fields=["status", "fetched_count", "finished_at"])
     except CrawlBlocked:
         raise
-    except Exception:
+    except Exception as exc:
         run.status = FetchRun.Status.FAILED
         run.stop_reason = FetchRun.StopReason.ERROR
+        run.error = str(exc)[:4000]
         run.finished_at = timezone.now()
-        run.save(update_fields=["status", "stop_reason", "finished_at"])
+        run.save(update_fields=["status", "stop_reason", "error", "finished_at"])
         raise
 
     return {
