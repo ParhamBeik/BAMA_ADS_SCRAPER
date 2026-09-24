@@ -363,11 +363,13 @@ def test_a_live_model_with_an_unreadable_metric_is_refused():
 
 
 @pytest.mark.django_db
-def test_incumbent_context_marks_a_live_row_whose_metric_is_gone():
+def test_incumbent_context_marks_a_live_row_whose_metric_is_gone(tmp_path):
+    artifact = tmp_path / "live.joblib"
+    artifact.touch()
     MLModel.objects.create(
         name=MLModel.Name.PRICE, version=1, algorithm="lgbm",
         status=MLModel.Status.ACTIVE, trained_at=djtz.now(), training_rows=1000,
-        feature_spec={"columns": ["x"]}, metrics={}, artifact_path="x")
+        feature_spec={"columns": ["x"]}, metrics={}, artifact_path=str(artifact))
     ctx = registry.incumbent_context(
         MLModel.Name.PRICE, "pinball_mean", feature_spec={"columns": ["x"]})
     assert ctx["incumbent_unreadable"] is True
@@ -510,7 +512,7 @@ def test_a_loaded_artifact_is_the_payload_itself_not_a_wrapper(tmp_path, setting
 @pytest.mark.django_db
 def test_re_scoring_refuses_rather_than_failing_the_nightly_train(tmp_path, settings):
     """An artifact the volume no longer has is a normal state — the volume can
-    be recreated empty. The gate must fall back, not take training down."""
+    be recreated empty. The gate can recover without bypassing the baseline."""
     settings.ML_ARTIFACT_DIR = tmp_path
     MLModel.objects.create(
         name=MLModel.Name.PRICE, version=1, status=MLModel.Status.ACTIVE,
@@ -519,9 +521,10 @@ def test_re_scoring_refuses_rather_than_failing_the_nightly_train(tmp_path, sett
         trained_at=djtz.now(),
     )
     assert registry.incumbent_artifact(MLModel.Name.PRICE) == (None, None)
-    # And the stored-score path still answers, so the gate keeps an incumbent.
-    assert registry.incumbent_context(
-        MLModel.Name.PRICE, "pinball_mean")["incumbent"] == pytest.approx(0.026)
+    ctx = registry.incumbent_context(MLModel.Name.PRICE, "pinball_mean")
+    assert ctx["incumbent"] is None
+    assert registry.gate(challenger=0.03, baseline=0.04, **ctx)["promote"] is True
+    assert registry.gate(challenger=0.05, baseline=0.04, **ctx)["promote"] is False
 
 
 @pytest.mark.django_db
@@ -542,13 +545,15 @@ def test_a_nested_metric_can_still_decide_a_promotion():
 
 
 @pytest.mark.django_db
-def test_a_worse_anomaly_model_no_longer_ships_past_a_better_incumbent():
+def test_a_worse_anomaly_model_no_longer_ships_past_a_better_incumbent(tmp_path):
     """The consequence of the lookup above, at the gate rather than the reader.
     Lift 1.1 clears the random baseline of 1.0 but is less than half the 2.514
     that is already serving."""
+    artifact = tmp_path / "live.joblib"
+    artifact.touch()
     MLModel.objects.create(
         name=MLModel.Name.ANOMALY, version=1, status=MLModel.Status.ACTIVE,
-        algorithm="IsolationForest", artifact_path="",
+        algorithm="IsolationForest", artifact_path=str(artifact),
         metrics={"precision_at_k": {"k": 200, "lift": 2.514}},
         feature_spec={}, training_rows=100, trained_at=djtz.now(),
     )

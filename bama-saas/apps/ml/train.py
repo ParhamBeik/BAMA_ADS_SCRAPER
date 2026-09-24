@@ -454,8 +454,8 @@ def train_price() -> dict:
     # written once. Preferred over the incumbent's stored score: it makes the
     # live model sit this exact holdout, so the gate below compares two numbers
     # that mean the same thing. Falls back to the stored-score comparison when
-    # the incumbent cannot be re-run — a missing artifact, a changed task —
-    # because that is still better than treating it as nothing to beat.
+    # the incumbent cannot be re-run. A missing artifact is no serving model;
+    # incumbent_context then keeps the baseline gate but drops the lost rival.
     # Same denominator the challenger used. Below MIN_HOLDOUT_ROWS the
     # challenger is scored on the full holdout; scoring the incumbent on the
     # thin q_rows subset (or on nothing, which pinball turns into 0.0) would

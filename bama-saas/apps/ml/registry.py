@@ -211,6 +211,13 @@ def incumbent_context(name: str, key: str, *, feature_spec: dict | None = None) 
             and task_signature(current.feature_spec) != task_signature(feature_spec)):
         return {"incumbent": None, "incumbent_baseline": None,
                 "incumbent_age_days": None}
+    if not current.artifact_path or not Path(current.artifact_path).is_file():
+        # A registry row cannot serve predictions without its artifact. Still
+        # require the challenger to beat the statistical baseline below.
+        logger.warning("ml.incumbent_artifact_missing name=%s version=%s",
+                       name, current.version)
+        return {"incumbent": None, "incumbent_baseline": None,
+                "incumbent_age_days": None}
     score = incumbent_metric(name, key, feature_spec=feature_spec)
     if score is None:
         # Live row, readable task, unreadable number. Treating that as
