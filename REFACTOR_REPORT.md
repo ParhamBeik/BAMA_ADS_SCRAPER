@@ -9,9 +9,9 @@ Scope: Codebase simplification, structural layering repair, and architectural co
 
 ### Before vs After Counts
 
-| Metric | Before (at `0c4f88a`) | After (at `HEAD`) | Delta |
+| Metric | Before (at `0c4f88a`) | After (at `c0e37bf`) | Delta |
 |---|---|---|---|
-| Tracked files | 215 | 204 | -11 files |
+| Tracked files | 215 | 213 | -2 files |
 | Dead functions | 2 (`cohort_peers`, `_peer_median_baseline`) | 0 | -2 functions |
 | Stray import-time env reads | 5 (`fetcher.py`, `jobs.py`) | 0 | -5 reads (now in `settings.py`) |
 | App dependency cycles | 3 (broken by function-local imports) | 0 | Eliminated |
@@ -153,7 +153,7 @@ The three elements that appear unreferenced to naive static analysis are verifie
 
 ---
 
-## 6. Recommended Follow-ups (Ranked)
+## 6. Recommended Follow-ups (as of `c0e37bf`)
 
 1. **Verify reverse proxy hop count on next deployment**:
    Inspect `GET /api/admin/health/` under an authenticated session and check the `forwarding.resolved_ident` field. It must match your public IP address. If it returns a local container IP (`172.x` or `10.x`), `NUM_PROXIES` is set too low; if it reflects an injected test header, it is set too high.

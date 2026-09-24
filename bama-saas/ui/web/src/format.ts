@@ -21,6 +21,11 @@ export function latinDigits(input: string): string {
     .replace(/[,٬\s]/g, "");
 }
 
+export function parseBudget(input: string): number | null {
+  const amount = Number(latinDigits(input).replace(/[^\d]/g, ""));
+  return Number.isFinite(amount) && amount > 0 ? amount : null;
+}
+
 export function toman(value: number | null | undefined): string {
   if (value == null) return "—";
   if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(2)}B`;

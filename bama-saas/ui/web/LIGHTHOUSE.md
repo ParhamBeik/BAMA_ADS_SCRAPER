@@ -2,7 +2,9 @@
 
 ## Measured against production
 
-    npx lighthouse@12 https://bama-89-106-206-4.sslip.io/ --chrome-flags="--headless=new"
+The scores below are historical; rerun on the current trusted origin after release.
+
+    npx lighthouse@12 "$PUBLIC_ORIGIN/" --chrome-flags="--headless=new"
 
 | Page | Performance | Accessibility | Best practices | SEO |
 | --- | --- | --- | --- | --- |

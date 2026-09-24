@@ -11,7 +11,13 @@
 import { describe, expect, it } from "vitest";
 import { scopeKey } from "./components/FollowButton";
 import { qs } from "./filters";
-import { pct, toman } from "./format";
+import { parseBudget, pct, toman } from "./format";
+
+it("parses Persian and Arabic-Indic budget input without dropping its digits", () => {
+  expect(parseBudget("۱٬۲۰۰٬۰۰۰٬۰۰۰")).toBe(1_200_000_000);
+  expect(parseBudget("١٢٠٠٠٠٠٠٠٠")).toBe(1_200_000_000);
+  expect(parseBudget("abc")).toBeNull();
+});
 
 /**
  * Exactly the strings `ScopedToACar.build_scope_key` produces.

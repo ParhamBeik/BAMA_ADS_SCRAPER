@@ -31,7 +31,7 @@ import { api } from "../api";
 import type { Envelope } from "../api";
 import { qs, useFilters } from "../filters";
 import { Async, Card, Fa, NumberInput, Provenance, Stat, Table } from "../ui";
-import { fa, km, num, pct, toman } from "../format";
+import { fa, km, num, parseBudget, pct, toman } from "../format";
 import { Button } from "../components/ui/button";
 
 interface Option {
@@ -88,8 +88,7 @@ export function Budget() {
   });
 
   const commit = (value: string) => {
-    const n = Number(value.replace(/[^\d]/g, ""));
-    filters.set({ budget: Number.isFinite(n) && n > 0 ? n : null });
+    filters.set({ budget: parseBudget(value) });
   };
 
   return (

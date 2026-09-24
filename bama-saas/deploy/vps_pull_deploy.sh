@@ -47,4 +47,4 @@ compose up -d
 # did not change. Recreate it every deploy so the public site matches the
 # backend that just came up.
 compose up -d --force-recreate --no-deps frontend
-docker image prune -f
+# Retain prior images for rollback; reclaim space only after verifying the release.

@@ -13,15 +13,12 @@ import { robotsTxt, sitemapXml } from "./scripts/seo.ts";
 // robots.txt both come from here, because a crawler discards a sitemap
 // advertised from a different host than the one it is on.
 //
-// `||`, not `??`: Docker's `ENV VITE_SITE_URL=$VITE_SITE_URL` sets the variable
-// to the empty string when the build arg is not passed, and an empty string is
-// not nullish — `??` would let a build with no arg emit `<loc></loc>`.
+// Local builds use the dev server; the production Dockerfile requires an
+// explicit public origin so a retired hostname cannot enter a deployed bundle.
 //
 // Trailing slashes are stripped because every use site appends its own path.
-// `https://host/` produced `href="https://host//"`, a canonical naming a URL
-// the site does not serve, which is the exact failure a canonical is meant to
-// prevent.
-const SITE_URL = (process.env.VITE_SITE_URL || "https://bama-89-106-206-4.sslip.io")
+// `https://host/` would produce `https://host//methodology` in the sitemap.
+const SITE_URL = (process.env.VITE_SITE_URL || "http://localhost:5173")
   .replace(/\/+$/, "");
 
 /**

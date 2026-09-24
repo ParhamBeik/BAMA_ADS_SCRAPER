@@ -9,6 +9,7 @@ Full documentation, stack details, and architecture live in [`bama-saas/README.m
 Run the entire application stack (PostgreSQL, Redis, Django API, crawler worker loop, and Vite frontend):
 
 ```bash
+cd bama-saas
 docker compose up --build
 ```
 
