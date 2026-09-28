@@ -41,11 +41,9 @@ class Command(BaseCommand):
         if options["pilot"]:
             peugeot_title = Q()
             for token in ("206", "207", "۲۰۶", "۲۰۷"):
-                peugeot_title |= Q(payload__detail__title__icontains=token)
-            rows = rows.filter(
-                Q(payload__detail__brand_fa__in=PEUGEOT_FAMILIES) |
-                (Q(payload__detail__brand_fa="پژو") & peugeot_title)
-            )
+                peugeot_title |= (Q(ad__title__icontains=token) |
+                                  Q(ad__model__name_fa__icontains=token))
+            rows = rows.filter(peugeot_title)
         elif options["known_mixed"]:
             rows = rows.filter(payload__detail__brand_fa__in=mixed_families)
         rows = (rows.select_related("ad") if options["apply"] else
@@ -61,8 +59,15 @@ class Command(BaseCommand):
             extracted = extract_ad(payload, version.first_observed_at)
             if extracted is None:
                 continue
-            counts["examined"] += 1
             source = (extracted.get("brand") or "").strip()
+            if options["pilot"] and not (
+                source in PEUGEOT_FAMILIES or
+                (source == "پژو" and canonical_peugeot_model(extracted.get("model")))
+            ):
+                continue
+            if options["known_mixed"] and source not in mixed_families:
+                continue
+            counts["examined"] += 1
             families[source] += 1
             primary, gallery = image_urls(payload)
             counts["photo_rows"] += len(gallery)

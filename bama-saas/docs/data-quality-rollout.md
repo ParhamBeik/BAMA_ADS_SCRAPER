@@ -22,6 +22,8 @@ backfill have been reviewed. PostgreSQL remains the source of truth.
 3. Run `python manage.py backfill_evidence --pilot --limit 100000` and review
    the 206/207 counts. Create reviewed `SourceModelAlias` records in staff admin
    for ambiguous families. Only then run the same command with `--apply`.
+   The pilot selects ads whose current identity is 206/207. Review historical
+   versions whose ad code now names a different car as identity conflicts.
    Repeat with `--known-mixed` for known merged families, then without either
    selector for the remaining catalog.
 4. Run the `photo_archive` job and the Mac pull job. Confirm the Mac job's
