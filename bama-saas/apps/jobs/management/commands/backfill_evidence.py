@@ -87,6 +87,29 @@ class Command(BaseCommand):
                 is_current = (ad.current_version_id == version.pk or
                               (ad.current_version_id is None and ad.raw_payload and
                                payload_hashes(ad.raw_payload)[1] == version.semantic_hash))
+                if not is_current and ad.current_version_id is None:
+                    # Historical semantic hashes use earlier normalization rules.
+                    # A matching raw hash, or the latest version carrying this
+                    # ad's source identity, is the strongest remaining evidence.
+                    source_version = ((version.payload or {}).get("detail") or {}).get(
+                        "brand_fa", ""
+                    ).strip()
+                    current_source = ((ad.raw_payload or {}).get("detail") or {}).get(
+                        "brand_fa", ""
+                    ).strip()
+                    if source_version and source_version == current_source:
+                        raw_match = bool(ad.raw_payload and
+                                         payload_hashes(ad.raw_payload)[0] == version.raw_hash)
+                        later_same_source = False
+                        if not raw_match:
+                            for later in AdVersion.objects.filter(
+                                ad_id=ad.pk, first_observed_at__gt=version.first_observed_at,
+                            ).only("payload").iterator(chunk_size=100):
+                                if (((later.payload or {}).get("detail") or {}).get(
+                                        "brand_fa", "").strip() == current_source):
+                                    later_same_source = True
+                                    break
+                        is_current = raw_match or not later_same_source
                 if is_current:
                     counts["current_versions_linked"] += 1
                 if not clear:

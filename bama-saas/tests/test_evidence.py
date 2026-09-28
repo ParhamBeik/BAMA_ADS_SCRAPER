@@ -2,13 +2,15 @@
 
 from datetime import timedelta
 from hashlib import sha256
+from io import StringIO
 
 import pytest
+from django.core.management import call_command
 from django.test import override_settings
 from django.utils import timezone
 
 from apps.core.admission import sync_admission
-from apps.core.models import Ad, AdVersion, AdVersionPhoto, ArchivedImage, Brand, Model
+from apps.core.models import Ad, AdVersion, AdVersionPhoto, ArchivedImage, Brand, FetchRun, Model
 from apps.jobs import photo_archive
 from apps.jobs.local_backup import confirm_manifest
 
@@ -179,3 +181,24 @@ def test_holdout_deduplicates_repost_and_uses_prior_baseline():
     ]
     _, deduped = time_split(within)
     assert len(deduped) == 1
+
+
+@pytest.mark.django_db
+def test_backfill_links_legacy_version_without_current_semantic_hash(make_payload):
+    from apps.common.parsing import extract_ad
+    from apps.jobs.ingest import ingest_ad
+
+    now = timezone.now()
+    run = FetchRun.objects.create(source=FetchRun.Source.HISTORY_REPLAY)
+    payload = make_payload("oldhash1", 2_000_000_000, brand="سمند", model="سمند LX")
+    result = ingest_ad(extract_ad(payload, now), run=run, observed_at=now, publish_at=now)
+    ad = result.ad
+    version = ad.current_version
+    Ad.objects.filter(pk=ad.pk).update(current_version=None, model=None)
+    AdVersion.objects.filter(pk=version.pk).update(semantic_hash="f" * 64,
+                                                   semantic_hash_version=1)
+    output = StringIO()
+    call_command("backfill_evidence", known_mixed=True, apply=True, limit=10, stdout=output)
+    ad.refresh_from_db()
+    assert ad.current_version_id == version.pk
+    assert ad.model.name_fa == "سمند"
