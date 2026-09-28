@@ -181,9 +181,9 @@ def archive_pending(*, limit: int = 50) -> dict:
            .filter(Q(next_retry_at__isnull=True) | Q(next_retry_at__lte=now))
            .select_related("version__ad"))
     current = list(due.filter(version_id=F("version__ad__current_version_id"))
-                   .order_by("position", "pk")[:limit])
+                   .order_by("pk")[:limit])
     historical = list(due.exclude(version_id=F("version__ad__current_version_id"))
-                      .order_by("position", "pk")[:limit - len(current)])
+                      .order_by("pk")[:limit - len(current)])
     counts: dict[str, int] = {}
     for photo in [*current, *historical]:
         outcome = archive_one(photo, now=now)
