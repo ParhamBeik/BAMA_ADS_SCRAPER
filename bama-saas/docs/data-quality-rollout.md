@@ -26,7 +26,8 @@ backfill have been reviewed. PostgreSQL remains the source of truth.
    versions whose ad code now names a different car as identity conflicts.
    Repeat with `--known-mixed` for known merged families, then without either
    selector for the remaining catalog.
-4. Run the `photo_archive` job and the Mac pull job. Confirm the Mac job's
+4. Run the `photo_archive` job in the `worker` container, which has the writable
+   `/archive` mount, then run the Mac pull job. Confirm the Mac job's
    restore verification, check `/api/admin/data-quality/`, and compare a second
    `audit_data --cleanup-preview` JSON with the first. Rebuild snapshots and
    deal scores after identity changes; retrain pricing on the repost-deduplicated
