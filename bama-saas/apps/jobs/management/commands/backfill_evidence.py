@@ -34,7 +34,8 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         if options["pilot"] and options["known_mixed"]:
             raise CommandError("choose --pilot or --known-mixed")
-        mixed_families = {"سمند", "رانا", "شاهین", "سهند", "ساینا"}
+        mixed_families = {"سمند", "رانا", "شاهین", "سهند", "ساینا",
+                          "تیبا", "پراید", "اطلس", "کوییک"}
         aliases = set(SourceModelAlias.objects.filter(reviewed=True)
                       .values_list("source_family", flat=True))
         rows = AdVersion.objects.order_by("ad_id", "first_observed_at")
