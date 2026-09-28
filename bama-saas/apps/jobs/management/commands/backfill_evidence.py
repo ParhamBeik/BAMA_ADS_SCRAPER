@@ -46,7 +46,7 @@ class Command(BaseCommand):
                                   Q(ad__model__name_fa__icontains=token))
             rows = rows.filter(peugeot_title)
         elif options["known_mixed"]:
-            rows = rows.filter(payload__detail__brand_fa__in=mixed_families)
+            rows = rows.filter(ad__raw_payload__detail__brand_fa__in=mixed_families)
         rows = (rows.select_related("ad") if options["apply"] else
                 rows.only("id", "ad_id", "payload", "first_observed_at"))
         counts = {"examined": 0, "photo_rows": 0, "classified": 0,
