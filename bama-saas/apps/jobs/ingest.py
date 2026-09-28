@@ -247,7 +247,10 @@ def resolve_dimensions(*, brand_name, model_name, trim_name, city_location, deal
         model, model_minted = _model(brand, canonical_model)
         rule = ("peugeot_model" if peugeot_model else
                 "source_family" if canonical_model == source_family else "title_fallback")
-    if rule == "title_fallback":
+        if (rule == "title_fallback" and brand and model and
+                brand.is_confirmed and model.is_confirmed):
+            rule = "confirmed_model"
+    if rule in ("title_fallback", "confirmed_model"):
         variant_name = trim_name
     else:
         parts = [part.strip() for part in (model_name, trim_name) if part and part.strip()]

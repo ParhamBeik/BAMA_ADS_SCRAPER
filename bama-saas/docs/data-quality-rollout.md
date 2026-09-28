@@ -26,7 +26,10 @@ backfill have been reviewed. PostgreSQL remains the source of truth.
    historical versions whose ad code now names a different car as identity
    conflicts.
    Repeat with `--known-mixed` for known merged families, then without either
-   selector for the remaining catalog.
+   selector for the remaining catalog. Run `python manage.py
+   review_confirmed_models` before `--apply` to measure exact source brand/model
+   pairs that already have confirmed records. The remaining versions stay in
+   the staff review queue; this command never guesses a new model identity.
 4. Run the `photo_archive` job in the `worker` container, which has the writable
    `/archive` mount, then run the Mac pull job. Confirm the Mac job's
    restore verification, check `/api/admin/data-quality/`, and compare a second
