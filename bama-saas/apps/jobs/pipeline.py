@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from django.utils import timezone
 
 from apps.core.models import JobRun
-from apps.jobs import health, jobs
+from apps.jobs import health, jobs, photo_archive
 from apps.jobs.fetcher import CrawlBlocked, _retryable
 
 logger = logging.getLogger("bama.worker")
@@ -39,6 +39,7 @@ logger = logging.getLogger("bama.worker")
 # name -> the callable that does the work. This is the whole job vocabulary.
 JOBS: dict[str, Callable[..., dict]] = {
     "fetch": jobs.fetch,
+    "photo_archive": photo_archive.archive_pending,
     "mark_inactive": jobs.mark_inactive,
     "link_reposts": jobs.link_reposts,
     "episodes": jobs.sync_episodes,
@@ -73,12 +74,13 @@ JOBS: dict[str, Callable[..., dict]] = {
 # so a promotion took a full day to reach the board. One global order cannot put
 # `ml_score` on both sides of a training step, and this is the side that
 # matters: `ml_train` is in no other cadence, so nothing else is affected.
-STEP_ORDER = ("fetch", "mark_inactive", "link_reposts", "episodes", "snapshot",
+STEP_ORDER = ("fetch", "photo_archive", "mark_inactive", "link_reposts", "episodes", "snapshot",
               "market_index", "deal_scores", "ml_train", "ml_score", "probe_sold",
-              "notify", "alerts", "alerts_send", "coverage", "backfill_images", "prune", "health")
+              "notify", "alerts", "alerts_send", "coverage", "backfill_images",
+              "prune", "health")
 
 CADENCES = {
-    "hot": ("fetch", "mark_inactive", "deal_scores", "ml_score", "probe_sold",
+    "hot": ("fetch", "photo_archive", "mark_inactive", "deal_scores", "ml_score", "probe_sold",
             "notify", "alerts", "alerts_send"),
     # `health` moved here from `maintenance`. Every check is local arithmetic
     # over rows this tick already touched — no network, ~4s — and on the 6-hour
@@ -101,7 +103,7 @@ CADENCES = {
     # of local arithmetic and a full refit is minutes of CPU, so folding it in
     # would turn the one command an operator runs to catch up into something
     # they stop running. `bama train` is one keystroke away.
-    "full": ("fetch", "mark_inactive", "link_reposts", "episodes", "snapshot",
+    "full": ("fetch", "photo_archive", "mark_inactive", "link_reposts", "episodes", "snapshot",
              "market_index", "deal_scores", "ml_score", "probe_sold", "notify",
              "alerts", "alerts_send"),
 }

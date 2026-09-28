@@ -11,6 +11,8 @@ x-django-env: &django-env
   # indistinguishable from no cache at all when you are testing one.
   REDIS_URL: redis://redis:6379/0
   ML_ARTIFACT_DIR: /artifacts
+  PHOTO_ARCHIVE_ROOT: /archive
+  ARCHIVE_ADMISSION_REQUIRED: ${ARCHIVE_ADMISSION_REQUIRED:-false}
 
 x-logging: &logging
   driver: json-file
@@ -60,7 +62,7 @@ services:
     env_file: [{ path: .env, required: false }]
     environment: *django-env
     # Read-only on the artifacts, as in production: only `ml` writes a model.
-    volumes: [.:/app, ml_artifacts:/artifacts:ro]
+    volumes: [.:/app, ml_artifacts:/artifacts:ro, photo_archive:/archive:ro]
     ports: ["8001:8000"]
     depends_on:
       postgres: { condition: service_healthy }
@@ -100,7 +102,7 @@ services:
     logging: *logging
     env_file: [{ path: .env, required: false }]
     environment: *django-env
-    volumes: [.:/app, ml_artifacts:/artifacts:ro]
+    volumes: [.:/app, ml_artifacts:/artifacts:ro, photo_archive:/archive]
     depends_on:
       # Waits for django, not postgres: django owns `migrate`, and the worker
       # must not fetch against a half-migrated schema.
@@ -131,3 +133,4 @@ volumes:
   postgres_data:
   frontend_node_modules:
   ml_artifacts:
+  photo_archive:

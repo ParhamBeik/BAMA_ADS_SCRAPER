@@ -33,6 +33,7 @@ from apps.core.models import (
     AdObservation,
     DailyInventorySnapshot,
     DealScoreCache,
+    DetailPageCheck,
     FetchRun,
     JobRun,
     ListingEpisode,
@@ -54,7 +55,7 @@ from apps.jobs.fetcher import (
     _fetch_lease,
     check_gate,
     create_session,
-    detail_says_sold,
+    detail_page_outcome,
     fetch_ad_page_with_backoff,
     fetch_live,
     fetch_page_with_backoff,
@@ -614,7 +615,7 @@ SOLD_PROBE_KEY = "sold_probe:{code}"
 
 
 def probe_sold() -> dict:
-    """Visit bargain-board detail pages and mark ones Bama already sold.
+    """Inspect detail pages independently of feed sightings and sale guesses.
 
     Feed-absence proof takes two 24h windows, so a just-sold car can sit on
     the suggestions grid until then. This checks the served board against the
@@ -643,7 +644,7 @@ def probe_sold() -> dict:
         status=FetchRun.Status.RUNNING,
         started_at=now,
     )
-    sold: list[Ad] = []
+    unavailable: list[Ad] = []
     probed = 0
     skipped_recent = 0
     try:
@@ -666,6 +667,11 @@ def probe_sold() -> dict:
                         session, url, timeout,
                     )
                 except Exception as exc:
+                    DetailPageCheck.objects.create(
+                        ad=row.ad, fetch_run=run, checked_at=timezone.now(),
+                        outcome=(DetailPageCheck.Outcome.BLOCKED if is_waf_block(exc)
+                                 else DetailPageCheck.Outcome.ERROR),
+                    )
                     if is_waf_block(exc):
                         run.status = FetchRun.Status.FAILED
                         run.stop_reason = FetchRun.StopReason.BLOCKED
@@ -675,24 +681,27 @@ def probe_sold() -> dict:
                             "status", "stop_reason", "error", "finished_at",
                         ])
                         raise CrawlBlocked(str(exc)) from exc
-                    raise
+                    continue
+                outcome = detail_page_outcome(status, body)
+                DetailPageCheck.objects.create(
+                    ad=row.ad, fetch_run=run, checked_at=timezone.now(),
+                    outcome=outcome, http_status=status,
+                )
+                if outcome in (DetailPageCheck.Outcome.BLOCKED, DetailPageCheck.Outcome.ERROR):
+                    continue
                 probed += 1
                 cache.set(key, 1, SOLD_PROBE_TTL)
-                if not detail_says_sold(status, body):
-                    continue
                 ad = row.ad
-                ad.status = Ad.Status.REMOVED
-                ad.removed_at = now
-                ad.likely_reason = Ad.Reason.SOLD
-                ad.reason_confidence = Ad.Confidence.HIGH
-                sold.append(ad)
+                ad.detail_state = outcome
+                ad.detail_checked_at = timezone.now()
+                Ad.objects.filter(pk=ad.pk).update(
+                    detail_state=outcome, detail_checked_at=ad.detail_checked_at,
+                )
+                if outcome == DetailPageCheck.Outcome.UNAVAILABLE:
+                    unavailable.append(ad)
 
-        if sold:
-            Ad.objects.bulk_update(
-                sold, ["status", "removed_at", "likely_reason", "reason_confidence"],
-                batch_size=100,
-            )
-            DealScoreCache.objects.filter(ad_id__in=[a.code for a in sold]).delete()
+        if unavailable:
+            DealScoreCache.objects.filter(ad_id__in=[a.code for a in unavailable]).delete()
 
         run.status = FetchRun.Status.SUCCEEDED
         run.fetched_count = probed
@@ -710,7 +719,7 @@ def probe_sold() -> dict:
 
     return {
         "probed": probed,
-        "sold": len(sold),
+        "unavailable": len(unavailable),
         "skipped_recent": skipped_recent,
         "run_id": str(run.pk),
     }
@@ -935,28 +944,23 @@ def prune(*, days: int = PRUNE_DEFAULT_DAYS, dry_run: bool = False) -> dict:
 _IMAGE_BACKFILL_BATCH = 500
 
 
-def backfill_images(*, limit: int | None = None, prune: bool = True) -> dict:
-    """Refill the image columns from payloads already on disk, then drop the rest.
+def backfill_images(*, limit: int | None = None, prune: bool = False) -> dict:
+    """Refill the image columns from payloads without deleting history.
 
     The image columns were added after most of the catalog was ingested, and
     they only refill when an ad is next *observed* — so 36,914 of 81,490
     production rows render "No photo" while ~78% of them carry a perfectly good
     CDN URL inside their own ``raw_payload``. Nothing needs re-crawling.
 
-    What cannot be filled is **deleted**, not kept: the feed is crawled with
-    ``image=1&priced=1``, so an ad with no photo is outside the population this
-    app collects rather than a listing with one field missing. ``_photo_missing``
-    is the hard verify rule that stops new ones arriving; this is the same
-    decision applied to rows that predate it. Fill first and delete second —
-    reversing that order would destroy the ~28.5k rows whose photos were merely
-    unread.
+    A missing current URL cannot justify cascading deletion of earlier priced
+    versions and observations. Admission state determines catalog visibility.
 
     Runs through the same ``image_urls`` the live path uses, so a row filled
     here and a row filled by a fetch cannot disagree. Idempotent: it only reads
     rows that have no primary image, and a second pass over a filled row is a
     no-op.
 
-    ``prune=False`` fills only, for checking what a run would remove first.
+    ``prune`` remains accepted for existing callers but never deletes evidence.
     """
 
     qs = (
@@ -977,7 +981,7 @@ def backfill_images(*, limit: int | None = None, prune: bool = True) -> dict:
         ad.primary_image_url = primary[:500]
         ad.image_urls = gallery
         # Only when the payload never carried a count of its own: Bama's
-        # image_count is what the *ad* has, which can exceed the capped gallery.
+        # image_count is what the *ad* has, which can exceed a partial gallery.
         if not ad.image_count:
             ad.image_count = len(gallery) or None
         batch.append(ad)
@@ -990,19 +994,7 @@ def backfill_images(*, limit: int | None = None, prune: bool = True) -> dict:
     if batch:
         Ad.objects.bulk_update(batch, ["primary_image_url", "image_urls", "image_count"])
 
-    # Everything still photoless after the fill genuinely has no image in its
-    # payload. Batched, because CASCADE reaches observations, versions, episodes
-    # and price rows, and one 8k-row DELETE takes locks for the whole statement.
-    # Counted before the delete, not from its return value: `.delete()` reports
-    # every CASCADEd row (observations, versions, episodes, price rows), so the
-    # first production run said it pruned 155,240 when it removed 8,889 ads.
-    pruned = 0
-    if prune and limit is None:
-        photoless = Ad.objects.filter(primary_image_url="")
-        pruned = photoless.count()
-        _batched_delete(photoless)
-
-    return {"scanned": scanned, "filled": filled, "pruned": pruned,
+    return {"scanned": scanned, "filled": filled, "pruned": 0,
             "remaining": Ad.objects.filter(primary_image_url="").count()}
 
 

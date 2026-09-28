@@ -212,7 +212,7 @@ def test_hot_cadence_skips_warm_steps(stub_jobs):
     # `ml_train` is deliberately absent: it is minutes of CPU in its own
     # container, on its own `train` cadence.
     assert [s.name for s in report.steps] == [
-        "mark_inactive", "deal_scores", "ml_score", "probe_sold", "notify", "alerts",
+        "photo_archive", "mark_inactive", "deal_scores", "ml_score", "probe_sold", "notify", "alerts",
         "alerts_send",
     ]
     assert "ml_train" not in seen
@@ -1178,7 +1178,7 @@ def test_run_checks_returns_every_check():
     assert {c.name for c in results} == {
         "source_block", "upstream_outage", "sweep_freshness", "coverage_progress",
         "removal_detection", "failed_runs", "reject_spike", "ingest_progress",
-        "model_staleness", "backup_freshness", "telegram_configured",
+        "model_staleness", "backup_freshness", "photo_archive", "telegram_configured",
     }
     assert all(not c.detail.startswith("check raised") for c in results)
 

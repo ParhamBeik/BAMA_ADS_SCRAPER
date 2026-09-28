@@ -130,6 +130,13 @@ class Ad(models.Model):
         # 546 cars were for sale that nobody had laid eyes on in 48 hours.
         UNVERIFIED = "unverified", "Unverified (not seen, coverage incomplete)"
 
+    class Admission(models.TextChoices):
+        LEGACY = "legacy_unverified", "Legacy photo evidence unverified"
+        PENDING = "pending", "Waiting for image and classification evidence"
+        READY = "ready", "Catalog ready"
+        HISTORY_ONLY = "history_only", "Qualified history only"
+        REJECTED = "rejected", "Rejected from catalog"
+
     class Reason(models.TextChoices):
         """Why an ad probably left. Inferred, never observed.
 
@@ -155,6 +162,15 @@ class Ad(models.Model):
         UNKNOWN = "unknown", "Unknown"
 
     code = models.CharField(max_length=16, primary_key=True)
+    admission_state = models.CharField(
+        max_length=20, choices=Admission.choices, default=Admission.LEGACY, db_index=True,
+    )
+    detail_state = models.CharField(max_length=16, blank=True, db_index=True)
+    detail_checked_at = models.DateTimeField(null=True, blank=True)
+    current_version = models.ForeignKey(
+        "AdVersion", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="current_for_ads",
+    )
 
     # PROTECT stops a brand/model/variant still referenced by ads from being
     # deleted; dealer/city just clear.
@@ -170,6 +186,7 @@ class Ad(models.Model):
                              null=True, blank=True)
 
     title = models.CharField(max_length=400, blank=True)
+    source_family = models.CharField(max_length=160, blank=True, db_index=True)
 
     # `year` is what Bama sent, kept verbatim for provenance. Bama publishes
     # model years in EITHER calendar depending on brand, so `year` alone mixes
@@ -555,6 +572,15 @@ class AdVersion(models.Model):
     payload = models.JSONField(null=True, blank=True)
     origin = models.CharField(max_length=32, choices=Origin.choices, default=Origin.BULK_IMPORT)
     first_observed_at = models.DateTimeField()
+    classified_model = models.ForeignKey(
+        Model, null=True, blank=True, on_delete=models.PROTECT, related_name="classified_versions",
+    )
+    classified_variant = models.ForeignKey(
+        Variant, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="classified_versions",
+    )
+    classification_state = models.CharField(max_length=16, default="needs_review", db_index=True)
+    classification_rule = models.CharField(max_length=80, blank=True)
 
     class Meta:
         db_table = "history_adversion"
@@ -566,6 +592,83 @@ class AdVersion(models.Model):
 
     def __str__(self) -> str:
         return f"{self.ad_id} {self.semantic_hash[:8]}"
+
+
+class SourceModelAlias(models.Model):
+    """Reviewed mapping from Bama's source family to a canonical car model."""
+
+    source_family = models.CharField(max_length=160, unique=True)
+    model = models.ForeignKey(Model, on_delete=models.PROTECT, related_name="source_aliases")
+    reviewed = models.BooleanField(default=False, db_index=True)
+    note = models.TextField(blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "catalog_sourcemodelalias"
+
+
+class ArchivedImage(models.Model):
+    """A validated local image, deduplicated by its bytes."""
+
+    sha256 = models.CharField(max_length=64, primary_key=True)
+    relative_path = models.CharField(max_length=160, unique=True)
+    content_type = models.CharField(max_length=32)
+    byte_size = models.PositiveIntegerField()
+    archived_at = models.DateTimeField(default=timezone.now)
+    backed_up_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "history_archivedimage"
+
+
+class AdVersionPhoto(models.Model):
+    """Source gallery order and archival outcome for one immutable ad version."""
+
+    class State(models.TextChoices):
+        PENDING = "pending", "Pending"
+        VERIFIED = "verified", "Verified archive"
+        BLOCKED = "blocked", "Source blocked"
+        FAILED = "failed", "Retrieval failed"
+
+    version = models.ForeignKey(AdVersion, on_delete=models.CASCADE, related_name="photos")
+    position = models.PositiveSmallIntegerField()
+    source_url = models.URLField(max_length=500)
+    asset = models.ForeignKey(ArchivedImage, null=True, blank=True,
+                              on_delete=models.PROTECT, related_name="photo_uses")
+    state = models.CharField(max_length=12, choices=State.choices, default=State.PENDING,
+                             db_index=True)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    first_attempt_at = models.DateTimeField(null=True, blank=True)
+    last_attempt_at = models.DateTimeField(null=True, blank=True)
+    next_retry_at = models.DateTimeField(null=True, blank=True)
+    pause_started_at = models.DateTimeField(null=True, blank=True)
+    last_http_status = models.PositiveSmallIntegerField(null=True, blank=True)
+
+    class Meta:
+        db_table = "history_adversionphoto"
+        constraints = [models.UniqueConstraint(fields=("version", "position"),
+                                               name="uq_version_photo_position")]
+
+
+class DetailPageCheck(models.Model):
+    """An actual detail-page response, independent of feed visibility."""
+
+    class Outcome(models.TextChoices):
+        AVAILABLE = "available", "Page available"
+        UNAVAILABLE = "unavailable", "Source says page unavailable"
+        BLOCKED = "blocked", "Source blocked the check"
+        ERROR = "error", "Check failed"
+
+    ad = models.ForeignKey(Ad, on_delete=models.CASCADE, related_name="detail_checks")
+    fetch_run = models.ForeignKey(FetchRun, null=True, blank=True,
+                                  on_delete=models.SET_NULL, related_name="detail_checks")
+    checked_at = models.DateTimeField(default=timezone.now, db_index=True)
+    outcome = models.CharField(max_length=16, choices=Outcome.choices, db_index=True)
+    http_status = models.PositiveSmallIntegerField(null=True, blank=True)
+
+    class Meta:
+        db_table = "history_detailpagecheck"
+        ordering = ("-checked_at",)
 
 
 class AdObservation(models.Model):

@@ -65,6 +65,9 @@ x-django-env: &django-env
   # check that notices; test the value's length, not whether the name exists.
   BAMA_TELEGRAM_TOKEN: ${BAMA_TELEGRAM_TOKEN:-}
   REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+  ARCHIVE_ADMISSION_REQUIRED: ${ARCHIVE_ADMISSION_REQUIRED:-false}
+  PHOTO_ARCHIVE_ROOT: /archive
+  PHOTO_BACKUP_MODE: ${PHOTO_BACKUP_MODE:-}
   # Where trained model artifacts live. Every service agrees on the path; they
   # disagree on whether the mount is writable — see the `ml` service below.
   ML_ARTIFACT_DIR: /artifacts
@@ -165,6 +168,7 @@ services:
     volumes:
       - staticfiles:/app/staticfiles
       - ml_artifacts:/artifacts:ro
+      - photo_archive:/archive:ro
       - /var/backups/bama:/backups:ro
     depends_on:
       postgres: { condition: service_healthy }
@@ -249,6 +253,7 @@ services:
     # watching them.
     volumes:
       - ml_artifacts:/artifacts:ro
+      - photo_archive:/archive
       - /var/backups/bama:/backups:ro
     depends_on:
       django: { condition: service_healthy }
@@ -285,6 +290,7 @@ volumes:
   # reproducible from the database by one `bama train`, and a missing file makes
   # inference refuse rather than fail — see `registry.load`.
   ml_artifacts:
+  photo_archive:
 
 networks:
   internal:

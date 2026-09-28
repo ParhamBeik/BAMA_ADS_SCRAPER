@@ -71,6 +71,20 @@ mode="$(stat -c '%a' "${passphrase_file}")"
 [[ "${mode}" =~ ^[46]00$ ]] || die "${passphrase_file} must have mode 400 or 600"
 mkdir -p "${backup_dir}"
 
+# Keep enough room for the next encrypted dump and its verification.
+min_free_kb="${BACKUP_MIN_FREE_KB:-1572864}"
+last_daily="$(find "${backup_dir}" -maxdepth 1 -type f -name 'daily-*.dump.enc' -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk 'NR==1{print $2}')"
+if [[ -n "${last_daily}" ]]; then
+  last_kb="$(du -k "${last_daily}" | awk '{print $1}')"
+  need_kb=$(( last_kb * 2 ))
+  (( need_kb > min_free_kb )) && min_free_kb="${need_kb}"
+fi
+avail_kb="$(df -Pk "${backup_dir}" | awk 'NR==2 {print $4}')"
+if (( avail_kb < min_free_kb )); then
+  echo "Refusing backup: only ${avail_kb} KiB free under ${backup_dir}, need ${min_free_kb} KiB" >&2
+  exit 75
+fi
+
 stamp="$(TZ=Asia/Tehran date +%F)"
 partial="${backup_dir}/daily-${stamp}.dump.enc.partial"
 destination="${partial%.partial}"

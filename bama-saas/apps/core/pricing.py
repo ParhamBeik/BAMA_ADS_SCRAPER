@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from statistics import median
 
+from django.conf import settings
 from django.core.cache import cache
 from django.utils import timezone
 
@@ -462,14 +463,20 @@ def scorable_rows():
     and hiding it from the one board a buyer reads is the opposite of the job.
     `laddered_peers` adds that filter; `compute_deal_scores` applies it per cohort.
     """
-    return exclude_unclear_price(
+    qs = exclude_unclear_price(
         verified(Ad.objects).filter(
             status=Ad.Status.ACTIVE,
+            # A direct page check can establish unavailability while the ad
+            # still remains in a previously fetched feed window.
+            detail_state__in=("", "available"),
             # The 10M floor is the unit-switch sentinel, not a car.
             current_price__gt=MIN_PLAUSIBLE_PRICE,
             publish_at__isnull=False,
         )
     )
+    if settings.ARCHIVE_ADMISSION_REQUIRED:
+        return qs.filter(admission_state=Ad.Admission.READY)
+    return qs
 
 
 def cap_confidence(label: str, basis: str) -> str:

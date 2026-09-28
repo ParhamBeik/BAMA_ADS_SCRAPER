@@ -14,6 +14,7 @@ from datetime import timezone as dt_timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.utils.text import slugify
 
@@ -22,6 +23,7 @@ from apps.common.parsing import (
     fingerprint,
     image_urls,
     listing_fingerprint,
+    normalize_digits,
     normalize_model_year,
     parse_int,
     parse_mileage,
@@ -33,6 +35,7 @@ from apps.core.models import (
     Ad,
     AdObservation,
     AdVersion,
+    AdVersionPhoto,
     Brand,
     City,
     Dealer,
@@ -41,6 +44,7 @@ from apps.core.models import (
     Model,
     PriceDropEvent,
     PriceObservation,
+    SourceModelAlias,
     Variant,
 )
 from apps.core.normalization import search_document
@@ -103,6 +107,14 @@ BRAND_PARENT = {
     "اطلس": "سایپا",
     "زاگرس": "سایپا",
 }
+
+PEUGEOT_FAMILIES = {"پژو 206", "پژو 207", "پژو ۲۰۶", "پژو ۲۰۷"}
+
+
+def canonical_peugeot_model(name: str | None) -> str | None:
+    """206/207 family from Bama's title model, including SD/sedan variants."""
+    match = re.match(r"^(206|207)(?=$|\s|\W)", normalize_digits((name or "").strip()))
+    return match.group(1) if match else None
 
 
 def _brand(name: str | None) -> tuple[Any, bool]:
@@ -214,15 +226,41 @@ def resolve_dimensions(*, brand_name, model_name, trim_name, city_location, deal
     format change surfaces as a spike in one place rather than silently growing
     the catalog.
     """
-    brand, brand_minted = _brand(brand_name)
-    model, model_minted = _model(brand, model_name)
+    source_family = (brand_name or "").strip()
+    alias_key = ("reviewed_alias", source_family)
+    if alias_key not in _DIM_CACHE:
+        _DIM_CACHE[alias_key] = (SourceModelAlias.objects.select_related("model__brand")
+                                 .filter(source_family=source_family, reviewed=True).first())
+    alias = _DIM_CACHE[alias_key]
+    if alias:
+        brand, model = alias.model.brand, alias.model
+        brand_minted = model_minted = False
+        rule = "reviewed_alias"
+    else:
+        canonical_brand = "پژو" if source_family in PEUGEOT_FAMILIES else brand_name
+        peugeot_model = (canonical_peugeot_model(source_family.removeprefix("پژو")) if
+                         source_family in PEUGEOT_FAMILIES else
+                         canonical_peugeot_model(model_name) if source_family == "پژو" else None)
+        canonical_model = (source_family if source_family in BRAND_PARENT else
+                           peugeot_model or model_name)
+        brand, brand_minted = _brand(canonical_brand)
+        model, model_minted = _model(brand, canonical_model)
+        rule = ("peugeot_model" if peugeot_model else
+                "source_family" if canonical_model == source_family else "title_fallback")
+    if rule == "title_fallback":
+        variant_name = trim_name
+    else:
+        parts = [part.strip() for part in (model_name, trim_name) if part and part.strip()]
+        variant_name = " · ".join(dict.fromkeys(parts))
     return {
         "brand": brand,
         "model": model,
-        "variant": _variant(model, trim_name),
+        "variant": _variant(model, variant_name),
         "city": _city(city_location),
         "dealer": _dealer(dealer),
         "minted": [n for n, m in (("brand", brand_minted), ("model", model_minted)) if m],
+        "classification_rule": rule,
+        "classification_state": "verified" if rule != "title_fallback" else "needs_review",
     }
 
 
@@ -327,13 +365,14 @@ def _ad_defaults(extracted: dict, dims: dict, observed_at, publish_at, quality_f
     title = g("title") or ""
     price_type = g("price_type") or ""
     prepayment = g("current_prepayment")
-    return {
+    defaults = {
         "brand": dims["brand"],
         "model": dims["model"],
         "variant": dims["variant"],
         "city": dims["city"],
         "dealer": dims["dealer"],
         "title": title,
+        "source_family": g("brand") or "",
         "year": g("year"),
         "year_jalali": year_jalali,
         "year_gregorian": year_gregorian,
@@ -398,6 +437,11 @@ def _ad_defaults(extracted: dict, dims: dict, observed_at, publish_at, quality_f
         # clears itself the moment Bama sends a good one.
         "quality_flags": quality_flags,
     }
+    if settings.ARCHIVE_ADMISSION_REQUIRED:
+        cash = (g("price_type") == "lumpsum" and (g("current_price") or 0) > 0
+                and not defaults["price_basis_unclear"])
+        defaults["admission_state"] = Ad.Admission.PENDING if cash else Ad.Admission.HISTORY_ONLY
+    return defaults
 
 
 def ingest_ad(extracted: dict, *, run: FetchRun, observed_at: datetime,
@@ -453,6 +497,23 @@ def _ingest_ad(extracted, *, run, observed_at, publish_at, dealer=None, rank=Non
                 ad.save()
         return IngestResult(ad=None, rejected=True, flags=tuple(quality_flags))
 
+    if (settings.ARCHIVE_ADMISSION_REQUIRED and
+            not Ad.objects.filter(code=extracted["code"]).exists()):
+        detail = payload.get("detail") or {}
+        if (extracted.get("price_type") != "lumpsum" or
+                not (extracted.get("current_price") or 0) > 0 or
+                price_basis_unclear(
+                    title=extracted.get("title") or "",
+                    description=detail.get("description") or "",
+                    price_type=extracted.get("price_type") or "",
+                    prepayment=extracted.get("current_prepayment"),
+                )):
+            IngestReject.objects.create(
+                code=extracted["code"], rule="cash_price_required",
+                raw_payload=pure_ad(payload), fetch_run=run, observed_at=observed_at,
+            )
+            return IngestResult(ad=None, rejected=True, flags=("cash_price_required",))
+
     dims = resolve_dimensions(
         brand_name=extracted.get("brand"), model_name=extracted.get("model"),
         trim_name=extracted.get("trim"), city_location=extracted.get("location"),
@@ -490,6 +551,7 @@ def _ingest_ad(extracted, *, run, observed_at, publish_at, dealer=None, rank=Non
             defaults.pop("removed_at", None)
             defaults.pop("likely_reason", None)
             defaults.pop("reason_confidence", None)
+            defaults.pop("admission_state", None)
         if ad.first_seen_at and observed_at < ad.first_seen_at:
             defaults["first_seen_at"] = observed_at
         Ad.objects.filter(code=code).update(**defaults)
@@ -514,9 +576,31 @@ def _ingest_ad(extracted, *, run, observed_at, publish_at, dealer=None, rank=Non
                 "payload": pure_ad(payload),
                 "origin": run.source if run else AdVersion.Origin.BULK_IMPORT,
                 "first_observed_at": observed_at,
+                "classified_model": dims["model"],
+                "classified_variant": dims["variant"],
+                "classification_state": dims["classification_state"],
+                "classification_rule": dims["classification_rule"],
             },
         )
         _VERSION_CACHE[version_key] = version
+
+    if version.classification_state != "verified" and dims["classification_state"] == "verified":
+        AdVersion.objects.filter(pk=version.pk).update(
+            classified_model=dims["model"], classified_variant=dims["variant"],
+            classification_state="verified", classification_rule=dims["classification_rule"],
+        )
+        version.classification_state = "verified"
+    if not ad.current_version_id or ad.last_seen_at == observed_at:
+        Ad.objects.filter(pk=ad.pk).update(current_version=version)
+        ad.current_version = version
+    if settings.ARCHIVE_ADMISSION_REQUIRED:
+        _, gallery = image_urls(payload)
+        AdVersionPhoto.objects.bulk_create(
+            [AdVersionPhoto(version=version, position=i, source_url=url)
+             for i, url in enumerate(gallery)], ignore_conflicts=True,
+        )
+        from apps.core.admission import sync_admission
+        sync_admission(ad)
 
     # 3) One observation per (run, ad). History replay knows the pair is unique,
     # so it can skip get_or_create's SELECT.

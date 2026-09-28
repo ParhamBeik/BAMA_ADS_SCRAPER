@@ -374,13 +374,8 @@ def parse_publish_time(value: str | None, observed_at: datetime) -> datetime | N
     return observed_at - timedelta(**{_RELATIVE_UNITS[unit]: number * (30 if unit == "ماه" else 1)})
 
 
-# At most this many photos per listing. A gallery is the same car from a dozen
-# angles; past that it is a dealer padding the page.
-_MAX_GALLERY = 12
-
-
 def _cdn_urls(candidates: list) -> list[str]:
-    """Keep the HTTPS Bama-CDN URLs, in order, deduped, capped."""
+    """Keep every distinct HTTPS Bama-CDN URL in source order."""
     urls: list[str] = []
     for raw in candidates:
         if not isinstance(raw, str):
@@ -390,8 +385,6 @@ def _cdn_urls(candidates: list) -> list[str]:
             continue
         if u not in urls:
             urls.append(u)
-        if len(urls) >= _MAX_GALLERY:
-            break
     return urls
 
 
@@ -400,7 +393,7 @@ def image_urls(payload: dict) -> tuple[str, list[str]]:
 
     The gallery is ``payload["images"]``, a top level up from ``detail`` — this
     used to be handed ``detail`` alone, which carries only the single
-    ``detail.image`` string, so ``_MAX_GALLERY`` had never once applied and
+    ``detail.image`` string, so gallery extraction had never once applied and
     every listing in the database had at most one photo.
 
     Each gallery entry is the same picture at three widths. ``small``

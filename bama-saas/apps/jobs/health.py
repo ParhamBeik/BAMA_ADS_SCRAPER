@@ -19,12 +19,13 @@ scheduled jobs themselves and this. ``pipeline.JOBS["health"]`` still routes to
 from __future__ import annotations
 
 import logging
+import shutil
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from django.conf import settings
-from django.db.models import Count, Sum
+from django.db.models import Count, Max, Sum
 from django.utils import timezone
 
 from apps.core.coverage import (
@@ -32,7 +33,7 @@ from apps.core.coverage import (
     COVERAGE_WINDOW_HOURS,
     coverage_state,
 )
-from apps.core.models import Ad, FetchRun, IngestReject, JobRun, NotifierSettings
+from apps.core.models import Ad, ArchivedImage, FetchRun, IngestReject, JobRun, NotifierSettings
 from apps.core.notify import send_health_alert as deliver_health_alert
 from apps.jobs.jobs import REQUIRED_MISSED_WINDOWS, sweep_cutoff
 
@@ -535,10 +536,38 @@ def check_telegram_configured(now=None) -> Check:
 #
 # `removal_detection` is the effect that `sweep_freshness` and
 # `coverage_progress` are the causes of, so it reads immediately after them.
+def check_photo_archive(now=None) -> Check:
+    """Admission requires both local bytes and a verified off-host copy."""
+    if not settings.ARCHIVE_ADMISSION_REQUIRED:
+        return Check("photo_archive", True, "Admission gate not enabled yet.")
+    if settings.PHOTO_BACKUP_MODE != "mac_pull":
+        return Check("photo_archive", False, "Mac photo backup is not configured.")
+    root = Path(settings.PHOTO_ARCHIVE_ROOT)
+    if not root.is_dir():
+        return Check("photo_archive", False, "Photo archive volume is not mounted.")
+    used = ArchivedImage.objects.aggregate(n=Sum("byte_size"))["n"] or 0
+    free = shutil.disk_usage(root).free
+    stale = ArchivedImage.objects.filter(
+        backed_up_at__isnull=True,
+        archived_at__lt=(now or timezone.now()) - timedelta(hours=24),
+    ).count()
+    latest_ack = ArchivedImage.objects.aggregate(at=Max("backed_up_at"))["at"]
+    backup_stale = bool(used and (latest_ack is None or
+                                 latest_ack < (now or timezone.now()) - timedelta(hours=36)))
+    okay = (used < settings.PHOTO_ARCHIVE_CAP_BYTES and
+            free >= settings.PHOTO_ARCHIVE_MIN_FREE_BYTES and stale == 0 and
+            not backup_stale)
+    return Check("photo_archive", okay,
+                 f"archive={used} bytes; free={free} bytes; unbacked >24h={stale}; "
+                 f"Mac backup stale={backup_stale}",
+                 {"archive_bytes": used, "free_bytes": free, "stale_unbacked": stale,
+                  "mac_backup_stale": backup_stale})
+
+
 CHECKS = (check_source_block, check_upstream_outage,
           check_sweep_freshness, check_coverage_progress, check_removal_detection,
           check_failed_runs, check_reject_spike, check_ingest_progress,
-          check_model_staleness, check_backup_freshness,
+          check_model_staleness, check_backup_freshness, check_photo_archive,
           check_telegram_configured)
 
 

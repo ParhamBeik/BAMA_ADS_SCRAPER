@@ -17,10 +17,11 @@ import hashlib
 import statistics
 from collections import defaultdict
 from datetime import timedelta
+from pathlib import Path
 
 from django.conf import settings
 from django.db.models import Case, Count, F, IntegerField, Q, Value, When
-from django.http import HttpResponse, HttpResponseRedirect
+from django.http import FileResponse, HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status, viewsets
@@ -30,7 +31,7 @@ from rest_framework.permissions import IsAdminUser
 from rest_framework.response import Response
 
 from apps.common.verify import MAX_JALALI_YEAR, MIN_JALALI_YEAR
-from apps.core import images, pricing, research
+from apps.core import explorer, images, pricing, research
 from apps.core.api import (
     cache_key,
     cached,
@@ -40,6 +41,7 @@ from apps.core.api import (
 from apps.core.filters import AdFilter
 from apps.core.models import (
     Ad,
+    AdVersionPhoto,
     Brand,
     DealScoreCache,
     MarketIndex,
@@ -175,6 +177,37 @@ def model_search(request):
     ])
 
 
+@api_view(["GET"])
+def model_explore(request, model_pk: int):
+    """Direct asking evidence; a rare group never becomes a made-up estimate."""
+    get_object_or_404(Model, pk=model_pk)
+    allowed = {"variant", "year", "city", "condition", "mileage_min", "mileage_max"}
+    unknown = sorted(set(request.query_params) - allowed)
+    if unknown:
+        return Response({"detail": f"unknown query parameter(s): {', '.join(unknown)}"},
+                        status=status.HTTP_400_BAD_REQUEST)
+    try:
+        numeric = {}
+        for key in ("variant", "year", "city", "mileage_min", "mileage_max"):
+            raw = request.query_params.get(key)
+            numeric[key] = int(raw) if raw else None
+            if numeric[key] is not None and numeric[key] < 0:
+                raise ValueError(f"{key} must be nonnegative")
+        if (numeric["mileage_min"] is not None and numeric["mileage_max"] is not None
+                and numeric["mileage_min"] > numeric["mileage_max"]):
+            raise ValueError("mileage_min must not exceed mileage_max")
+        condition = request.query_params.get("condition") or None
+        if condition and len(condition) > 120:
+            raise ValueError("condition is too long")
+    except ValueError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(explorer.model_exploration(
+        model_pk, variant_id=numeric["variant"], year=numeric["year"],
+        city_id=numeric["city"], condition=condition,
+        mileage_min=numeric["mileage_min"], mileage_max=numeric["mileage_max"],
+    ))
+
+
 # Everything `GET /api/ads/` actually reads: the filterset's own names, the two
 # DRF backends' parameters, and the one local flag. Derived from `AdFilter`
 # rather than restated, so a filter added there is accepted here without a
@@ -265,8 +298,26 @@ def listing_image(request, code: str, index: int | None = None):
     the block is on *our* egress, and the user's own browser can usually still
     reach the picture.
     """
-    ad = get_object_or_404(Ad.objects.only("code", "image_urls", "primary_image_url"),
+    ad = get_object_or_404(Ad.objects.only("code", "image_urls", "primary_image_url",
+                                           "admission_state", "current_version_id"),
                            code=code)
+    if settings.ARCHIVE_ADMISSION_REQUIRED:
+        photos = (AdVersionPhoto.objects.select_related("asset")
+                  .filter(version_id=ad.current_version_id,
+                          state=AdVersionPhoto.State.VERIFIED))
+        photo = (photos.filter(position=index).first() if index is not None else
+                 photos.order_by("position").first())
+        if not photo or not photo.asset_id or ad.admission_state != Ad.Admission.READY:
+            return Response({"detail": "archived image unavailable"},
+                            status=status.HTTP_404_NOT_FOUND)
+        path = Path(settings.PHOTO_ARCHIVE_ROOT) / photo.asset.relative_path
+        if not path.is_file():
+            return Response({"detail": "archived image missing"},
+                            status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        response = FileResponse(path.open("rb"), content_type=photo.asset.content_type)
+        response["Cache-Control"] = "private, max-age=2592000, immutable"
+        response["ETag"] = f'"{photo.asset_id}"'
+        return response
     url = images.source_url(ad, index)
     if not url:
         return Response({"detail": "no such image"}, status=status.HTTP_404_NOT_FOUND)

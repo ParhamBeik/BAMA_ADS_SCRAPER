@@ -117,6 +117,12 @@ IMAGE_CACHE_SECONDS = int(os.environ.get("IMAGE_CACHE_SECONDS", 60 * 60 * 24 * 3
 # Listing photos run ~40-120KB. Anything past this is not a car photo and must
 # not be pulled into the cache.
 IMAGE_MAX_BYTES = int(os.environ.get("IMAGE_MAX_BYTES", 2 * 1024 * 1024))
+# Turn on only after the archive and reviewed mappings have been backfilled.
+ARCHIVE_ADMISSION_REQUIRED = os.environ.get("ARCHIVE_ADMISSION_REQUIRED", "false").lower() == "true"
+PHOTO_ARCHIVE_ROOT = os.environ.get("PHOTO_ARCHIVE_ROOT", "/tmp/bama-photo-archive")
+PHOTO_ARCHIVE_CAP_BYTES = int(os.environ.get("PHOTO_ARCHIVE_CAP_BYTES", 5 * 1024**3))
+PHOTO_ARCHIVE_MIN_FREE_BYTES = int(os.environ.get("PHOTO_ARCHIVE_MIN_FREE_BYTES", 8 * 1024**3))
+PHOTO_BACKUP_MODE = os.environ.get("PHOTO_BACKUP_MODE", "")
 
 AUTH_USER_MODEL = "accounts.User"
 AUTH_PASSWORD_VALIDATORS = [

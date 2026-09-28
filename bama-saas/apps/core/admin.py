@@ -6,15 +6,21 @@ pruning all read as ground truth.
 """
 
 from django.contrib import admin
+from django.utils import timezone
 
 from apps.core.models import (
     Ad,
+    AdVersion,
+    AdVersionPhoto,
+    ArchivedImage,
+    DetailPageCheck,
     FetchRun,
     IngestReject,
     JobRun,
     ListingEpisode,
     NotifierSettings,
     PageCoverage,
+    SourceModelAlias,
 )
 
 
@@ -38,9 +44,48 @@ class AdAdmin(admin.ModelAdmin):
 
     list_display = ("code", "title", "brand", "model", "current_price", "status",
                     "publish_at", "last_seen_at")
-    list_filter = ("status", "brand", "category", "transmission")
+    list_filter = ("status", "admission_state", "brand", "category", "transmission")
     search_fields = ("code", "title")
     date_hierarchy = "publish_at"
+
+
+@admin.register(SourceModelAlias)
+class SourceModelAliasAdmin(admin.ModelAdmin):
+    list_display = ("source_family", "model", "reviewed", "reviewed_at")
+    list_filter = ("reviewed",)
+    search_fields = ("source_family", "model__name_fa")
+
+    def save_model(self, request, obj, form, change):
+        obj.reviewed_at = timezone.now() if obj.reviewed else None
+        super().save_model(request, obj, form, change)
+
+
+@admin.register(AdVersion)
+class AdVersionAdmin(ReadOnly):
+    list_display = ("id", "ad", "classification_state", "classification_rule",
+                    "classified_model", "first_observed_at")
+    list_filter = ("classification_state", "classification_rule")
+    search_fields = ("ad__code",)
+
+
+@admin.register(AdVersionPhoto)
+class AdVersionPhotoAdmin(ReadOnly):
+    list_display = ("id", "version", "position", "state", "attempts", "last_attempt_at")
+    list_filter = ("state",)
+    search_fields = ("version__ad__code",)
+
+
+@admin.register(ArchivedImage)
+class ArchivedImageAdmin(ReadOnly):
+    list_display = ("sha256", "byte_size", "archived_at", "backed_up_at")
+    search_fields = ("sha256",)
+
+
+@admin.register(DetailPageCheck)
+class DetailPageCheckAdmin(ReadOnly):
+    list_display = ("ad", "outcome", "http_status", "checked_at", "fetch_run")
+    list_filter = ("outcome", "http_status")
+    search_fields = ("ad__code",)
 
 
 @admin.register(FetchRun)

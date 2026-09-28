@@ -26,6 +26,7 @@ from rest_framework.response import Response
 from rest_framework.settings import api_settings
 from rest_framework.throttling import BaseThrottle
 
+from apps.core.audit import report as data_quality_report
 from apps.core.coverage import COVERAGE_WINDOW_HOURS, coverage_state
 from apps.core.models import Ad, AdVersion, Brand, FetchRun, IngestReject, JobRun, Model
 from apps.jobs import health, pipeline
@@ -309,6 +310,13 @@ def crawl_health(request):
     result = health.health(alert=False)
     return Response(result, status=status.HTTP_200_OK if result["ok"]
                     else status.HTTP_503_SERVICE_UNAVAILABLE)
+
+
+@api_view(["GET"])
+@permission_classes([IsAdminUser])
+def data_quality(request):
+    """Current read-only data contract and seven-day source trends."""
+    return Response(data_quality_report())
 
 
 @api_view(["GET"])

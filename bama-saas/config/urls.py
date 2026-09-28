@@ -40,6 +40,7 @@ urlpatterns = [
     path("api/", include("apps.accounts.urls")),
     path("api/admin/jobs/", include("apps.jobs.urls")),
     path("api/admin/health/", jobs_views.system_health, name="admin-health"),
+    path("api/admin/data-quality/", jobs_views.data_quality, name="admin-data-quality"),
     # The raw payload that used to ride along on every public ad response.
     path("api/admin/ads/<str:code>/provenance/", jobs_views.ad_provenance,
          name="ad-provenance"),

@@ -344,6 +344,17 @@ def detail_says_sold(status: int, body: str = "") -> bool:
     return any(marker in text for marker in SOLD_PAGE_MARKERS)
 
 
+def detail_page_outcome(status: int, body: str = "") -> str:
+    """What the page proves, without interpreting availability as a sale."""
+    if status in (429, 503, 403):
+        return "blocked"
+    if status == 410 or (status == 200 and detail_says_sold(status, body)):
+        return "unavailable"
+    if status == 200:
+        return "available"
+    return "error"
+
+
 def fetch_ad_page(session: requests.Session, url: str, request_timeout: int
                   ) -> tuple[int, str]:
     """One listing page. 410 is a successful observation, not an error.

@@ -59,7 +59,9 @@ COPY . /app/
 #
 # The source stays root-owned and world-readable — the app reads it and must not
 # be able to rewrite the code it is running.
-RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin app
+RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin app \
+    && mkdir -p /archive \
+    && chown app:app /archive
 USER app
 
 EXPOSE 8000
