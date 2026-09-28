@@ -120,6 +120,26 @@ def test_mac_backup_manifest_marks_only_matching_bytes(evidence, tmp_path, monke
 
 
 @pytest.mark.django_db
+def test_archive_prioritizes_current_versions(evidence, monkeypatch):
+    ad, older_photo = evidence
+    current_version = AdVersion.objects.create(
+        ad=ad, semantic_hash="d" * 64, raw_hash="e" * 64,
+        first_observed_at=timezone.now(),
+    )
+    current_photo = AdVersionPhoto.objects.create(
+        version=current_version, position=0, source_url=older_photo.source_url,
+    )
+    ad.current_version = current_version
+    ad.save(update_fields=["current_version"])
+    selected = []
+    monkeypatch.setattr(photo_archive, "archive_one", lambda photo, now: (
+        selected.append(photo.pk) or "verified"
+    ))
+    assert photo_archive.archive_pending(limit=1) == {"verified": 1}
+    assert selected == [current_photo.pk]
+
+
+@pytest.mark.django_db
 def test_rare_model_group_keeps_ads_without_a_price_range(evidence):
     from apps.core.explorer import model_exploration
 

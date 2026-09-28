@@ -11,7 +11,7 @@ from pathlib import Path
 
 import requests
 from django.conf import settings
-from django.db.models import Sum
+from django.db.models import F, Q, Sum
 from django.utils import timezone
 
 from apps.common.parsing import HEADERS, is_cdn_url
@@ -177,18 +177,15 @@ def archive_one(photo: AdVersionPhoto, *, now=None) -> str:
 def archive_pending(*, limit: int = 50) -> dict:
     """Worker job; each version remains independently inspectable."""
     now = timezone.now()
-    rows = (AdVersionPhoto.objects.filter(state__in=["pending", "blocked"])
-            .filter(next_retry_at__isnull=True).select_related("version__ad")[:limit])
-    # Include due retries without duplicating the first page.
-    due = (AdVersionPhoto.objects.filter(state__in=["pending", "blocked"],
-                                         next_retry_at__lte=now)
-           .select_related("version__ad")[:limit])
+    due = (AdVersionPhoto.objects.filter(state__in=["pending", "blocked"])
+           .filter(Q(next_retry_at__isnull=True) | Q(next_retry_at__lte=now))
+           .select_related("version__ad"))
+    current = list(due.filter(version_id=F("version__ad__current_version_id"))
+                   .order_by("position", "pk")[:limit])
+    historical = list(due.exclude(version_id=F("version__ad__current_version_id"))
+                      .order_by("position", "pk")[:limit - len(current)])
     counts: dict[str, int] = {}
-    seen: set[int] = set()
-    for photo in [*rows, *due]:
-        if photo.pk in seen or len(seen) >= limit:
-            continue
-        seen.add(photo.pk)
+    for photo in [*current, *historical]:
         outcome = archive_one(photo, now=now)
         counts[outcome] = counts.get(outcome, 0) + 1
         if outcome == "capacity_paused":
