@@ -148,6 +148,6 @@ class Command(BaseCommand):
         counts["affected_models"] = sorted(counts["affected_models"])
         counts["source_families"] = families.most_common(30)
         counts["mode"] = "apply" if options["apply"] else "dry_run"
-        counts["next"] = ("Run photo_archive and the Mac pull backup, then rebuild "
+        counts["next"] = ("Run photo_archive and verify local bytes, then rebuild "
                           "snapshots, deal scores and model evaluation for affected models.")
         self.stdout.write(json.dumps(counts, ensure_ascii=False))

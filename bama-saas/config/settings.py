@@ -122,7 +122,6 @@ ARCHIVE_ADMISSION_REQUIRED = os.environ.get("ARCHIVE_ADMISSION_REQUIRED", "false
 PHOTO_ARCHIVE_ROOT = os.environ.get("PHOTO_ARCHIVE_ROOT", "/tmp/bama-photo-archive")
 PHOTO_ARCHIVE_CAP_BYTES = int(os.environ.get("PHOTO_ARCHIVE_CAP_BYTES", 5 * 1024**3))
 PHOTO_ARCHIVE_MIN_FREE_BYTES = int(os.environ.get("PHOTO_ARCHIVE_MIN_FREE_BYTES", 8 * 1024**3))
-PHOTO_BACKUP_MODE = os.environ.get("PHOTO_BACKUP_MODE", "")
 
 AUTH_USER_MODEL = "accounts.User"
 AUTH_PASSWORD_VALIDATORS = [
@@ -318,11 +317,6 @@ ML_ARTIFACT_DIR = Path(os.environ.get("ML_ARTIFACT_DIR", BASE_DIR / "data" / "ml
 # (editable from the deal board); the token is a secret and stays in the env.
 # Empty disables sending — the notifier logs and moves on rather than failing.
 BAMA_TELEGRAM_TOKEN = os.environ.get("BAMA_TELEGRAM_TOKEN", "")
-
-# Where the nightly encrypted dumps land, mounted read-only into the worker so
-# `check_backup_freshness` can see them. Empty means "this environment has no
-# backups", which is the truth on a laptop and must not read as a failure.
-BAMA_BACKUP_DIR = os.environ.get("BAMA_BACKUP_DIR", "")
 
 # Console handler only: the worker's stdout is the log, which is
 # environment-agnostic across host and Docker.

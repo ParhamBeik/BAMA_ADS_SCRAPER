@@ -258,7 +258,6 @@ export function Control() {
               <div className="grid cols-4">
                 <Stat label="در انتظار پذیرش" value={n(data.checks.pending_admission)} />
                 <Stat label="عکس‌های آرشیوشده" value={n(data.checks.verified_photos)} />
-                <Stat label="بدون پشتیبان" value={n(data.checks.archive_unbacked)} />
                 <Stat label="نسخه‌های نیازمند بازبینی" value={n(data.checks.unreviewed_versions)} />
               </div>
               <table className="table inspect-table">

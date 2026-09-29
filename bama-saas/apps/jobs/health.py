@@ -1,4 +1,4 @@
-"""Crawl health: eleven checks over what the crawl already records.
+"""Crawl health: ten checks over what the crawl already records.
 
 Every failure mode here was already *detectable* — FetchRun stores status and
 stop_reason, PageCoverage stores which ranks were read, IngestReject stores
@@ -21,11 +21,11 @@ from __future__ import annotations
 import logging
 import shutil
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 
 from django.conf import settings
-from django.db.models import Count, Max, Sum
+from django.db.models import Count, Sum
 from django.utils import timezone
 
 from apps.core.coverage import (
@@ -408,66 +408,6 @@ def check_model_staleness(now=None) -> Check:
                  {"stuck": stuck, "held": held})
 
 
-# A nightly job that stops running produces silence, and silence is what success
-# also looks like. 26 hours, not 24: the dump runs at 23:00 UTC and takes about a
-# minute, so a 24h bar would go red on clock jitter alone every night.
-BACKUP_STALE_AFTER = timedelta(hours=26)
-
-
-def check_backup_freshness(now=None) -> Check:
-    """Did last night's database dump actually happen?
-
-    The backup script alerts loudly when it *fails*. What neither it nor anything
-    else could detect is the cron never firing at all — a disabled crontab, a
-    renamed script, a host that rebooted into a broken state. That failure mode
-    is invisible by construction: it produces no error, no log line, and no file,
-    and the newest backup simply stops getting newer while everything reads fine.
-
-    Watches the artifact rather than the job, because the artifact is the thing
-    with the value. A run that "succeeded" and left no file is the same incident
-    as a run that never happened, and this notices both.
-    """
-    now = now or timezone.now()
-    directory = getattr(settings, "BAMA_BACKUP_DIR", "") or ""
-    if not directory:
-        return Check("backup_freshness", True,
-                     "No backup directory configured for this environment.")
-    path = Path(directory)
-    if not path.is_dir():
-        return Check("backup_freshness", False,
-                     f"{directory} is not a directory. The backup volume is not "
-                     f"mounted, so nothing here can confirm a dump exists.",
-                     {"backup_dir": directory})
-
-    dumps = sorted(path.glob("daily-*.dump.enc"), key=lambda p: p.stat().st_mtime)
-    if not dumps:
-        return Check("backup_freshness", False,
-                     f"No daily-*.dump.enc in {directory}. There is no restorable "
-                     f"copy of this database.", {"backup_dir": directory, "count": 0})
-
-    newest = dumps[-1]
-    stat = newest.stat()
-    age = now - datetime.fromtimestamp(stat.st_mtime, tz=UTC)
-    hours = age.total_seconds() / 3600
-    # Reported alongside the age because the two failures look identical from a
-    # timestamp alone: a dump that never ran, and a dump that ran and wrote
-    # almost nothing because the database was unreachable.
-    data = {"backup_dir": directory, "newest": newest.name, "count": len(dumps),
-            "age_hours": round(hours, 1), "size_mb": round(stat.st_size / 1e6, 1)}
-    # `.rejected` files are the backup script's own verification failing; it has
-    # already alerted about those, and counting them here would report the same
-    # incident twice under a name that sends you to the wrong place.
-    if age > BACKUP_STALE_AFTER:
-        return Check("backup_freshness", False,
-                     f"Newest backup {newest.name} is {hours:.0f}h old "
-                     f"({BACKUP_STALE_AFTER.total_seconds() / 3600:.0f}h is the bar). "
-                     f"The nightly dump has stopped running; every hour from here "
-                     f"widens what a restore would lose.", data)
-    return Check("backup_freshness", True,
-                 f"{len(dumps)} dump(s) retained, newest {newest.name} "
-                 f"{hours:.0f}h old ({data['size_mb']:.0f}MB).", data)
-
-
 def check_telegram_configured(now=None) -> Check:
     """Do enabled senders have the required token and chat ID?
 
@@ -476,12 +416,10 @@ def check_telegram_configured(now=None) -> Check:
     ``${BAMA_TELEGRAM_TOKEN:-}``, so a missing ``.env.production`` key resolves
     to ``""`` without error, and ``docker exec env`` still lists the name.
     That combination silenced four channels on 2026-09-07 — the deal feed, the
-    per-user alerts, the health alerts, and the backup script's own failure
-    alarm — with zero errors anywhere.
+    per-user alerts and health alerts — with zero errors anywhere.
 
-    The operator switch is not the only sender. Per-user alert rules and the
-    nightly backup script read the same token and ignore that switch. Empty
-    token is a laptop only when nothing here is trying to send.
+    The operator switch is not the only sender. Per-user alert rules also
+    need the token. Empty is expected only when nothing sends.
     """
     from apps.accounts.models import AlertRule
 
@@ -491,13 +429,11 @@ def check_telegram_configured(now=None) -> Check:
     has_token = bool(token)
     has_chat = bool(chat)
     user_chats = AlertRule.objects.filter(enabled=True, telegram_chat_id__gt="").exists()
-    backups_configured = bool(getattr(settings, "BAMA_BACKUP_DIR", "") or "")
-    needs_token = cfg.enabled or user_chats or backups_configured
+    needs_token = cfg.enabled or user_chats
     # Length only. The value is a secret and must not land in JobRun.detail,
     # the Control page, or a health-alert message.
     data = {"enabled": cfg.enabled, "has_chat": has_chat, "has_token": has_token,
-            "token_len": len(token), "user_chats": user_chats,
-            "backups_configured": backups_configured}
+            "token_len": len(token), "user_chats": user_chats}
     if not has_token and not needs_token:
         return Check("telegram_configured", True,
                      "No live sender needs a token; an empty one is expected.", data)
@@ -516,8 +452,6 @@ def check_telegram_configured(now=None) -> Check:
         who.append("operator")
     if user_chats:
         who.append("user alerts")
-    if backups_configured:
-        who.append("backups")
     return Check(
         "telegram_configured", False,
         f"{' / '.join(who) or 'Notifier'} "
@@ -537,37 +471,25 @@ def check_telegram_configured(now=None) -> Check:
 # `removal_detection` is the effect that `sweep_freshness` and
 # `coverage_progress` are the causes of, so it reads immediately after them.
 def check_photo_archive(now=None) -> Check:
-    """Admission requires both local bytes and a verified off-host copy."""
+    """Admission requires verified local photo bytes and disk headroom."""
     if not settings.ARCHIVE_ADMISSION_REQUIRED:
         return Check("photo_archive", True, "Admission gate not enabled yet.")
-    if settings.PHOTO_BACKUP_MODE != "mac_pull":
-        return Check("photo_archive", False, "Mac photo backup is not configured.")
     root = Path(settings.PHOTO_ARCHIVE_ROOT)
     if not root.is_dir():
         return Check("photo_archive", False, "Photo archive volume is not mounted.")
     used = ArchivedImage.objects.aggregate(n=Sum("byte_size"))["n"] or 0
     free = shutil.disk_usage(root).free
-    stale = ArchivedImage.objects.filter(
-        backed_up_at__isnull=True,
-        archived_at__lt=(now or timezone.now()) - timedelta(hours=24),
-    ).count()
-    latest_ack = ArchivedImage.objects.aggregate(at=Max("backed_up_at"))["at"]
-    backup_stale = bool(used and (latest_ack is None or
-                                 latest_ack < (now or timezone.now()) - timedelta(hours=36)))
     okay = (used < settings.PHOTO_ARCHIVE_CAP_BYTES and
-            free >= settings.PHOTO_ARCHIVE_MIN_FREE_BYTES and stale == 0 and
-            not backup_stale)
+            free >= settings.PHOTO_ARCHIVE_MIN_FREE_BYTES)
     return Check("photo_archive", okay,
-                 f"archive={used} bytes; free={free} bytes; unbacked >24h={stale}; "
-                 f"Mac backup stale={backup_stale}",
-                 {"archive_bytes": used, "free_bytes": free, "stale_unbacked": stale,
-                  "mac_backup_stale": backup_stale})
+                 f"archive={used} bytes; free={free} bytes",
+                 {"archive_bytes": used, "free_bytes": free})
 
 
 CHECKS = (check_source_block, check_upstream_outage,
           check_sweep_freshness, check_coverage_progress, check_removal_detection,
           check_failed_runs, check_reject_spike, check_ingest_progress,
-          check_model_staleness, check_backup_freshness, check_photo_archive,
+          check_model_staleness, check_photo_archive,
           check_telegram_configured)
 
 

@@ -77,7 +77,7 @@ class AdVersionPhotoAdmin(ReadOnly):
 
 @admin.register(ArchivedImage)
 class ArchivedImageAdmin(ReadOnly):
-    list_display = ("sha256", "byte_size", "archived_at", "backed_up_at")
+    list_display = ("sha256", "byte_size", "archived_at")
     search_fields = ("sha256",)
 
 
