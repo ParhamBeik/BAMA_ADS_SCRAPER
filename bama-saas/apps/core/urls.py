@@ -16,6 +16,7 @@ urlpatterns = [
     path("models/", views.model_search, name="model-search"),
     path("models/<int:model_pk>/variants/", views.ModelVariantsView.as_view(),
          name="model-variants"),
+    path("models/<int:model_pk>/explore/", views.model_explore, name="model-explore"),
 
     # Listing photos, proxied and cached. Not under /ads/ because it is bytes,
     # not JSON, and it is the one route the SPA points an <img> at.

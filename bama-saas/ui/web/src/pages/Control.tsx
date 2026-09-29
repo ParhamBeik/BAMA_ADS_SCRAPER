@@ -55,6 +55,19 @@ type Health = {
   crawl: Check[];
 };
 
+type DataQuality = {
+  generated_at: string;
+  grain: string;
+  population: Record<string, number>;
+  checks: Record<string, number>;
+  rates: Record<string, number | null>;
+  mixed_model_examples: { id: number; name_fa: string; is_confirmed: boolean }[];
+  affected_examples: Record<string, string[]>;
+  runs_by_day_source: { day: string; source: string; status: string;
+    runs: number; fetched: number; created: number; updated: number;
+    price_changes: number }[];
+};
+
 type JobRow = {
   name: string;
   status: string;
@@ -141,6 +154,11 @@ export function Control() {
     queryFn: ({ signal }) => api.get<Health>("/api/admin/health/", signal),
     refetchInterval: 30_000,
   });
+  const quality = useQuery({
+    queryKey: ["admin-data-quality"],
+    queryFn: ({ signal }) => api.get<DataQuality>("/api/admin/data-quality/", signal),
+    staleTime: 5 * 60_000,
+  });
   const jobs = useQuery({
     queryKey: ["jobs-overview"],
     queryFn: ({ signal }) => api.get<Jobs>("/api/admin/jobs/overview/", signal),
@@ -222,6 +240,58 @@ export function Control() {
                   <p className="stat-sub">{c.detail}</p>
                 </div>
               ))}
+            </div>
+          )}
+        </Async>
+      </Card>
+
+      <Card title="کیفیت داده و شواهد">
+        <Async query={quality}>
+          {(data) => (
+            <div className="stack">
+              <p className="stat-sub" dir="rtl">
+                هر سطر آگهی یک کد دارد؛ نسخه‌ها و مشاهده‌ها جدا هستند. نرخ آگهی‌های
+                فعال با قیمت نقدی: {data.rates.active_cash_price == null
+                  ? "—" : `${(data.rates.active_cash_price * 100).toFixed(1)}٪`}.
+                نشانی عکس، اثبات نسخهٔ ذخیره‌شده نیست.
+              </p>
+              <div className="grid cols-4">
+                <Stat label="در انتظار پذیرش" value={n(data.checks.pending_admission)} />
+                <Stat label="عکس‌های آرشیوشده" value={n(data.checks.verified_photos)} />
+                <Stat label="نسخه‌های نیازمند بازبینی" value={n(data.checks.unreviewed_versions)} />
+              </div>
+              <table className="table inspect-table">
+                <tbody>
+                  {Object.entries(data.checks).map(([name, value]) => (
+                    <tr key={name}><th scope="row"><code>{name}</code></th><td>{n(value)}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+              {data.mixed_model_examples.length > 0 && (
+                <p className="stat-sub" dir="rtl">
+                  مدل‌های دارای چند خانوادهٔ منبع: {data.mixed_model_examples.map(
+                    (model) => `${model.name_fa} (#${model.id}${model.is_confirmed ? "، تأییدشده" : ""})`,
+                  ).join(" · ")}
+                </p>
+              )}
+              {Object.entries(data.affected_examples).map(([reason, codes]) => (
+                <p key={reason} className="stat-sub" dir="rtl">
+                  {reason}: {codes.length ? codes.join(" · ") : "موردی نیست"}
+                </p>
+              ))}
+              <p className="stat-sub" dir="rtl">روند برداشت هفت روز اخیر بر اساس روز و منبع:</p>
+              <table className="table inspect-table">
+                <thead><tr><th>روز</th><th>منبع</th><th>وضعیت</th><th>اجرا</th><th>آگهی</th>
+                  <th>جدید</th><th>به‌روزرسانی</th><th>تغییر قیمت</th></tr></thead>
+                <tbody>{data.runs_by_day_source.map((row, i) => (
+                  <tr key={`${row.day}-${row.source}-${row.status}-${i}`}>
+                    <td>{row.day}</td><td>{row.source}</td><td>{row.status}</td>
+                    <td>{n(row.runs)}</td><td>{n(row.fetched)}</td>
+                    <td>{n(row.created)}</td><td>{n(row.updated)}</td>
+                    <td>{n(row.price_changes)}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
             </div>
           )}
         </Async>

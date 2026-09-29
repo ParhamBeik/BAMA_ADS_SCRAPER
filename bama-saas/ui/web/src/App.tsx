@@ -34,6 +34,9 @@ const Deals = lazy(() => import("./pages/Deals").then((m) => ({ default: m.Deals
 const Explorer = lazy(() =>
   import("./pages/Explorer").then((m) => ({ default: m.Explorer })),
 );
+const ModelExplorer = lazy(() =>
+  import("./pages/ModelExplorer").then((m) => ({ default: m.ModelExplorer })),
+);
 const Signup = lazy(() => import("./pages/Signup").then((m) => ({ default: m.Signup })));
 const Saved = lazy(() => import("./pages/Saved").then((m) => ({ default: m.Saved })));
 const ListingDetail = lazy(() =>
@@ -187,7 +190,9 @@ function AppShell() {
       <main id="main" tabIndex={-1}
             className="mx-auto max-w-[1600px] px-4 pt-2 pb-24 sm:px-6 lg:pb-16">
         <Routes>
-          <Route path="/" element={<Lazy><Home /></Lazy>} />
+          <Route path="/" element={<Navigate to="/models" replace />} />
+          <Route path="/models" element={<Lazy><ModelExplorer /></Lazy>} />
+          <Route path="/pulse" element={<Lazy><Home /></Lazy>} />
           <Route path="/deals" element={<Lazy><Deals /></Lazy>} />
           <Route path="/explore" element={<Lazy><Explorer /></Lazy>} />
           <Route path="/analyse" element={<Lazy><Analyse /></Lazy>} />

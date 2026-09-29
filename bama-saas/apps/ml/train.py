@@ -26,6 +26,7 @@ import math
 from collections import Counter, defaultdict
 from datetime import timedelta
 
+from django.conf import settings
 from django.utils import timezone
 
 from apps.core.models import Ad, ListingEpisode, Model
@@ -95,10 +96,13 @@ def _population():
     verified, priced above the unit-switch sentinel, and not an instalment
     down-payment wearing a lump sum's clothes.
     """
+    states = ([Ad.Admission.READY] if settings.ARCHIVE_ADMISSION_REQUIRED else
+              [Ad.Admission.LEGACY, Ad.Admission.READY])
     return exclude_unclear_price(
         verified(Ad.objects).filter(
             current_price__gt=MIN_PLAUSIBLE_PRICE,
             publish_at__isnull=False,
+            admission_state__in=states,
         )
     )
 
@@ -117,7 +121,8 @@ def _rows(qs, extra_fields: tuple[str, ...] = (), *,
     consumer downstream assumes time order, and ``newest`` only chooses *which*
     rows, not how they are arranged.
     """
-    fields = features.QUERY_FIELDS + extra_fields
+    fields = tuple(dict.fromkeys(features.QUERY_FIELDS + extra_fields +
+                                 ("listing_fingerprint", "reposted_from_id")))
     ordered = qs.order_by("-publish_at" if newest else "publish_at").values(*fields)
     rows = list(ordered[:limit] if limit else ordered)
     return rows[::-1] if newest else rows
@@ -139,7 +144,21 @@ def time_split(rows: list[dict], fraction: float = HOLDOUT_FRACTION
     cut_at = ordered[min(cut_index, len(ordered) - 1)]["publish_at"]
     train = [r for r in ordered if r["publish_at"] < cut_at]
     holdout = [r for r in ordered if r["publish_at"] >= cut_at]
-    return train, holdout
+    # A repost keeps its car identity across source codes. Keep the earliest
+    # occurrence in training and remove its later twin from the evaluation.
+    seen = {r.get("listing_fingerprint") for r in train if r.get("listing_fingerprint")}
+    seen.update(r.get("code") for r in train if r.get("code"))
+    unique_holdout = []
+    for row in holdout:
+        identity = row.get("listing_fingerprint") or row.get("code")
+        if (identity and identity in seen) or (row.get("reposted_from_id") in seen):
+            continue
+        unique_holdout.append(row)
+        if identity:
+            seen.add(identity)
+        if row.get("code"):
+            seen.add(row["code"])
+    return train, unique_holdout
 
 
 def _refusal(name: str, reason: str, **detail) -> dict:
@@ -260,26 +279,12 @@ def train_price() -> dict:
     # baseline rather than a rival to it, which is what keeps the peer median
     # the anchor on every screen.
     #
-    # Each split is anchored on *its own* cohort medians, not on the training
-    # window's. This looks like leakage and is the opposite: it is the only way
-    # to measure what production actually does.
-    #
-    # The peer median is not something this model predicts. It is an observable
-    # input, read at serving time from `DealScoreCache` — which is rebuilt every
-    # tick from the cars that are live *now*, and which includes the ad being
-    # scored in its own cohort. Anchoring a held-out ad on a stale median
-    # instead measures a configuration that is never deployed, and it fails in a
-    # way that looks exactly like model error: with a training-window anchor the
-    # holdout decayed 77.4% -> 68.6% -> 62.2% through time and missed one-sided,
-    # 23.6% above the band against 7.0% below. That is not the model being
-    # wrong about cars. It is the anchor going stale while the market moves.
-    #
-    # The baseline is anchored the same way for the same reason — in production
-    # the peer median is computed from current data for both — so the comparison
-    # stays like-for-like.
+    # Offline evaluation uses only earlier rows for validation and holdout
+    # anchors. This may expose market drift; allowing the target price into its
+    # own peer median would hide that drift and leak the answer.
     fit_table = _median_table(fit_rows)
-    valid_table = _median_table(valid_rows)
-    hold_table = _median_table(holdout)
+    valid_table = fit_table
+    hold_table = _median_table(train)
 
     def _with_offsets(rows, table):
         kept, offsets = [], []
@@ -360,10 +365,9 @@ def train_price() -> dict:
         preds[alpha] = np.exp(widened + hold_offset)
 
     p10, p50, p90 = (list(preds[a]) for a in QUANTILES)
-    # The peer median as production computes it: from the cars live at scoring
-    # time, which is what `compute_deal_scores` writes and what the card prints.
-    # Handing the baseline a stale window while the model gets a current one
-    # would be a rigged comparison in the model's favour.
+    # Historical evaluation must not let a holdout car set its own baseline.
+    # Live scoring can use contemporary peers, but an offline holdout cannot
+    # include its own asking price in the answer being evaluated.
     baseline = [_median_for(hold_table, r) for r in holdout]
     # Only rows the baseline could answer at all — comparing a model that always
     # answers against one that sometimes cannot would flatter whichever side we
@@ -387,7 +391,7 @@ def train_price() -> dict:
     #
     # Scored on the rows where the cohort can produce a band at all, so neither
     # side is credited for the other's refusals.
-    cohort_q = _cohort_quantile_baseline(holdout)
+    cohort_q = _cohort_quantile_baseline(holdout, reference_rows=train)
     q_rows = [i for i in range(len(holdout))
               if all(cohort_q[a][i] for a in QUANTILES)]
     pinball_model = {
@@ -603,7 +607,8 @@ def _rescore_price_incumbent(holdout, hold_offset, q_rows, log_actual, spec):
     return sum(losses.values()) / len(QUANTILES), record
 
 
-def _cohort_quantile_baseline(rows: list[dict], quantiles=QUANTILES) -> dict:
+def _cohort_quantile_baseline(rows: list[dict], quantiles=QUANTILES,
+                              *, reference_rows: list[dict] | None = None) -> dict:
     """The interval the statistical layer can already draw, per holdout row.
 
     The empirical p10/p50/p90 of a car's own cohort, with the same backoff the
@@ -616,7 +621,7 @@ def _cohort_quantile_baseline(rows: list[dict], quantiles=QUANTILES) -> dict:
     so it is not a straw man invented for the gate — it is the incumbent.
     """
     buckets: dict[tuple, list[int]] = defaultdict(list)
-    for r in rows:
+    for r in reference_rows if reference_rows is not None else rows:
         if not r["current_price"] or not r["model_id"]:
             continue
         for key in ((r["model_id"], r["variant_id"], r["year_jalali"]),

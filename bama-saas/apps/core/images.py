@@ -71,6 +71,16 @@ def ad_image_paths(ad) -> tuple[str, list[str]]:
     gallery but no stored thumbnail, so a listing with one photo and a listing
     with twelve are addressed the same way.
     """
+    if settings.ARCHIVE_ADMISSION_REQUIRED:
+        if ad.admission_state != ad.Admission.READY or not ad.current_version_id:
+            return "", []
+        from apps.core.models import AdVersionPhoto
+        positions = list(AdVersionPhoto.objects.filter(
+            version_id=ad.current_version_id, state=AdVersionPhoto.State.VERIFIED,
+        ).order_by("position").values_list("position", flat=True))
+        if not positions:
+            return "", []
+        return thumb_path(ad.code), [proxy_path(ad.code, i) for i in positions]
     gallery = ad.image_urls or []
     if not (ad.primary_image_url or gallery):
         return "", []

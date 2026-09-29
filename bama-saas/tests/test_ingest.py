@@ -12,7 +12,7 @@ from datetime import timezone as tz
 import pytest
 from django.utils import timezone as djtz
 
-from apps.common.parsing import _MAX_GALLERY, extract_ad, parse_publish_time
+from apps.common.parsing import extract_ad, parse_publish_time
 from apps.core.models import (
     Ad,
     Brand,
@@ -313,7 +313,7 @@ def _gallery_payload(n: int = 3) -> dict:
 def test_gallery_is_read_from_the_top_level_not_from_detail():
     """`detail` carries one thumbnail; the gallery is a level up.
 
-    This was handed `detail` alone, so _MAX_GALLERY had never once applied and
+    This was handed `detail` alone, so gallery extraction had never applied and
     every listing in the database had at most one photo.
     """
     primary, gallery = image_urls(_gallery_payload(3))
@@ -340,9 +340,9 @@ def test_a_non_bama_host_is_refused():
     assert (primary, gallery) == ("", [])
 
 
-def test_gallery_is_capped():
+def test_gallery_keeps_all_available_photos():
     _, gallery = image_urls(_gallery_payload(40))
-    assert len(gallery) == _MAX_GALLERY
+    assert len(gallery) == 40
 
 
 @pytest.mark.django_db
@@ -366,12 +366,8 @@ def test_backfill_fills_photos_from_payloads_already_stored(known_catalog):
 
 
 @pytest.mark.django_db
-def test_backfill_deletes_what_it_cannot_fill(known_catalog):
-    """The feed is crawled with image=1, so a photoless ad is out of population.
-
-    Not "kept with a placeholder": these are rows the crawl never meant to
-    collect, and on the board they were cards with nothing to show.
-    """
+def test_backfill_preserves_what_it_cannot_fill(known_catalog):
+    """A missing photo must not cascade-delete price and version evidence."""
     Ad.objects.create(
         code="nophoto1", title="x", current_price=1_000_000_000,
         primary_image_url="", raw_payload={"detail": {"code": "nophoto1"}},
@@ -379,17 +375,13 @@ def test_backfill_deletes_what_it_cannot_fill(known_catalog):
     result = backfill_images()
 
     assert result["filled"] == 0
-    # Ads, not CASCADEd rows: the first production run reported 155,240 for the
-    # 8,889 ads it actually removed, because `.delete()` counts everything it
-    # reached through observations, versions, episodes and prices.
-    assert result["pruned"] == 1
-    assert not Ad.objects.filter(code="nophoto1").exists()
+    assert result["pruned"] == 0
+    assert Ad.objects.filter(code="nophoto1").exists()
 
 
 @pytest.mark.django_db
-def test_backfill_fills_before_it_prunes(known_catalog):
-    """Order matters: reversed, this would delete every row whose photo was
-    merely unread — ~28,500 of them in production."""
+def test_backfill_fills_and_preserves_unfilled(known_catalog):
+    """Photo repair fills recoverable galleries without deleting other ads."""
     Ad.objects.create(
         code="fillme01", title="x", current_price=1_000_000_000,
         primary_image_url="", image_urls=[], raw_payload=_gallery_payload(2),
@@ -401,9 +393,9 @@ def test_backfill_fills_before_it_prunes(known_catalog):
 
     result = backfill_images()
 
-    assert result == {"scanned": 2, "filled": 1, "pruned": 1, "remaining": 0}
+    assert result == {"scanned": 2, "filled": 1, "pruned": 0, "remaining": 1}
     assert Ad.objects.filter(code="fillme01").exists()
-    assert not Ad.objects.filter(code="dropme01").exists()
+    assert Ad.objects.filter(code="dropme01").exists()
 
 
 @pytest.mark.django_db
@@ -499,9 +491,23 @@ def test_a_model_bama_files_as_a_brand_lands_under_its_real_make(make_payload):
     assert brand_of("ikco001") == "ایران خودرو"
     assert brand_of("saipa01") == "سایپا"
     assert brand_of("chery01") == "چری", "a real make must pass through untouched"
-    assert Ad.objects.get(code="ikco001").model.name_fa == "سمند LX", (
-        "the model keeps the identity the brand column gave up"
-    )
+    assert Ad.objects.get(code="ikco001").model.name_fa == "سمند"
+    assert "سمند LX" in Ad.objects.get(code="ikco001").variant.name_fa
+
+
+@pytest.mark.django_db
+def test_peugeot_206_207_families_stay_distinct(make_payload):
+    run = FetchRun.objects.create(source=FetchRun.Source.LIVE_FETCH)
+    for code, source_model in (("pilot206", "206 SD"), ("pilot207", "207 صندوقدار")):
+        payload = make_payload(code, 3_000_000_000, brand="پژو", model=source_model)
+        _ing(extract_ad(payload, NOW), run=run, observed_at=NOW, publish_at=NOW)
+    first = Ad.objects.get(code="pilot206")
+    second = Ad.objects.get(code="pilot207")
+    assert first.model.name_fa == "206"
+    assert second.model.name_fa == "207"
+    assert "SD" in first.variant.name_fa
+    assert "صندوقدار" in second.variant.name_fa
+    assert first.current_version.classification_state == "verified"
     assert not Brand.objects.filter(name_fa__in=["سمند", "پراید"]).exists()
 
 
@@ -1175,8 +1181,10 @@ def test_pruned_counts_ads_not_cascaded_rows(known_catalog, make_payload):
     )
     assert PriceObservation.objects.filter(ad__code="cascade1").exists(), "needs cascade rows"
 
-    # 1 ad, not the handful of related rows deleted alongside it.
-    assert backfill_images()["pruned"] == 1
+    # History is never deleted as a side effect of photo repair.
+    assert backfill_images()["pruned"] == 0
+    assert Ad.objects.filter(code="cascade1").exists()
+    assert PriceObservation.objects.filter(ad__code="cascade1").exists()
 
 
 # ===========================================================================

@@ -46,11 +46,9 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
  * lives in the account menu so the main nav stays the product.
  */
 export const NAV = [
-  { to: "/", label: "نبض بازار", icon: Sparkles, end: true },
-  { to: "/budget", label: "بودجه من", icon: Wallet, end: false },
-  { to: "/deals", label: "معامله‌ها", icon: Percent, end: false },
-  { to: "/explore", label: "جست‌وجو", icon: Search, end: false },
-  { to: "/analyse", label: "تحلیل", icon: BarChart3, end: false },
+  { to: "/models", label: "کاوش مدل", icon: Sparkles, end: false },
+  { to: "/explore", label: "آگهی‌ها", icon: Search, end: false },
+  { to: "/saved", label: "فهرست من", icon: Bookmark, end: false },
 ];
 
 const THEME_OPTIONS: { value: ThemeChoice; label: string; Icon: typeof Sun }[] = [
@@ -123,6 +121,23 @@ function AccountMenu() {
             <Activity className="size-4" /> کنترل خزنده
           </DropdownMenuItem>
         )}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => navigate("/pulse")}>
+          <Sparkles className="size-4" /> نبض بازار
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => navigate("/analyse")}>
+          <BarChart3 className="size-4" /> تحلیل بازار
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => navigate("/deals")}>
+          <Percent className="size-4" /> معامله‌ها
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => navigate("/budget")}>
+          <Wallet className="size-4" /> بودجه من
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => navigate("/alerts")}>
+          <Bell className="size-4" /> هشدارها
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => navigate("/account")}>
           <Settings className="size-4" /> حساب و گذرواژه
         </DropdownMenuItem>
