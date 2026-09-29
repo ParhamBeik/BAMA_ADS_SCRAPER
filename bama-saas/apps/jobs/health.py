@@ -1,4 +1,4 @@
-"""Crawl health: ten checks over what the crawl already records.
+"""Crawl health: eleven checks over what the crawl already records.
 
 Every failure mode here was already *detectable* — FetchRun stores status and
 stop_reason, PageCoverage stores which ranks were read, IngestReject stores
