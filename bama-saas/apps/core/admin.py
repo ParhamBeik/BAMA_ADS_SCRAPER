@@ -6,7 +6,6 @@ pruning all read as ground truth.
 """
 
 from django.contrib import admin
-from django.utils import timezone
 
 from apps.core.models import (
     Ad,
@@ -20,7 +19,6 @@ from apps.core.models import (
     ListingEpisode,
     NotifierSettings,
     PageCoverage,
-    SourceModelAlias,
 )
 
 
@@ -47,17 +45,6 @@ class AdAdmin(admin.ModelAdmin):
     list_filter = ("status", "admission_state", "brand", "category", "transmission")
     search_fields = ("code", "title")
     date_hierarchy = "publish_at"
-
-
-@admin.register(SourceModelAlias)
-class SourceModelAliasAdmin(admin.ModelAdmin):
-    list_display = ("source_family", "model", "reviewed", "reviewed_at")
-    list_filter = ("reviewed",)
-    search_fields = ("source_family", "model__name_fa")
-
-    def save_model(self, request, obj, form, change):
-        obj.reviewed_at = timezone.now() if obj.reviewed else None
-        super().save_model(request, obj, form, change)
 
 
 @admin.register(AdVersion)

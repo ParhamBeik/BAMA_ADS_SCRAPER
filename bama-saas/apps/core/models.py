@@ -249,6 +249,11 @@ class Ad(models.Model):
     description = models.TextField(blank=True, default="")
     primary_image_url = models.URLField(max_length=500, blank=True, default="")
     image_urls = models.JSONField(default=list, blank=True)
+    # Set by the ``image_sweep`` job. A cover the CDN now refuses hides the ad
+    # from every listing surface; it is not deleted, because its photo was fine
+    # while it was listed and its price history is still true.
+    image_checked_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    image_dead_at = models.DateTimeField(null=True, blank=True)
     description_length = models.IntegerField(null=True, blank=True)
     seller_authenticated = models.BooleanField(null=True, blank=True)
     # The source's own last-modified stamp. Excluded from the semantic hash (it
@@ -386,7 +391,7 @@ class Ad(models.Model):
         Local import: `quality` reaches back into this module for `verified_by_ad`,
         so importing it at module scope closes a cycle.
         """
-        from apps.core.normalization import search_document
+        from apps.core.normalization import ad_search_document
         from apps.core.quality import price_basis_unclear
 
         self.price_basis_unclear = price_basis_unclear(
@@ -395,7 +400,7 @@ class Ad(models.Model):
         )
         model_name = self.model.name_fa if self.model_id else ""
         brand_name = self.brand.name_fa if self.brand_id else ""
-        self.search_text = search_document(self.title, model_name, brand_name, self.description)
+        self.search_text = ad_search_document(self.title, model_name, brand_name, self.description)
         if (fields := kwargs.get("update_fields")) is not None:
             kwargs["update_fields"] = {*fields, "price_basis_unclear", "search_text"}
         super().save(*args, **kwargs)
@@ -592,19 +597,6 @@ class AdVersion(models.Model):
 
     def __str__(self) -> str:
         return f"{self.ad_id} {self.semantic_hash[:8]}"
-
-
-class SourceModelAlias(models.Model):
-    """Reviewed mapping from Bama's source family to a canonical car model."""
-
-    source_family = models.CharField(max_length=160, unique=True)
-    model = models.ForeignKey(Model, on_delete=models.PROTECT, related_name="source_aliases")
-    reviewed = models.BooleanField(default=False, db_index=True)
-    note = models.TextField(blank=True)
-    reviewed_at = models.DateTimeField(null=True, blank=True)
-
-    class Meta:
-        db_table = "catalog_sourcemodelalias"
 
 
 class ArchivedImage(models.Model):

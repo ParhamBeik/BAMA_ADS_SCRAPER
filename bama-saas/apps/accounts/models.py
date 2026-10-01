@@ -121,7 +121,7 @@ class ScopedToACar(models.Model):
     """
 
     # Brand is a slug rather than an FK for the same reason MarketIndex.scope_id
-    # is text: `ingest` mints brand slugs, `BRAND_PARENT` remaps them, and a
+    # is text: `ingest` mints brand slugs, the taxonomy re-files them, and a
     # hard FK would turn a catalogue merge into a cascade across user data.
     brand_slug = models.CharField(max_length=160, blank=True)
     model = models.ForeignKey("core.Model", on_delete=models.CASCADE,

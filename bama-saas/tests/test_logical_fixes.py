@@ -100,7 +100,7 @@ def test_ad_filter_tokenized_persian_search():
     # Search with Persian numbers "پژو ۲۰۶"
     qs_persian = AdFilter({"q": "پژو ۲۰۶"}, queryset=Ad.objects.all()).qs
     assert qs_persian.filter(code=ad.code).exists()
-    assert ad.search_text == "پژو 206 206 پژو"
+    assert ad.search_text == "پژو 206 206 پژو ایران خودرو"  # maker is searchable too
 
 
 @pytest.mark.django_db

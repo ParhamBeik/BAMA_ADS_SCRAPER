@@ -15,7 +15,8 @@ from datetime import timedelta
 from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction
-from django.db.models import Count, Q
+from django.db.models import Count, F, Q
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from apps.common.parsing import image_urls
@@ -942,6 +943,49 @@ def prune(*, days: int = PRUNE_DEFAULT_DAYS, dry_run: bool = False) -> dict:
 
 
 _IMAGE_BACKFILL_BATCH = 500
+
+
+# Sized so every active ad's cover is re-checked about daily from the ~30 min
+# warm cadence: 31.5k active ads / 48 ticks ≈ 660. One small ranged GET each.
+IMAGE_SWEEP_BATCH = 700
+# Stop a tick after this many answers in a row that say nothing: the CDN or
+# our egress is in trouble, and pressing on would only add requests to it.
+IMAGE_SWEEP_UNKNOWN_STREAK = 20
+
+
+def image_sweep(*, limit: int = IMAGE_SWEEP_BATCH) -> dict:
+    """Re-check active ads' cover photos, least recently checked first.
+
+    An ad exists only with a working photo. A definite refusal hides the ad
+    (``image_dead_at``) until a later check finds the picture again; unknown
+    answers change nothing.
+    """
+    from apps.core.images import cover_status
+
+    now = timezone.now()
+    qs = (Ad.objects.filter(status=Ad.Status.ACTIVE)
+          .filter(Q(image_checked_at__isnull=True) |
+                  Q(image_checked_at__lt=now - timedelta(hours=20)))
+          .order_by(F("image_checked_at").asc(nulls_first=True))
+          .only("code", "primary_image_url", "image_urls")[:limit])
+    counts: Counter = Counter()
+    streak = 0
+    for ad in qs:
+        verdict = cover_status(ad.primary_image_url or next(iter(ad.image_urls or []), ""))
+        counts[verdict] += 1
+        if verdict == "unknown":
+            streak += 1
+            if streak >= IMAGE_SWEEP_UNKNOWN_STREAK:
+                counts["stopped_early"] = 1
+                break
+            continue
+        streak = 0
+        Ad.objects.filter(pk=ad.pk).update(
+            image_checked_at=timezone.now(),
+            image_dead_at=(None if verdict == "alive"
+                           else Coalesce(F("image_dead_at"), timezone.now())),
+        )
+    return dict(counts)
 
 
 def backfill_images(*, limit: int | None = None, prune: bool = False) -> dict:

@@ -93,9 +93,19 @@ def verified_by_ad(qs, field: str = "ad"):
 # Written to run unchanged in both Python's `re` and Postgres' POSIX engine, so
 # the queryset filter and the per-row badge can never disagree about one ad.
 # `.?` absorbs the optional space or ZWNJ ("پیش فروش" / "پیش‌فروش").
+#
+# Only words that say the *listed price* is not a car's cash price: an allocation
+# (حواله), a pre-sale or registration (پیش فروش, ثبت نام, a delivery lead time),
+# a deposit (پیش پرداخت) or staged payment (مرحله ای). Financing vocabulary
+# (اقساط, قسط, لیزینگ) is deliberately absent: measured 2026-09-29 on a labelled
+# sample it had 0.44 precision, because the most common dealer boilerplate is
+# "معاوضه و اقساط نداریم فقط فروش نقدی" — cash only — and used-car sellers
+# offer optional financing on a full cash price. Dropping it cleared 1,133
+# active cash ads at unchanged recall. Too-cheap deposits without any of these
+# words are caught by the cohort floor in ``purge_ineligible``, not here.
 FINANCE = (
-    r"اقساط|قسط|لیزینگ|حواله|عاملیت"
-    r"|پیش.?پرداخت|پیش.?فروش|ثبت.?نام|مرحله.?ای|چک.?ضمانت"
+    r"حواله|پیش.?پرداخت|پیش.?فروش|ثبت.?نام|مرحله.?ای"
+    r"|تحویل.{0,3}[0-9۰-۹]+.{0,3}(روزه|ماهه|روز.?کاری)"
 )
 
 # Reasons a car is honestly cheap, read off the seller's prose. Badge material,

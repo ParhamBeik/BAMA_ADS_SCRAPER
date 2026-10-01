@@ -185,3 +185,36 @@ def fetch(url: str) -> tuple[str, bytes] | None:
     value = (content_type, bytes(body))
     cache.set(key, value, settings.IMAGE_CACHE_SECONDS)
     return value
+
+
+# Answers that mean the picture is gone for good. Bama deletes an ad's photos
+# when the ad comes down (sampled 2026-09-29: 22 of 25 removed ads' covers 403,
+# 25 of 25 active ones 200), so these are a statement about the listing.
+DEAD_IMAGE_STATUSES = frozenset({403, 404, 410})
+
+
+def cover_status(url: str) -> str:
+    """``"alive"``, ``"dead"`` or ``"unknown"`` for one CDN image, from 2 KB.
+
+    Only a definite answer counts: a timeout, a 5xx, an HTML page or an active
+    crawl block says nothing about the picture, and hiding an ad on one of
+    those would report our own network trouble as the listing's.
+    """
+    if not url or not is_cdn_url(url) or consecutive_blocks():
+        return "unknown"
+    try:
+        with requests.get(
+            url,
+            headers={**HEADERS, "Accept": "image/*", "Range": "bytes=0-2047"},
+            timeout=IMAGE_FETCH_TIMEOUT,
+            stream=True,
+        ) as response:
+            if response.status_code in DEAD_IMAGE_STATUSES:
+                return "dead"
+            content_type = (response.headers.get("Content-Type") or "").split(";")[0]
+            if (response.status_code in (200, 206) and is_cdn_url(response.url)
+                    and content_type.strip().lower() in ALLOWED_IMAGE_TYPES):
+                return "alive"
+    except requests.RequestException as exc:
+        log.warning("images: cover check %s failed: %s", url, exc)
+    return "unknown"

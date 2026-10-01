@@ -1,34 +1,33 @@
-# Data quality and model explorer rollout
+# Data quality rollout: canonical identity, cash price, working photo
 
-The new schema keeps all existing `AdVersion`, `AdObservation`, and
-`PriceObservation` rows. `ARCHIVE_ADMISSION_REQUIRED` defaults to `false`; the
-production catalog must stay on that setting until the archive and identity
-backfill have been reviewed. PostgreSQL remains the source of truth.
+An ad exists in the catalog only with a cash price and a working photo, and each
+real car has exactly one catalog model. PostgreSQL remains the source of truth.
 
-1. Mount `/archive` on persistent VPS storage. Set the archive cap to 5 GiB
-   and reserve 8 GiB free. Catalog admission verifies the local photo file's
-   size and SHA-256 along with cash price and reviewed identity.
-2. Run `python manage.py migrate`, then `python manage.py audit_data
-   --cleanup-preview` and save its JSON. The preview only simulates exclusion
-   from the verified catalog; it never deletes observations or ads.
-3. Run `python manage.py backfill_evidence --pilot --limit 100000` and review
-   the 206/207 counts. Create reviewed `SourceModelAlias` records in staff admin
-   for ambiguous families. Only then run the same command with `--apply`.
-   Both scoped passes select ads by their current source identity. Review
-   historical versions whose ad code now names a different car as identity
-   conflicts.
-   Repeat with `--known-mixed` for known merged families, then without either
-   selector for the remaining catalog.
-4. Run the `photo_archive` job in the `worker` container, which has the writable
-   `/archive` mount. Check `/api/admin/data-quality/` and compare a second
-   `audit_data --cleanup-preview` JSON with the first. Rebuild snapshots and
-   deal scores after identity changes; retrain pricing on the repost-deduplicated
-   time holdout before promoting a learned model.
-5. Enable `ARCHIVE_ADMISSION_REQUIRED=true` only after the staff report shows
-   the expected verified population and local photo health. A new cash-priced ad
-   waits for an archived image and reviewed identity. Failed photos, ambiguous
-   identity, and legacy photo evidence stay outside the verified catalog.
+## What ships
 
-Production deployment, data deletion, and enabling the admission flag require
-separate authorization. The application does not infer a sale from a blocked
-detail request or an incomplete feed sweep.
+- `apps/core/taxonomy.csv` — the reviewed map from Bama's
+  `(brand_fa, title model)` to `(model, trim prefix)`. Brand is the badge Bama
+  sends; the maker (`normalization.MANUFACTURER`) is searchable. A pair missing
+  from the file keeps Bama's labels and is marked `needs_review`; add it here.
+- Ingest refuses new ads with no cash price (`cash_price_required`) or no photo
+  (`photo_missing`).
+- `price_basis_unclear` no longer fires on financing words; migration 0039
+  recomputes it for every stored ad.
+- `image_sweep` (warm cadence) re-checks active covers about daily; a cover the
+  CDN refuses hides the ad (`image_dead_at`) without deleting it.
+- Brand/model/variant pickers list only rows some ad uses.
+
+## Production order
+
+Each step needs explicit authorization. Stop `bama-worker` for steps 2 and 4:
+both hold row locks for minutes.
+
+1. Deploy (runs migrations 0037–0039).
+2. `python manage.py canonicalize_catalog` — dry run, rolled back. Review
+   `ads_changed`, `unmapped_pairs`, `snapshots`, `orphan_variants_unresolved`,
+   `deleted`. Then `--apply`.
+3. Rebuild analytics: `snapshot`, `market_index`, `deal_scores`, `ml_score`.
+4. `python manage.py purge_ineligible` — dry run. Review counts, then
+   `--apply`. **Irreversible.**
+5. Confirm: no unconfirmed models with ads, no empty models or variants, listing
+   counts match `scorable_rows()`.
