@@ -984,7 +984,7 @@ def train_model_text() -> dict:
     already has a model. What there is instead is *fragmentation*: one car
     arriving under two spellings mints two ``Model`` rows, splits its cohort in
     half, and quietly costs both halves the ``MIN_PEERS`` threshold. That is the
-    same class of problem ``ingest.BRAND_PARENT`` fixes by hand one brand at a
+    same class of problem ``core.taxonomy`` fixes by hand one pair at a
     time.
 
     So the classifier is trained on the confident majority of the catalogue and

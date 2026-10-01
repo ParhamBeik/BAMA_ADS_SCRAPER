@@ -187,6 +187,7 @@ def extract_ad(payload: dict[str, Any], observed_at: datetime) -> dict[str, Any]
         "code": str(code),
         "title": detail.get("title"),
         "brand": detail.get("brand_fa") or (title_parts[0] if title_parts else None),
+        "brand_en": detail.get("brand"),
         "model": title_parts[1] if len(title_parts) > 1 else None,
         "trim": detail.get("trim"),
         "year": parse_int(detail.get("year"), positive=True),

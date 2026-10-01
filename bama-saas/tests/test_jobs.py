@@ -248,7 +248,7 @@ def test_warm_cadence_skips_fetch_and_deals(stub_jobs):
 
     assert "fetch" not in seen and "deal_scores" not in seen
     assert [s.name for s in report.steps] == [
-        "link_reposts", "episodes", "snapshot", "market_index", "health",
+        "link_reposts", "episodes", "snapshot", "market_index", "image_sweep", "health",
     ]
 
 

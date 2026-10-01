@@ -9,7 +9,14 @@ disagree.
 from django.db import migrations, models
 from django.utils.text import slugify
 
-from apps.jobs.ingest import BRAND_PARENT
+# Frozen copy of the table ingest used when this migration was written; ingest
+# no longer folds badges into their maker (see apps.core.taxonomy).
+BRAND_PARENT = {
+    **dict.fromkeys(["سمند", "دنا", "رانا", "تارا", "ری‌را", "ریرا", "آریسان", "سورن",
+                     "روآ"], "ایران خودرو"),
+    **dict.fromkeys(["پراید", "تیبا", "کوییک", "ساینا", "شاهین", "آریو", "سهند", "اطلس",
+                     "زاگرس"], "سایپا"),
+}
 
 
 def _merge_variants(Variant, Ad, old_model, new_model):

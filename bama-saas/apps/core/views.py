@@ -81,7 +81,9 @@ MARKETS_CACHE_SECONDS = 120
 
 
 class BrandViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Brand.objects.all()
+    # Pickers list only catalog rows some ad uses: an empty row is a leftover
+    # of an old identity rule, and showing it offers a car nobody can find.
+    queryset = Brand.objects.filter(ads__isnull=False).distinct()
     serializer_class = BrandSerializer
     lookup_field = "slug"
     pagination_class = None
@@ -93,7 +95,8 @@ class BrandModelsView(ListAPIView):
 
     def get_queryset(self):
         brand = get_object_or_404(Brand, slug=self.kwargs["brand_slug"])
-        return Model.objects.filter(brand=brand).order_by("name_fa")
+        return (Model.objects.filter(brand=brand, ads__isnull=False).distinct()
+                .order_by("name_fa"))
 
 
 class ModelVariantsView(ListAPIView):
@@ -102,7 +105,8 @@ class ModelVariantsView(ListAPIView):
 
     def get_queryset(self):
         model = get_object_or_404(Model, pk=self.kwargs["model_pk"])
-        return Variant.objects.filter(model=model).order_by("name_fa")
+        return (Variant.objects.filter(model=model, ads__isnull=False).distinct()
+                .order_by("name_fa"))
 
 
 # How many models a search returns. The catalog has a long tail of one-listing
