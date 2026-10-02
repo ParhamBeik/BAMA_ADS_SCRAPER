@@ -5,7 +5,7 @@ from rest_framework import serializers
 from apps.common.verify import MAX_PLAUSIBLE_MILEAGE
 from apps.core import images
 from apps.core.admission import verified_local_photo
-from apps.core.models import Ad, AdVersionPhoto, Brand, Model, NotifierSettings, Variant
+from apps.core.models import Ad, AdVersionPhoto, Brand, NotifierSettings, Variant
 from apps.core.pricing import MIN_PEERS
 from apps.core.quality import condition_discounted
 
@@ -14,14 +14,6 @@ class BrandSerializer(serializers.ModelSerializer):
     class Meta:
         model = Brand
         fields = ("slug", "name_fa", "name_en", "aliases")
-
-
-class ModelSerializer(serializers.ModelSerializer):
-    brand_slug = serializers.SlugRelatedField(source="brand", slug_field="slug", read_only=True)
-
-    class Meta:
-        model = Model
-        fields = ("id", "brand_slug", "name_fa")
 
 
 class VariantSerializer(serializers.ModelSerializer):

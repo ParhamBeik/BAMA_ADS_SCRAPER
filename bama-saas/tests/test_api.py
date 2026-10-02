@@ -214,19 +214,6 @@ def test_brands_list(api_client, catalog):
 
 
 @pytest.mark.django_db
-def test_brand_models_list(api_client, catalog):
-    brand = catalog["brand"]
-    resp = api_client.get(f"/api/brands/{brand.slug}/models/")
-    assert resp.status_code == 200, resp.content
-    body = resp.json()
-    assert isinstance(body, list)
-    assert any(m["id"] == catalog["model"].id for m in body)
-    # ModelSerializer fields: id, brand_slug, name_fa.
-    assert set(body[0].keys()) == {"id", "brand_slug", "name_fa"}
-    assert body[0]["brand_slug"] == brand.slug
-
-
-@pytest.mark.django_db
 def test_model_variants_list(api_client, catalog):
     model = catalog["model"]
     resp = api_client.get(f"/api/models/{model.id}/variants/")
@@ -2230,7 +2217,6 @@ def test_public_reads_permission_boundary(anonymous_client, catalog):
     """Anonymous access to public read endpoints respects API_PUBLIC_READS."""
     endpoints = [
         "/api/brands/",
-        f"/api/brands/{catalog['brand'].slug}/models/",
         f"/api/models/{catalog['model'].id}/variants/",
         "/api/ads/",
         "/api/markets/",

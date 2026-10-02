@@ -148,8 +148,7 @@ detection cannot depend on a job that usually dies halfway.
 Everything under `/api/`. Health: `/api/health/`, `/api/db/health/`.
 
 - **Auth** — `/api/auth/{me,register,login,logout,logout-everywhere,password}/`
-- **Catalog** — `/api/brands/`, `/api/brands/<slug>/models/`,
-  `/api/models/?q=&brand=` (searchable, with listing counts) or `?id=` (resolve
+- **Catalog** — `/api/brands/`, `/api/models/?q=&brand=` (searchable, with listing counts) or `?id=` (resolve
   one model, so a shared link can name the car it is about),
   `/api/models/<pk>/variants/`, `/api/ads/`, `/api/ads/<code>/`
 - **Photos** — `/api/img/<code>/<n>/`, proxied and Redis-cached
