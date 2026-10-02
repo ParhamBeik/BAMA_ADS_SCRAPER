@@ -282,6 +282,17 @@ class AdViewSet(viewsets.ReadOnlyModelViewSet):
 # ---------------------------------------------------------------------------
 
 
+def _archived_response(photo):
+    """The archived bytes for one verified photo, or None when the file is gone."""
+    path = Path(settings.PHOTO_ARCHIVE_ROOT) / photo.asset.relative_path
+    if not path.is_file():
+        return None
+    response = FileResponse(path.open("rb"), content_type=photo.asset.content_type)
+    response["Cache-Control"] = "private, max-age=2592000, immutable"
+    response["ETag"] = f'"{photo.asset_id}"'
+    return response
+
+
 @api_view(["GET"])
 @throttle_classes([])
 def listing_image(request, code: str, index: int | None = None):
@@ -314,14 +325,18 @@ def listing_image(request, code: str, index: int | None = None):
         if not photo or not photo.asset_id or ad.admission_state != Ad.Admission.READY:
             return Response({"detail": "archived image unavailable"},
                             status=status.HTTP_404_NOT_FOUND)
-        path = Path(settings.PHOTO_ARCHIVE_ROOT) / photo.asset.relative_path
-        if not path.is_file():
-            return Response({"detail": "archived image missing"},
-                            status=status.HTTP_503_SERVICE_UNAVAILABLE)
-        response = FileResponse(path.open("rb"), content_type=photo.asset.content_type)
-        response["Cache-Control"] = "private, max-age=2592000, immutable"
-        response["ETag"] = f'"{photo.asset_id}"'
-        return response
+        response = _archived_response(photo)
+        return response or Response({"detail": "archived image missing"},
+                                    status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    if index is None:
+        # Storage policy: the front photo lives on the VPS when archived, so a
+        # card keeps its picture after Bama deletes the listing's CDN copy.
+        front = (AdVersionPhoto.objects.select_related("asset")
+                 .filter(version_id=ad.current_version_id, position=0,
+                         state=AdVersionPhoto.State.VERIFIED, asset__isnull=False).first())
+        response = front and _archived_response(front)
+        if response:
+            return response
     url = images.source_url(ad, index)
     if not url:
         return Response({"detail": "no such image"}, status=status.HTTP_404_NOT_FOUND)

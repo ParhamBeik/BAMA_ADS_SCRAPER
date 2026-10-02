@@ -898,7 +898,8 @@ def probe_depth(*, request_timeout: int | None = None) -> dict:
 # Housekeeping
 # ---------------------------------------------------------------------------
 
-PRUNE_DEFAULT_DAYS = 30
+# Storage policy: observations are provenance, read only for the latest run.
+PRUNE_DEFAULT_DAYS = 7
 _PRUNE_BATCH = 5000
 
 

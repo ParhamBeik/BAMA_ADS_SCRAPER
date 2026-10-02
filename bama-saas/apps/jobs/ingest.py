@@ -533,12 +533,16 @@ def _ingest_ad(extracted, *, run, observed_at, publish_at, dealer=None, rank=Non
     if not ad.current_version_id or ad.last_seen_at == observed_at:
         Ad.objects.filter(pk=ad.pk).update(current_version=version)
         ad.current_version = version
-    if settings.ARCHIVE_ADMISSION_REQUIRED:
-        _, gallery = image_urls(payload)
+    # Storage policy (docs/STORAGE-POLICY.md): only the front photo is kept on
+    # the VPS; the rest of the gallery stays a CDN link in `image_urls`.
+    primary, gallery = image_urls(payload)
+    front = primary or (gallery[0] if gallery else "")
+    if front:
         AdVersionPhoto.objects.bulk_create(
-            [AdVersionPhoto(version=version, position=i, source_url=url)
-             for i, url in enumerate(gallery)], ignore_conflicts=True,
+            [AdVersionPhoto(version=version, position=0, source_url=front)],
+            ignore_conflicts=True,
         )
+    if settings.ARCHIVE_ADMISSION_REQUIRED:
         from apps.core.admission import sync_admission
         sync_admission(ad)
 
