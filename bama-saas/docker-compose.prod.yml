@@ -100,6 +100,9 @@ services:
     image: postgres:16-alpine
     container_name: bama-postgres
     restart: unless-stopped
+    # Docker's default /dev/shm is 64 MB; parallel hash joins over large tables
+    # failed with "could not resize shared memory segment" (photo_archive, 2026-10-02).
+    shm_size: 256mb
     logging: *logging
     command: >
       postgres -c shared_buffers=512MB
