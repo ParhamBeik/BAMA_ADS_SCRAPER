@@ -141,7 +141,10 @@ services:
     networks: [internal]
 
   django:
-    build: .
+    build:
+      context: .
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
     container_name: bama-django
     restart: unless-stopped
     logging: *logging
@@ -221,7 +224,10 @@ services:
         aliases: [bama-frontend]
 
   worker:
-    build: .
+    build:
+      context: .
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
     container_name: bama-worker
     restart: unless-stopped
     logging: *logging
@@ -246,7 +252,10 @@ services:
   # would otherwise show up as the crawl mysteriously slowing down. `cpus`
   # caps it so a fit cannot starve gunicorn even so.
   ml:
-    build: .
+    build:
+      context: .
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
     container_name: bama-ml
     restart: unless-stopped
     logging: *logging
