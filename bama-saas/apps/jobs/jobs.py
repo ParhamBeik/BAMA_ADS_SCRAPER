@@ -898,7 +898,7 @@ def probe_depth(*, request_timeout: int | None = None) -> dict:
 # Housekeeping
 # ---------------------------------------------------------------------------
 
-# Storage policy: observations are provenance, read only for the latest run.
+# Storage policy: observations are change-only provenance, read only for the latest run.
 PRUNE_DEFAULT_DAYS = 7
 _PRUNE_BATCH = 5000
 

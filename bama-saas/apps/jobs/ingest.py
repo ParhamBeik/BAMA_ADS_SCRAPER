@@ -546,17 +546,6 @@ def _ingest_ad(extracted, *, run, observed_at, publish_at, dealer=None, rank=Non
         from apps.core.admission import sync_admission
         sync_admission(ad)
 
-    # 3) One observation per (run, ad). History replay knows the pair is unique,
-    # so it can skip get_or_create's SELECT.
-    observation_fields = {
-        "version": version, "observed_at": observed_at, "raw_hash": raw_hash,
-        "rank": rank, "publish_phrase": extracted.get("publish_phrase") or "",
-    }
-    if run and run.source == FetchRun.Source.HISTORY_REPLAY:
-        AdObservation.objects.create(fetch_run=run, ad=ad, **observation_fields)
-    else:
-        AdObservation.objects.get_or_create(fetch_run=run, ad=ad, defaults=observation_fields)
-
     # 4) Change-only price: append only when the fingerprint differs from the
     # ad's immediately-preceding observation.
     price_fp = fingerprint(payload.get("price") or {})
@@ -589,6 +578,21 @@ def _ingest_ad(extracted, *, run, observed_at, publish_at, dealer=None, rank=Non
                 drop_pct=round((old_price - new_price) / old_price * 100, 2),
                 observed_at=observed_at,
             )
+
+    # 5) Change-only sighting (docs/STORAGE-POLICY.md): an AdObservation is written
+    # only when the ad is new, its content changed, or its price changed. An
+    # unchanged re-sighting only moves `Ad.last_seen_at`. One per (run, ad); history
+    # replay knows the pair is unique, so it can skip get_or_create's SELECT.
+    if created or version_created or price_changed:
+        observation_fields = {
+            "version": version, "observed_at": observed_at, "raw_hash": raw_hash,
+            "rank": rank, "publish_phrase": extracted.get("publish_phrase") or "",
+        }
+        if run and run.source == FetchRun.Source.HISTORY_REPLAY:
+            AdObservation.objects.create(fetch_run=run, ad=ad, **observation_fields)
+        else:
+            AdObservation.objects.get_or_create(fetch_run=run, ad=ad,
+                                                defaults=observation_fields)
 
     return IngestResult(ad=ad, created=created, price_changed=price_changed,
                         version_created=version_created, flags=tuple(quality_flags))

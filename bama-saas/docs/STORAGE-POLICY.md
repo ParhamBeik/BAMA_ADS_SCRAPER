@@ -12,9 +12,12 @@ column, a volume, a downloader or a cache.
 2. **Every other photo is a link.** The gallery lives in `Ad.image_urls` and is
    served through the image proxy (Redis cache, then redirect). Never archive
    gallery photos or photos of old versions.
-3. **Observations are short-lived provenance.** `prune` deletes
-   `AdObservation` rows older than `PRUNE_DEFAULT_DAYS` (7). Lifecycle analytics
-   read `ListingEpisode`, not observations.
+3. **Record changes, not sightings.** An `AdObservation` is written only when
+   an ad is new, its content changed (new `AdVersion`) or its price changed
+   (new `PriceObservation`). An unchanged re-sighting only updates
+   `Ad.last_seen_at`. `prune` still drops observations older than
+   `PRUNE_DEFAULT_DAYS` (7); the durable change history is `AdVersion` +
+   `PriceObservation`, and lifecycle analytics read `ListingEpisode`.
 4. **Keep version history.** `AdVersion.payload` is the only record of how an ad
    changed; do not drop it.
 5. **No backups or second copies** on the VPS, the Mac or external drives,
