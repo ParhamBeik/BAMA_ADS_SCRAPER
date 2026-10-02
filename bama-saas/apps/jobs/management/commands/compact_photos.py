@@ -18,7 +18,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand
 from django.db.models import F, Q
 
-from apps.common.parsing import is_cdn_url
+from apps.common.parsing import front_photo, is_cdn_url
 from apps.core.models import Ad, AdVersionPhoto, ArchivedImage
 from apps.jobs.jobs import _batched_delete
 
@@ -61,7 +61,7 @@ class Command(BaseCommand):
         rows = missing.values_list("current_version_id", "primary_image_url", "image_urls")
         batch: list[AdVersionPhoto] = []
         for version_id, primary, gallery in rows.iterator(chunk_size=_BATCH):
-            front = primary or (gallery[0] if gallery else "")
+            front = front_photo(primary, gallery or [])
             if front and is_cdn_url(front):
                 batch.append(AdVersionPhoto(version_id=version_id, position=0, source_url=front))
             if len(batch) >= _BATCH:

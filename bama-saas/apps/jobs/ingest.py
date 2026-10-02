@@ -21,6 +21,7 @@ from django.utils.text import slugify
 from apps.common.parsing import (
     SEMANTIC_HASH_VERSION,
     fingerprint,
+    front_photo,
     image_urls,
     listing_fingerprint,
     normalize_model_year,
@@ -535,8 +536,7 @@ def _ingest_ad(extracted, *, run, observed_at, publish_at, dealer=None, rank=Non
         ad.current_version = version
     # Storage policy (docs/STORAGE-POLICY.md): only the front photo is kept on
     # the VPS; the rest of the gallery stays a CDN link in `image_urls`.
-    primary, gallery = image_urls(payload)
-    front = primary or (gallery[0] if gallery else "")
+    front = front_photo(*image_urls(payload))
     if front:
         AdVersionPhoto.objects.bulk_create(
             [AdVersionPhoto(version=version, position=0, source_url=front)],
