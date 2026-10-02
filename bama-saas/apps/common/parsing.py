@@ -389,6 +389,11 @@ def _cdn_urls(candidates: list) -> list[str]:
     return urls
 
 
+def front_photo(primary: str, gallery: list) -> str:
+    """The one photo kept on the VPS for an ad (docs/STORAGE-POLICY.md)."""
+    return primary or (gallery[0] if gallery else "")
+
+
 def image_urls(payload: dict) -> tuple[str, list[str]]:
     """``(primary, gallery)`` for one ad, from the WHOLE payload.
 

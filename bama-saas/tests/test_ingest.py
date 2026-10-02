@@ -15,6 +15,7 @@ from django.utils import timezone as djtz
 from apps.common.parsing import extract_ad, parse_publish_time
 from apps.core.models import (
     Ad,
+    AdVersionPhoto,
     Brand,
     City,
     DealScoreCache,
@@ -1333,3 +1334,35 @@ def test_the_deal_board_still_shows_only_bargains(catalog, staff_client):
              staff_client.get("/api/analytics/deal-scores/?band=all").json()["results"]}
     assert "bargain1" in codes
     assert "pricey01" not in codes
+
+
+@pytest.mark.django_db
+def test_only_the_front_photo_is_recorded_for_storage(make_payload):
+    """docs/STORAGE-POLICY.md: one local photo per ad; the gallery stays links."""
+    run = FetchRun.objects.create(source=FetchRun.Source.BULK_IMPORT)
+    extracted = extract_ad(make_payload("front1", 1_000_000_000), NOW)
+    ad = _ing(extracted, run=run, observed_at=NOW,
+              publish_at=parse_publish_time(extracted["publish_phrase"], NOW))
+    photos = list(AdVersionPhoto.objects.filter(version__ad=ad).values_list("position", "source_url"))
+    assert photos == [(0, ad.primary_image_url)]
+    assert len(ad.image_urls) > 1
+
+
+@pytest.mark.django_db
+def test_an_unchanged_resighting_writes_no_observation(make_payload):
+    """docs/STORAGE-POLICY.md: sightings are change-only; a price change still records one."""
+    from apps.core.models import AdObservation
+
+    def sight(price, minutes):
+        at = NOW + timedelta(minutes=minutes)
+        run = FetchRun.objects.create(source=FetchRun.Source.LIVE_FETCH)
+        extracted = extract_ad(make_payload("seen01", price), at)
+        return _ing(extracted, run=run, observed_at=at,
+                    publish_at=parse_publish_time(extracted["publish_phrase"], at))
+
+    sight(1_000_000_000, 0)
+    ad = sight(1_000_000_000, 30)
+    assert AdObservation.objects.filter(ad=ad).count() == 1
+    assert ad.last_seen_at == NOW + timedelta(minutes=30)
+    sight(900_000_000, 60)
+    assert AdObservation.objects.filter(ad=ad).count() == 2
