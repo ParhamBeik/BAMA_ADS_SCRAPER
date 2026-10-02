@@ -31,6 +31,10 @@ RUN apt-get update \
 # import here put the trigger for that switch one stray module-level `import
 # pytest` away from a live process, in an image that has no use for it.
 COPY pyproject.toml ./
+# The VPS reaches pypi.org but not files.pythonhosted.org (read timeouts from Iran),
+# so it builds through a mirror set in .env.production; CI keeps the default.
+ARG PIP_INDEX_URL=https://pypi.org/simple
+ARG PIP_DEFAULT_TIMEOUT=60
 RUN pip install --upgrade pip \
     && python -c "import tomllib, pathlib; p = tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']; x = p['optional-dependencies']; print('\n'.join(p['dependencies'] + x['ml']))" > /tmp/requirements.txt \
     && pip install -r /tmp/requirements.txt
