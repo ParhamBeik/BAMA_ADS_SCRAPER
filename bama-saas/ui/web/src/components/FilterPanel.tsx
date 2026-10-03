@@ -18,7 +18,7 @@
  * `Ad`: the backend matches `transmission` case-sensitively.
  */
 import { useState } from "react";
-import { useBrands } from "@/catalogue";
+import { useBrands, useCities } from "@/catalogue";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, Search, SlidersHorizontal, X } from "lucide-react";
 import { api, type Variant } from "@/api";
@@ -261,6 +261,7 @@ export function FilterPanel({
   const brand = filters.get("brand");
 
   const { list: brandList } = useBrands();
+  const cities = useCities();
 
   const priceMin = filters.get("price_min");
   const priceMax = filters.get("price_max");
@@ -280,7 +281,7 @@ export function FilterPanel({
       <div className="flex flex-wrap items-center gap-2">
         <SlidersHorizontal className="text-muted-foreground hidden size-4 flex-none sm:block" aria-hidden />
 
-        {showSearch && <SearchBox />}
+        {showSearch && <SearchBox key={filters.get("q") ?? ""} />}
 
         <div className="-mx-1 flex min-w-0 basis-full items-center gap-2 overflow-x-auto px-1 pb-0.5 [scrollbar-width:none] sm:mx-0 sm:basis-auto sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
         <Group label="خودرو" keys={["brand", "model", "variant"]}>
@@ -289,7 +290,7 @@ export function FilterPanel({
             anyLabel="همه برندها"
             value={brand}
             onChange={(v) => filters.set({ brand: v, model: null, variant: null, page: null })}
-            options={brandList.map((b) => ({ value: b.slug, label: b.name_fa }))}
+            options={brandList.map((b) => ({ value: b.slug, label: `${b.name_fa} (${num(b.ad_count)} آگهی)` }))}
           />
           <Field label="مدل خودرو">
             <ModelCombobox
@@ -308,6 +309,13 @@ export function FilterPanel({
             />
           </Field>
           <TrimPicker />
+        </Group>
+
+        <Group label="شهر" keys={["city"]}>
+          <Choice label="شهر" anyLabel="همه شهرها" value={filters.get("city")}
+            onChange={(v) => filters.set({ city: v, page: null })}
+            options={(cities.data ?? []).map((c) => ({ value: String(c.id), label: `${c.name_fa} (${num(c.ad_count)} آگهی)` }))} />
+          {cities.isError && <p role="alert">دریافت شهرها انجام نشد.</p>}
         </Group>
 
         <Group label="قیمت" keys={["price_min", "price_max"]}>
@@ -490,6 +498,7 @@ function ActiveChips() {
   // The chip used to read "مدل انتخاب‌شده" because the panel never knew which
   // model; the picker resolves it by id now, so the chip can say the name.
   const selectedModel = useModelLabel(filters.get("model"));
+  const cities = useCities();
   const active = FILTER_KEYS.map((k) => [k, filters.get(k)] as const).filter(([, v]) => v);
   if (!active.length) return null;
 
@@ -506,7 +515,9 @@ function ActiveChips() {
   return (
     <div className="chips mt-3">
       {active.map(([key, value]) => {
-        const label = chipLabel(key, value as string, modelName);
+        const label = key === "city"
+          ? `شهر: ${cities.data?.find((c) => String(c.id) === value)?.name_fa ?? value}`
+          : chipLabel(key, value as string, modelName);
         return (
           <span key={key} className="chip">
             <Fa>{label}</Fa>
@@ -517,7 +528,9 @@ function ActiveChips() {
                 filters.set(
                   // Dropping a model must drop the trim under it, or the list
                   // filters on a trim belonging to a model nobody selected.
-                  key === "model"
+                  key === "brand"
+                    ? { brand: null, model: null, variant: null, page: null }
+                    : key === "model"
                     ? { model: null, variant: null, page: null }
                     : { [key]: null, page: null },
                 )

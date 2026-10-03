@@ -43,6 +43,7 @@ from apps.core.models import (
     Ad,
     AdVersionPhoto,
     Brand,
+    City,
     DealScoreCache,
     MarketIndex,
     Model,
@@ -86,6 +87,25 @@ class BrandViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = BrandSerializer
     lookup_field = "slug"
     pagination_class = None
+
+    def get_queryset(self):
+        listable = without_high_outliers(pricing.scorable_rows())
+        return self.queryset.annotate(
+            ad_count=Count("ads", filter=Q(ads__in=listable), distinct=True),
+        ).order_by("-ad_count", "name_fa")
+
+
+@api_view(["GET"])
+def cities(request):
+    """City choices counted over the same visible listings as the Explorer."""
+    listable = without_high_outliers(pricing.scorable_rows())
+    rows = City.objects.annotate(
+        ad_count=Count("ads", filter=Q(ads__in=listable), distinct=True),
+    ).filter(ad_count__gt=0).order_by("-ad_count", "name_fa", "pk")
+    return Response([
+        {"id": c.pk, "name_fa": c.name_fa, "province": c.province,
+         "ad_count": c.ad_count} for c in rows
+    ])
 
 
 class ModelVariantsView(ListAPIView):
@@ -650,6 +670,8 @@ def deal_scores(request):
     params = request.query_params
     try:
         model = _opt(params, "model", int)
+        variant = _opt(params, "variant", int)
+        city = _opt(params, "city", int)
         year = _opt(params, "year", int)
         year_min = _opt(params, "year_min", int)
         year_max = _opt(params, "year_max", int)
@@ -707,6 +729,8 @@ def deal_scores(request):
     filters = {
         "ad__model__brand__slug": params.get("brand") or None,
         "ad__model_id": model,
+        "ad__variant_id": variant,
+        "ad__city_id": city,
         "ad__year_jalali": year,
         "ad__year_jalali__gte": year_min,
         "ad__year_jalali__lte": year_max,

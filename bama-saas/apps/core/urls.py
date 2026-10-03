@@ -12,6 +12,7 @@ router.register(r"brands", views.BrandViewSet, basename="brand")
 router.register(r"ads", views.AdViewSet, basename="ad")
 
 urlpatterns = [
+    path("cities/", views.cities, name="cities"),
     path("models/", views.model_search, name="model-search"),
     path("models/<int:model_pk>/variants/", views.ModelVariantsView.as_view(),
          name="model-variants"),

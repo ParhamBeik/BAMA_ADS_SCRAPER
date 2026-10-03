@@ -312,6 +312,8 @@ export function Deals() {
     offset: (page - 1) * PAGE_SIZE,
     brand: filters.get("brand"),
     model: filters.get("model"),
+    variant: filters.get("variant"),
+    city: filters.get("city"),
     price_min: filters.get("price_min"),
     price_max: filters.get("price_max"),
     year_min: filters.get("year_min"),

@@ -11,9 +11,11 @@ from apps.core.quality import condition_discounted
 
 
 class BrandSerializer(serializers.ModelSerializer):
+    ad_count = serializers.IntegerField(read_only=True)
+
     class Meta:
         model = Brand
-        fields = ("slug", "name_fa", "name_en", "aliases")
+        fields = ("slug", "name_fa", "name_en", "aliases", "ad_count")
 
 
 class VariantSerializer(serializers.ModelSerializer):

@@ -50,7 +50,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const detail =
       typeof body === "object" && body && "detail" in body
         ? String((body as { detail: unknown }).detail)
-        : `Request failed (${response.status})`;
+        : typeof body === "object" && body
+          ? Object.entries(body).map(([field, errors]) => `${field}: ${Array.isArray(errors) ? errors.join(" ") : String(errors)}`).join(" · ") || `Request failed (${response.status})`
+          : `Request failed (${response.status})`;
     throw new ApiError(response.status, detail, body);
   }
   return body as T;
@@ -96,6 +98,14 @@ export interface Paginated<T> {
 export interface Brand {
   slug: string;
   name_fa: string;
+  ad_count: number;
+}
+
+export interface City {
+  id: number;
+  name_fa: string;
+  province: string;
+  ad_count: number;
 }
 
 /** One trim of a model, as `/api/models/<id>/variants/` returns it. */

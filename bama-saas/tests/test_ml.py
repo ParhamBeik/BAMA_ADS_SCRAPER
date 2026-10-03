@@ -1541,3 +1541,15 @@ def test_the_model_card_page_is_answered_from_cache(api_client):
     with CaptureQueriesContext(connection) as second:
         api_client.get("/api/ml/models/")
     assert len(second) == 0, "a warm read touches the database not at all"
+
+
+def test_ratio_model_base_price_is_in_toman():
+    """A log-ratio model's SHAP base is near zero; anchored, it reads as a price."""
+    from apps.ml.inference import _explain_row
+
+    spec = features.FeatureSpec()
+    contribs = [0.0] * len(spec.columns) + [math.log(0.95)]
+    contribs[0] = math.log(1.10)
+    rows = _explain_row(contribs, spec, anchor=2_000_000_000)
+    assert rows[-1]["feature"] == "_base"
+    assert rows[-1]["base_price"] == pytest.approx(1_900_000_000, abs=1)

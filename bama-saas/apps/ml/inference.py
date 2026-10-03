@@ -184,17 +184,20 @@ def _apply_price(rows, predictions, art) -> None:
         price = by_code[code].get("current_price")
         if price and p50 > 0:
             pred.residual_pct = round((p50 - price) / p50 * 100, 2)
-        pred.contributions = _explain_row(contribs[i], spec)
+        pred.contributions = _explain_row(
+            contribs[i], spec, anchor=medians[code] if anchored else 1.0,
+        )
 
 
-def _explain_row(contributions, spec: features.FeatureSpec) -> list[dict]:
+def _explain_row(contributions, spec: features.FeatureSpec, *, anchor=1.0) -> list[dict]:
     """One row's SHAP vector as something a card can print.
 
     Contributions come back in log-price space, where they add up. Converting
     each to ``exp(c) - 1`` turns it into the multiplicative effect a reader can
     actually use — "this car's mileage is worth -8% against the base" — at the
-    cost that the percentages no longer sum, which is why the base value is not
-    published beside them as though they did.
+    cost that the percentages no longer sum. For ratio models, the SHAP base is
+    a log-ratio too: multiply its exponential by the listing's peer median to
+    publish a starting price in toman rather than a unitless value near one.
     """
     values = list(contributions)
     base = values[-1]
@@ -208,7 +211,7 @@ def _explain_row(contributions, spec: features.FeatureSpec) -> list[dict]:
         out.append({"feature": name, "effect_pct": round(effect * 100, 2)})
     if out:
         out.append({"feature": "_base", "effect_pct": None,
-                    "base_price": int(math.exp(base))})
+                    "base_price": int(anchor * math.exp(base))})
     return out
 
 

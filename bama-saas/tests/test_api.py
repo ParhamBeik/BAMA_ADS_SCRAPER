@@ -210,7 +210,17 @@ def test_brands_list(api_client, catalog):
     slugs = [b["slug"] for b in body]
     assert catalog["brand"].slug in slugs
     # regression: BrandSerializer exposes exactly these fields (no `source` leak).
-    assert set(body[0].keys()) == {"slug", "name_fa", "name_en", "aliases"}
+    assert set(body[0].keys()) == {"slug", "name_fa", "name_en", "aliases", "ad_count"}
+    assert body[0]["ad_count"] == 8
+
+
+@pytest.mark.django_db
+def test_cities_list_only_cities_with_visible_listings(api_client, catalog):
+    """The city filter offers only cities the listings page can actually show."""
+    City.objects.create(name_fa="یزد")
+    rows = api_client.get("/api/cities/").json()
+    assert rows == [{"id": catalog["city"].id, "name_fa": "تهران",
+                     "province": "تهران", "ad_count": 8}]
 
 
 @pytest.mark.django_db
@@ -576,6 +586,26 @@ def test_deal_scores_price_bounds(api_client, catalog):
     assert resp.status_code == 200, resp.content
     codes = {r["code"] for r in resp.json()["results"]}
     assert codes == {cheap.code}
+
+
+@pytest.mark.django_db
+def test_deal_scores_filter_by_city_and_variant(api_client, catalog):
+    from django.utils import timezone
+
+    here, there = catalog["ads"][0], catalog["ads"][1]
+    Ad.objects.filter(code__in=(here.code, there.code)).update(publish_at=timezone.now())
+    Ad.objects.filter(code=there.code).update(city=City.objects.create(name_fa="یزد"))
+    for ad in (here, there):
+        DealScoreCache.objects.create(
+            ad=ad, score=10.0, discount_pct=10.0, peer_median=1_200_000_000,
+            components={"peer_count": 11, "confidence": "low", "age_days": 3},
+        )
+
+    url = "/api/analytics/deal-scores/?band=all"
+    codes = {r["code"] for r in api_client.get(f"{url}&city={catalog['city'].id}").json()["results"]}
+    assert codes == {here.code}
+    codes = {r["code"] for r in api_client.get(f"{url}&variant=0").json()["results"]}
+    assert codes == set()
 
 
 @pytest.mark.django_db
