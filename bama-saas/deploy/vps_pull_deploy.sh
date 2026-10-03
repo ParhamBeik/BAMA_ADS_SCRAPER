@@ -36,8 +36,8 @@ compose up -d --wait postgres redis
 # service that cannot go down. This one can.
 #
 # The frontend is a static nginx bundle and keeps serving the site throughout;
-# its API calls fail while django is stopped, and `up` below recreates it on
-# the new image.
+# its API calls fail while django is stopped. nginx resolves `backend` once at
+# startup, so it is restarted whenever django is recreated (see below).
 compose stop django worker ml
 
 # Migrate as a one-off rather than letting the django service do it on start,
@@ -49,8 +49,12 @@ compose stop django worker ml
 if ! compose run --rm --no-deps django python manage.py migrate --noinput; then
     echo "migrate failed; restarting the previous containers" >&2
     compose start django worker ml || true
+    compose restart frontend || true
     exit 1
 fi
 
 compose up -d --wait --no-build
+# A backend-only release leaves the frontend container as it was, still
+# proxying to the old django's address: recreate it so nginx re-resolves.
+compose up -d --wait --no-build --no-deps --force-recreate frontend
 # Retain prior images for rollback; reclaim space only after verifying the release.

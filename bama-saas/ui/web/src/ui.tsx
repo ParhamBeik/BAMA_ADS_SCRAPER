@@ -645,11 +645,15 @@ export function ListingActions({ code, compact = false }: { code: string; compac
       else await api.post("/api/favorites/", { code });
     },
     onSuccess: () => client.invalidateQueries({ queryKey: ["favorites"] }),
-    // An expired session made the tap do nothing. Signing out locally swaps in
-    // the signed-out routes, which remember this page and send the reader to
-    // /login; signing back in resumes here.
-    onError: (err) => {
-      if (err instanceof ApiError && err.status === 401) void logout();
+    // An expired session made the tap do nothing. Session auth answers it with
+    // 403 (not 401), and so does a CSRF failure for a live session, so ask the
+    // server which it was. Signing out locally swaps in the signed-out routes,
+    // which remember this page and send the reader to /login; signing back in
+    // resumes here.
+    onError: async (err) => {
+      if (!(err instanceof ApiError) || (err.status !== 401 && err.status !== 403)) return;
+      const me = await api.get<{ authenticated?: boolean }>("/api/auth/me/").catch(() => null);
+      if (me?.authenticated === false) void logout();
     },
   });
 
