@@ -29,6 +29,7 @@ from apps.core.coverage import (
     known_feed_depth,
     plan_backfill,
 )
+from apps.core.locks import TRAIN_LEASE, lease_busy
 from apps.core.models import (
     Ad,
     AdObservation,
@@ -604,6 +605,10 @@ def ml_score(*, limit: int | None = None, incremental: bool = False) -> dict:
     """
     from apps.ml.inference import score_all
 
+    if incremental and lease_busy(TRAIN_LEASE):
+        # The train cadence is fitting and then rescoring everything; this
+        # partial pass would only contend with it for the same rows.
+        return {"skipped": True, "detail": "train cadence is rescoring the catalogue"}
     model_ids = _models_from_latest_fetch() if incremental else None
     if incremental and not model_ids:
         return {"skipped": True, "detail": "no affected models in latest fetch"}

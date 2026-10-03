@@ -25,11 +25,12 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 
 from django.utils import timezone
 
+from apps.core.locks import TRAIN_LEASE, lease
 from apps.core.models import JobRun
 from apps.jobs import health, jobs, photo_archive
 from apps.jobs.fetcher import CrawlBlocked, _retryable
@@ -309,30 +310,34 @@ def run(*, cadence: str | None = None, steps=None, skip_fetch: bool = False,
                 ",".join(s for s in STEP_ORDER if s in enabled))
 
     failed: set[str] = set()
-    for name in STEP_ORDER:
-        if name not in enabled:
-            continue
-        step_opts = dict(job_opts.get(name, {}))
-        if name == "deal_scores":
-            step_opts.setdefault("incremental", incremental_deals)
-        if name == "ml_score":
-            step_opts.setdefault("incremental", incremental_deals)
-        # A prerequisite only blocks when it was actually part of this run:
-        # `warm` has no fetch, and its steps must not be skipped for one that
-        # never ran.
-        blocker = next(
-            (p for p in DEPENDS_ON.get(name, ()) if p in failed and p in enabled), None
-        )
-        if blocker is None and name == "deal_scores" and step_opts["incremental"] \
-                and "fetch" in failed:
-            blocker = "fetch"
-        if blocker:
-            result = record_skipped(name, f"prerequisite {blocker!r} failed")
-        else:
-            result = run_step(name, triggered_by=triggered_by, **step_opts)
-        report.steps.append(result)
-        if not result.ok:
-            failed.add(name)
+    # The train cadence ends in a full rescore; while it runs, the worker's
+    # incremental `ml_score` (another container) stands down rather than
+    # rewriting rows that rescore is about to replace. See `jobs.ml_score`.
+    with lease(TRAIN_LEASE) if cadence == "train" else nullcontext():
+        for name in STEP_ORDER:
+            if name not in enabled:
+                continue
+            step_opts = dict(job_opts.get(name, {}))
+            if name == "deal_scores":
+                step_opts.setdefault("incremental", incremental_deals)
+            if name == "ml_score":
+                step_opts.setdefault("incremental", incremental_deals)
+            # A prerequisite only blocks when it was actually part of this run:
+            # `warm` has no fetch, and its steps must not be skipped for one that
+            # never ran.
+            blocker = next(
+                (p for p in DEPENDS_ON.get(name, ()) if p in failed and p in enabled), None
+            )
+            if blocker is None and name == "deal_scores" and step_opts["incremental"] \
+                    and "fetch" in failed:
+                blocker = "fetch"
+            if blocker:
+                result = record_skipped(name, f"prerequisite {blocker!r} failed")
+            else:
+                result = run_step(name, triggered_by=triggered_by, **step_opts)
+            report.steps.append(result)
+            if not result.ok:
+                failed.add(name)
 
     report.finished_at = timezone.now()
     logger.info("%s", report.summary())

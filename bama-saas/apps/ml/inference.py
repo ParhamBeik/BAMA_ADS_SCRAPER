@@ -30,6 +30,7 @@ import math
 
 from django.db import transaction
 
+from apps.core.locks import PREDICTIONS_REBUILD, rebuild_lock
 from apps.core.models import Ad, DealScoreCache
 from apps.core.quality import exclude_unclear_price, verified
 from apps.ml import features, registry
@@ -108,6 +109,9 @@ def score_all(*, limit: int | None = None, model_ids=None) -> dict:
 
     objs = list(predictions.values())
     with transaction.atomic():
+        # The worker's incremental rescore and the train container's full one
+        # write this table from different processes; serialise them.
+        rebuild_lock(PREDICTIONS_REBUILD)
         # Delete-and-recreate rather than update_or_create per row: this is the
         # same wholesale-rebuild shape as `compute_deal_scores`, it is one query
         # plus one bulk insert instead of 25,000 round trips, and it guarantees

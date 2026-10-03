@@ -32,9 +32,11 @@ from statistics import median
 
 from django.conf import settings
 from django.core.cache import cache
+from django.db import transaction
 from django.utils import timezone
 
 from apps.common.verify import MAX_PLAUSIBLE_MILEAGE, MIN_PLAUSIBLE_PRICE
+from apps.core.locks import DEAL_SCORES_REBUILD, rebuild_lock
 from apps.core.models import Ad, DealScoreCache
 from apps.core.quality import (
     COHORT_FLAGS,
@@ -1119,15 +1121,21 @@ def compute_deal_scores(*, model_id: int | None = None,
             },
         ))
 
-    if model_id is not None:
-        DealScoreCache.objects.filter(ad__model_id=model_id).delete()
-    else:
-        DealScoreCache.objects.all().delete()
-    if objs:
-        DealScoreCache.objects.bulk_create(objs, batch_size=500)
-    for batch in (explained_low, cleared_low):
-        if batch:
-            Ad.objects.bulk_update(batch, ["cohort_flags"], batch_size=500)
+    # One transaction under one cross-process lock: readers never see the
+    # board between the delete and the insert, and a concurrent rebuild (hot
+    # tick, admin refresh, a full cadence) waits instead of inserting on top of
+    # this one and tripping the one-row-per-ad constraint.
+    with transaction.atomic():
+        rebuild_lock(DEAL_SCORES_REBUILD)
+        if model_id is not None:
+            DealScoreCache.objects.filter(ad__model_id=model_id).delete()
+        else:
+            DealScoreCache.objects.all().delete()
+        if objs:
+            DealScoreCache.objects.bulk_create(objs, batch_size=500)
+        for batch in (explained_low, cleared_low):
+            if batch:
+                Ad.objects.bulk_update(batch, ["cohort_flags"], batch_size=500)
 
     # The window is measured from these rows, so it is wrong the instant they
     # are replaced. Dropped rather than recomputed here: the next reader pays
