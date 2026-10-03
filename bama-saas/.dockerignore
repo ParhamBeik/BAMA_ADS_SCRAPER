@@ -6,7 +6,9 @@ __pycache__
 *.pyo
 .git
 .gitignore
-.env
+# Every env file, .env.production included: `COPY . /app/` would otherwise
+# bake the production secrets into the django, worker and ml images.
+.env*
 *.log
 node_modules
 staticfiles

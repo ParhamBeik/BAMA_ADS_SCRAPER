@@ -39,6 +39,7 @@ jobs:
           SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_HOST_KEY: ${{ secrets.VPS_HOST_KEY }}
         run: |
           set -euo pipefail
           mkdir -p ~/.ssh
@@ -47,7 +48,7 @@ jobs:
           # Pin the host key instead of StrictHostKeyChecking=no, so a MITM
           # between the runner and the VPS fails the deploy rather than
           # silently succeeding against someone else's box.
-          printf '%s\n' "${{ secrets.VPS_HOST_KEY }}" > ~/.ssh/known_hosts
+          printf '%s\n' "$VPS_HOST_KEY" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
           # The forced command on the server side ignores whatever we send, so
           # the remote command below is documentation, not the instruction.
