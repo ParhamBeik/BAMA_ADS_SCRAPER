@@ -295,6 +295,10 @@ def test_is_cdn_url_accepts_bama_hosts(url):
     # evil.com. Pinned because the obvious "tidy this up with urlparse" or a
     # substring check would start accepting it.
     "https://bama.ir@evil.com/x.jpg",
+    # Authority ends before the "@" in each of these; the host is evil.com.
+    "https://evil.com#@cdn.bama.ir/x.jpg",
+    "https://evil.com?@cdn.bama.ir/x.jpg",
+    "https://evil.com\\@cdn.bama.ir/x.jpg",
     "file:///etc/passwd",
     "https://169.254.169.254/latest/meta-data/",  # cloud metadata
     "https://", "https:///x.jpg",           # degenerate, must not IndexError

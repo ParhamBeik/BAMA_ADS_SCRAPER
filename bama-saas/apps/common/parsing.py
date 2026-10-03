@@ -64,9 +64,12 @@ def is_cdn_url(url: str) -> bool:
     """
     if not isinstance(url, str) or not url.startswith("https://"):
         return False
-    try:
-        host = url.split("/")[2].lower()
-    except IndexError:
+    # The authority ends at the first "/", "?", "#" or "\\" (HTTP clients treat a
+    # backslash as a path separator), and must carry no userinfo: splitting on
+    # "/" alone read `https://evil.com#@cdn.bama.ir/` as a Bama host while
+    # requests connected to evil.com.
+    host = re.split(r"[/?#\\]", url[len("https://"):], maxsplit=1)[0].lower()
+    if not host or "@" in host:
         return False
     return any(host == h or host.endswith("." + h) for h in CDN_HOSTS)
 
