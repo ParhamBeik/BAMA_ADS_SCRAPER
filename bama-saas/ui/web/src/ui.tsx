@@ -16,6 +16,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Database, ExternalLink, Heart, X } from "lucide-react";
 import { Link } from "react-router-dom";
 import { ApiError, api, type Envelope, type Paginated } from "./api";
+import { useAuth } from "./auth";
 import { fa, latinDigits, num, pct, since, toman } from "./format";
 
 /**
@@ -631,6 +632,7 @@ interface Favorite {
 /** Save / unsave one ad. Saving is the only write the product has left. */
 export function ListingActions({ code, compact = false }: { code: string; compact?: boolean }) {
   const client = useQueryClient();
+  const { logout } = useAuth();
   const favorites = useQuery({
     queryKey: ["favorites"],
     queryFn: ({ signal }) => api.get<Paginated<Favorite>>("/api/favorites/", signal),
@@ -643,6 +645,12 @@ export function ListingActions({ code, compact = false }: { code: string; compac
       else await api.post("/api/favorites/", { code });
     },
     onSuccess: () => client.invalidateQueries({ queryKey: ["favorites"] }),
+    // An expired session made the tap do nothing. Signing out locally swaps in
+    // the signed-out routes, which remember this page and send the reader to
+    // /login; signing back in resumes here.
+    onError: (err) => {
+      if (err instanceof ApiError && err.status === 401) void logout();
+    },
   });
 
   // Compact: an icon on the card photo, so a car can be saved straight from a
