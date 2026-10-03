@@ -629,7 +629,7 @@ interface Favorite {
 }
 
 /** Save / unsave one ad. Saving is the only write the product has left. */
-export function ListingActions({ code }: { code: string }) {
+export function ListingActions({ code, compact = false }: { code: string; compact?: boolean }) {
   const client = useQueryClient();
   const favorites = useQuery({
     queryKey: ["favorites"],
@@ -645,14 +645,33 @@ export function ListingActions({ code }: { code: string }) {
     onSuccess: () => client.invalidateQueries({ queryKey: ["favorites"] }),
   });
 
+  // Compact: an icon on the card photo, so a car can be saved straight from a
+  // grid without opening it. Full: the labelled button on the listing page.
+  if (compact) {
+    return (
+      <button
+        type="button"
+        className={`save-fab${saved ? " on" : ""}`}
+        onClick={(e) => { e.stopPropagation(); e.preventDefault(); toggle.mutate(); }}
+        disabled={toggle.isPending}
+        aria-pressed={saved}
+        aria-label={saved ? "حذف از فهرست من" : "ذخیره در فهرست من"}
+        title={saved ? "حذف از فهرست من" : "ذخیره در فهرست من"}
+      >
+        <Heart size={15} fill={saved ? "currentColor" : "none"} aria-hidden />
+      </button>
+    );
+  }
   return (
     <button
-      className={saved ? "on" : ""}
+      type="button"
+      className={`save-btn${saved ? " on" : ""}`}
       onClick={(e) => { e.stopPropagation(); toggle.mutate(); }}
       disabled={toggle.isPending}
       aria-pressed={saved}
     >
-      <Heart size={14} /> {saved ? "ذخیره شد" : "ذخیره"}
+      <Heart size={14} fill={saved ? "currentColor" : "none"} aria-hidden />{" "}
+      {saved ? "ذخیره شد" : "ذخیره"}
     </button>
   );
 }

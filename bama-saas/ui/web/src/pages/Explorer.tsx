@@ -189,6 +189,8 @@ export function Explorer() {
     brand: filters.get("brand"),
     model: filters.get("model"),
     variant: filters.get("variant"),
+    // Set by the model page's "see all" link; the API filters on it already.
+    city: filters.get("city"),
     q: filters.get("q"),
     price_min: filters.get("price_min"),
     price_max: filters.get("price_max"),
@@ -263,7 +265,11 @@ export function Explorer() {
                         <span className="card-badges">
                           <AdWarnings ad={ad} />
                         </span>
+                        <ListingActions code={ad.code} compact />
                       </Thumb>
+                      {/* Title, price, one facts line, one action line. It was
+                          six rows, three of them for a city and two links, which
+                          is what made a two-across phone grid impossible. */}
                       <div className="listing-meta">
                         <strong>
                           <button
@@ -275,23 +281,23 @@ export function Explorer() {
                           </button>
                         </strong>
                         <span className="deal-price">{toman(ad.current_price)}</span>
-                        <div className="row">
-                          <span>{km(ad.mileage)}</span>
-                          <span>·</span>
+                        <div className="row card-facts">
                           <span>{ad.year_jalali ?? ad.year ?? "—"}</span>
+                          <span aria-hidden>·</span>
+                          <span>{km(ad.mileage)}</span>
+                          <span aria-hidden>·</span>
+                          <Fa>{ad.city_name || "—"}</Fa>
                         </div>
                         <div className="row">
-                          <Fa>{ad.city_name || "—"}</Fa>
-                          <Link
-                            to={`/listing/${ad.code}`}
-                            className="above-stretch"
-                            style={{ marginInlineStart: "auto" }}
-                          >
+                          <Link to={`/listing/${ad.code}`} className="above-stretch">
                             جزئیات
                           </Link>
-                        </div>
-                        <div className="row">
-                          <BamaLink href={ad.bama_url} className="ghost above-stretch" />
+                          <BamaLink
+                            href={ad.bama_url}
+                            className="ghost above-stretch hide-narrow"
+                          >
+                            باما
+                          </BamaLink>
                         </div>
                       </div>
                     </div>

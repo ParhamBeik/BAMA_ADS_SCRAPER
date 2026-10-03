@@ -187,6 +187,7 @@ function AppShell() {
           reaching any content. */}
       <a href="#main" className="skip-link">پرش به محتوای اصلی</a>
       <AppHeader />
+      <ScrollToTop />
       <main id="main" tabIndex={-1}
             className="mx-auto max-w-[1600px] px-4 pt-2 pb-24 sm:px-6 lg:pb-16">
         <Routes>
@@ -229,6 +230,20 @@ function AppShell() {
       <MobileNav />
     </div>
   );
+}
+
+/**
+ * A new page starts at its top.
+ *
+ * Client-side routing keeps the window's scroll offset, so moving from the
+ * bottom of one screen to another opened the second one mid-list. Keyed on the
+ * path alone: a filter or page change rewrites only the query string and should
+ * leave the reader where they are.
+ */
+function ScrollToTop() {
+  const { pathname } = useLocation();
+  useEffect(() => { window.scrollTo(0, 0); }, [pathname]);
+  return null;
 }
 
 /** `/research/42` was the old per-model analysis URL; it is now a scope query. */

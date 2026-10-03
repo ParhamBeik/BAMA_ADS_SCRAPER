@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
@@ -63,6 +64,62 @@ type FairPrice = {
   methodology_version?: number;
   coverage?: Record<string, unknown>;
 };
+
+/**
+ * One large photo and a strip of the rest.
+ *
+ * It was a three-column grid of equal tiles, so the most common case — a
+ * listing with one photo — drew that photo at a third of the card's width
+ * beside two empty cells, and on a slow image proxy the card read as blank.
+ */
+function Gallery({ title, urls }: { title: string; urls: string[] }) {
+  const [active, setActive] = useState(0);
+  if (!urls.length) {
+    return (
+      <div className="gallery card">
+        <div className="gallery-hero"><div className="thumb-fallback">بدون تصویر</div></div>
+      </div>
+    );
+  }
+  const current = urls[Math.min(active, urls.length - 1)];
+  return (
+    <div className="gallery card">
+      <div className="gallery-hero">
+        <img
+          key={current}
+          src={current}
+          alt={`${title} — تصویر ${active + 1} از ${urls.length}`}
+          onError={(e) => { (e.target as HTMLImageElement).style.opacity = "0.3"; }}
+        />
+      </div>
+      {urls.length > 1 && (
+        <div className="gallery-strip" role="list">
+          {urls.map((src, index) => (
+            <button
+              key={src}
+              type="button"
+              role="listitem"
+              aria-label={`تصویر ${index + 1}`}
+              aria-current={index === active ? "true" : undefined}
+              onClick={() => setActive(index)}
+            >
+              <img src={src} alt="" loading="lazy" />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Spec({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd>{children}</dd>
+    </div>
+  );
+}
 
 /**
  * What we know about a listing that is no longer on the feed, and how sure we
@@ -151,12 +208,10 @@ export function ListingDetail() {
               <Link to="/explore">جست‌وجوی آگهی‌ها</Link> / <Fa>{data.title}</Fa>
             </div>
             <div className="detail-layout">
-              <div className="gallery card">
-                {(data.image_urls?.length ? data.image_urls : data.image_url ? [data.image_url] : []).map((src, index) => (
-                  <img key={src} src={src} alt={`${data.title} — تصویر ${index + 1}`} loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.opacity = "0.3"; }} />
-                ))}
-                {!data.image_url && <div className="thumb-fallback">بدون تصویر</div>}
-              </div>
+              <Gallery
+                title={data.title}
+                urls={data.image_urls?.length ? data.image_urls : data.image_url ? [data.image_url] : []}
+              />
               <div className="stack">
                 <div className="card">
                   <h1><Fa>{data.title}</Fa></h1>
@@ -187,34 +242,37 @@ export function ListingDetail() {
                         : "توضیحات آگهی به وضعیت خودرو اشاره کرده (تصادف، پلاک منطقه آزاد یا مشابه) — پیش از مقایسه قیمت آن را بخوانید."}
                     </p>
                   )}
-                  <ul className="spec-list">
-                    <li>سال ساخت: {data.year_jalali ?? "—"}</li>
+                  {/* Label above value, two per row: a stack of "key: value"
+                      sentences made the reader parse nine lines to find the
+                      one fact they came for. */}
+                  <dl className="spec-grid">
+                    <Spec label="سال ساخت">{data.year_jalali ?? "—"}</Spec>
                     {/* The unit is not decoration: "262,000" alone is a
                         number the reader has to guess the meaning of. */}
-                    <li>
-                      کارکرد: {data.mileage != null
-                        ? `${num(data.mileage)} کیلومتر`
-                        : "—"}
+                    <Spec label="کارکرد">
+                      {data.mileage != null ? `${num(data.mileage)} کیلومتر` : "—"}
                       {data.mileage_implausible && (
                         <span className="badge warn" style={{ marginInlineStart: 6 }}>
                           باورپذیر نیست — در محاسبه قیمت نادیده گرفته شده
                         </span>
                       )}
-                    </li>
-                    <li>وضعیت بدنه: <Fa>{data.body_status || "—"}</Fa></li>
-                    <li>گیربکس: {data.transmission || "—"}</li>
-                    <li>بدنه: {data.body_type || "—"}</li>
-                    <li>سوخت: {data.fuel || "—"}</li>
-                    <li>شهر: <Fa>{data.city_name || "—"}</Fa>{data.district ? ` / ${data.district}` : ""}</li>
-                    <li>فروشنده احراز شده: {data.seller_authenticated == null ? "—" : data.seller_authenticated ? "بله" : "خیر"}</li>
-                    {data.seller_type && (
-                      <li>
-                        {data.seller_type === "dealer"
-                          ? `نمایشگاه: ${data.dealer_name || "—"}`
-                          : "فروشنده شخصی"}
-                      </li>
-                    )}
-                  </ul>
+                    </Spec>
+                    <Spec label="وضعیت بدنه"><Fa>{data.body_status || "—"}</Fa></Spec>
+                    <Spec label="گیربکس">{data.transmission || "—"}</Spec>
+                    <Spec label="نوع بدنه">{data.body_type || "—"}</Spec>
+                    <Spec label="سوخت">{data.fuel || "—"}</Spec>
+                    <Spec label="شهر">
+                      <Fa>{data.city_name || "—"}</Fa>{data.district ? ` / ${data.district}` : ""}
+                    </Spec>
+                    <Spec label="فروشنده">
+                      {data.seller_type === "dealer"
+                        ? <>نمایشگاه <Fa>{data.dealer_name || ""}</Fa></>
+                        : data.seller_type === "private" ? "شخصی" : "—"}
+                      {data.seller_authenticated && (
+                        <span className="badge" style={{ marginInlineStart: 6 }}>احراز شده</span>
+                      )}
+                    </Spec>
+                  </dl>
                   {data.cohort_flags?.map((f) => (
                     <p key={f} className="badge warn">
                       {FLAG_LABEL[f] ?? f}
@@ -286,7 +344,8 @@ export function ListingDetail() {
                       <th>پرتکرارترین قیمت</th>
                       <td className="num">
                         {toman(fp.distribution.mode.value)}
-                        <span className="muted">
+                        {/* font-sans: the cell is mono, which has no Persian glyphs. */}
+                        <span className="muted font-sans" dir="rtl">
                           {" "}({fa(fp.distribution.mode.count)} آگهی)
                         </span>
                       </td>
@@ -303,8 +362,13 @@ export function ListingDetail() {
                   {fp.position_pct != null && (
                     <tr>
                       <th>جایگاه در گروه</th>
-                      <td className="num">
-                        گران‌تر از {pct(fp.position_pct, 0)} آگهی‌های مشابه
+                      {/* Not `.num`: that class sets the mono face, which has
+                          no Persian glyphs and broke every letter join in
+                          this sentence. Only the figure is tabular. */}
+                      <td>
+                        گران‌تر از{" "}
+                        <span className="font-mono tabular-nums">{pct(fp.position_pct, 0)}</span>
+                        {" "}آگهی‌های مشابه
                       </td>
                     </tr>
                   )}
@@ -394,16 +458,26 @@ function DealVerdict({ code }: { code: string }) {
 
   if (!verdict.data) return null;
   const d = verdict.data;
+  // `pricing` writes a row whatever the sign (a negative discount is a car
+  // priced *above* its peers), and the board filters on the sign at query
+  // time. This card used to assume every row it received was on the board, so
+  // a car 4.6% over the median was captioned "priced below its peers".
+  const below = d.discount_pct != null && d.discount_pct > 0;
+  const gap = d.discount_pct != null ? Math.abs(d.discount_pct) : null;
   return (
     <div className="card">
-      <h2>در فهرست معامله‌ها</h2>
+      <h2>{below ? "در فهرست معامله‌ها" : "مقایسه با میانه مشابه‌ها"}</h2>
       <p className="stat-sub" style={{ marginTop: 0 }}>
-        این آگهی روی تابلوی معامله‌ها هست — یعنی زیر میانه قیمت آگهی‌های مشابه
-        خودش قیمت خورده است.
+        {below
+          ? "این آگهی زیر میانه قیمت آگهی‌های مشابه خودش قیمت خورده و روی تابلوی معامله‌ها می‌آید."
+          : "این آگهی بالاتر از میانه قیمت آگهی‌های مشابه قیمت خورده است، پس روی تابلوی معامله‌ها نیست."}
       </p>
       <ul className="spec-list">
         <li>
-          فاصله تا میانه مشابه‌ها: {d.discount_pct != null ? pct(d.discount_pct) : "—"}
+          {below ? "ارزان‌تر از میانه: " : "گران‌تر از میانه: "}
+          <span className={below ? "up" : "down"}>
+            {gap != null ? pct(gap) : "—"}
+          </span>
         </li>
         <li>میانه قیمت مشابه‌ها: {toman(d.peer_median)}</li>
         <li>
@@ -506,9 +580,14 @@ function ModelEstimate({ code }: { code: string }) {
         <li>
           بازه‌ی محتمل: {toman(p.price_p10)} تا {toman(p.price_p90)}
         </li>
+        {/* residual = (p50 − price) / p50, so positive means the asking price
+            sits *under* the estimate. A bare "+8.8%" read as "8.8% too dear". */}
         {p.residual_pct != null && (
-          <li className={p.residual_pct > 0 ? "up" : undefined}>
-            فاصله‌ی قیمت آگهی تا برآورد: {pct(p.residual_pct)}
+          <li>
+            {p.residual_pct >= 0 ? "ارزان‌تر از برآورد: " : "گران‌تر از برآورد: "}
+            <span className={p.residual_pct >= 0 ? "up" : "down"}>
+              {pct(Math.abs(p.residual_pct))}
+            </span>
           </li>
         )}
         {p.sell_fast_prob != null && p.sell_fast_horizon_days != null && (
@@ -534,7 +613,10 @@ function ModelEstimate({ code }: { code: string }) {
           </h3>
           <table className="mini-table">
             <tbody>
-              {base?.base_price != null && (
+              {/* Below a toman figure any car could have, the "starting
+                  point" is not a price — production printed «1». Hidden until
+                  `ml.inference` reports it in toman. */}
+              {base?.base_price != null && base.base_price >= 1_000_000 && (
                 <tr>
                   <td>نقطه‌ی شروع (میانگین بازار)</td>
                   <td className="num">{toman(base.base_price)}</td>
