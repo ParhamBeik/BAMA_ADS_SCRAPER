@@ -86,7 +86,16 @@ def score_all(*, limit: int | None = None, model_ids=None) -> dict:
     art = _artifacts()
     if not art:
         return {"scored": 0, "reason": "no_active_models"}
+    # Locked before the rows are read, not only around the write: the
+    # worker's incremental rescore and the train container's full one run in
+    # different processes, and whichever read first must not publish its older
+    # snapshot over the other's newer rows.
+    with transaction.atomic():
+        rebuild_lock(PREDICTIONS_REBUILD)
+        return _score_rows(art, limit=limit, model_ids=model_ids)
 
+
+def _score_rows(art, *, limit, model_ids) -> dict:
     qs = scorable().order_by("code")
     if model_ids is not None:
         qs = qs.filter(model_id__in=model_ids)
@@ -109,9 +118,6 @@ def score_all(*, limit: int | None = None, model_ids=None) -> dict:
 
     objs = list(predictions.values())
     with transaction.atomic():
-        # The worker's incremental rescore and the train container's full one
-        # write this table from different processes; serialise them.
-        rebuild_lock(PREDICTIONS_REBUILD)
         # Delete-and-recreate rather than update_or_create per row: this is the
         # same wholesale-rebuild shape as `compute_deal_scores`, it is one query
         # plus one bulk insert instead of 25,000 round trips, and it guarantees

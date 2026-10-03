@@ -606,9 +606,9 @@ def ml_score(*, limit: int | None = None, incremental: bool = False) -> dict:
     from apps.ml.inference import score_all
 
     if incremental and lease_busy(TRAIN_LEASE):
-        # The train cadence is fitting and then rescoring everything; this
-        # partial pass would only contend with it for the same rows.
-        return {"skipped": True, "detail": "train cadence is rescoring the catalogue"}
+        # The train cadence is fitting new models and rescores everything
+        # straight after, from rows read once the fit is done.
+        return {"skipped": True, "detail": "train cadence is fitting; its full rescore follows"}
     model_ids = _models_from_latest_fetch() if incremental else None
     if incremental and not model_ids:
         return {"skipped": True, "detail": "no affected models in latest fetch"}

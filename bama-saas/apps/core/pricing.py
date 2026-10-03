@@ -918,6 +918,20 @@ def compute_deal_scores(*, model_id: int | None = None,
                         liquidity: dict[int, dict] | None = None) -> dict:
     """Value every eligible ad against its peers, or one model's.
 
+    The deal-board lock is taken before the rows are read, not just around the
+    write: a slow full rebuild that read its rows, then waited for a per-model
+    one to commit, would otherwise publish its older snapshot over the newer
+    rows. See ``_compute_deal_scores`` for what is computed.
+    """
+    with transaction.atomic():
+        rebuild_lock(DEAL_SCORES_REBUILD)
+        return _compute_deal_scores(model_id=model_id, liquidity=liquidity)
+
+
+def _compute_deal_scores(*, model_id: int | None = None,
+                         liquidity: dict[int, dict] | None = None) -> dict:
+    """Value every eligible ad against its peers, or one model's.
+
     This used to write only bargains, and the name still says "deal" because
     that is what the board reads. But refusing to store a row for a car priced
     at or above its peers meant the product could say "this is cheap" and could
@@ -1121,26 +1135,27 @@ def compute_deal_scores(*, model_id: int | None = None,
             },
         ))
 
-    # One transaction under one cross-process lock: readers never see the
-    # board between the delete and the insert, and a concurrent rebuild (hot
-    # tick, admin refresh, a full cadence) waits instead of inserting on top of
-    # this one and tripping the one-row-per-ad constraint.
-    with transaction.atomic():
-        rebuild_lock(DEAL_SCORES_REBUILD)
-        if model_id is not None:
-            DealScoreCache.objects.filter(ad__model_id=model_id).delete()
-        else:
-            DealScoreCache.objects.all().delete()
-        if objs:
-            DealScoreCache.objects.bulk_create(objs, batch_size=500)
-        for batch in (explained_low, cleared_low):
-            if batch:
-                Ad.objects.bulk_update(batch, ["cohort_flags"], batch_size=500)
+    # Inside `compute_deal_scores`' transaction and lock: readers never see
+    # the board between the delete and the insert, and a concurrent rebuild
+    # (hot tick, admin refresh, a full cadence) waits instead of inserting on
+    # top of this one and tripping the one-row-per-ad constraint.
+    if model_id is not None:
+        DealScoreCache.objects.filter(ad__model_id=model_id).delete()
+    else:
+        DealScoreCache.objects.all().delete()
+    if objs:
+        DealScoreCache.objects.bulk_create(objs, batch_size=500)
+    for batch in (explained_low, cleared_low):
+        if batch:
+            Ad.objects.bulk_update(batch, ["cohort_flags"], batch_size=500)
 
     # The window is measured from these rows, so it is wrong the instant they
     # are replaced. Dropped rather than recomputed here: the next reader pays
     # for it, and a rebuild that crashes afterwards leaves no stale answer.
+    # Again on commit: until then other readers still see the old rows and
+    # could cache a window measured from them.
     cache.delete(_WINDOW_CACHE_KEY)
+    transaction.on_commit(lambda: cache.delete(_WINDOW_CACHE_KEY))
     # The haircuts are NOT dropped here: unlike the window, a full rebuild has
     # just re-measured them from the same rows and `condition_haircuts` already
     # wrote that answer through. Deleting it would force the next reader to
