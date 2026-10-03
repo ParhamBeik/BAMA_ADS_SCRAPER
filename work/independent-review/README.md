@@ -1,11 +1,11 @@
 # Independent review: BAMA end-to-end audit remediation
 
-Audit date: 2026-09-19 (Asia/Tehran)
+Initial audit: 2026-09-19 (Asia/Tehran). The findings below are point-in-time; see the
+[2026-09-20 live addendum](live-2026-09-20.md) for replacement-VPS evidence and corrections.
 
-Current verdict: **NOT VERIFIED**. The recovered remediation is locally sound, but the exact
-deployed revision, current containers, logs, rendered UI, and production persistence cannot be
-verified until the replacement VPS has a stable public hostname and its Iran-specific TLS path is
-diagnosed.
+Current verdict: **NOT VERIFIED**. The replacement VPS is reachable, but trusted public HTTPS,
+authenticated browser workflows, production persistence, and the corrected release's live behavior
+still require verification. Do not interpret the historical table below as current state.
 
 ## Recovered work
 

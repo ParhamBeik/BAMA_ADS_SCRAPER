@@ -13,13 +13,13 @@ compose() {
     docker compose -f docker-compose.prod.yml --env-file .env.production "$@"
 }
 
-# Build first, so a compile/asset error fails the deploy while the previous
-# containers are still serving traffic.
-compose build
+# Build only application images. Postgres and Redis are pulled images; rebuilding
+# them adds time and can never include repository changes.
+compose build django worker ml frontend
 
-# --wait blocks until the healthcheck passes, so migrate cannot race the
-# database still doing crash recovery.
-compose up -d --wait postgres
+# --wait blocks until the healthchecks pass, so migrate cannot race the
+# database or cache still doing startup recovery.
+compose up -d --wait postgres redis
 
 # Stop the app containers before touching the schema, and accept a few seconds
 # of downtime for it.
@@ -34,7 +34,7 @@ compose up -d --wait postgres
 #
 # The alternative is expand/contract migrations, which is the right answer for a
 # service that cannot go down. This one can.
-compose stop django worker
+compose stop django worker ml frontend
 
 # Migrate as a one-off rather than letting the django service do it on start:
 # `set -e` then aborts the deploy on a bad migration, and `compose up -d` below
@@ -42,9 +42,5 @@ compose stop django worker
 # crash-looping on the new one.
 compose run --rm --no-deps django python manage.py migrate --noinput
 
-compose up -d
-# Image cache leaves frontend running yesterday's container when its layer
-# did not change. Recreate it every deploy so the public site matches the
-# backend that just came up.
-compose up -d --force-recreate --no-deps frontend
+compose up -d --wait --no-build
 # Retain prior images for rollback; reclaim space only after verifying the release.

@@ -91,8 +91,9 @@ run() {  # <cadence> — up to 3 attempts, then give up until the next tick
         if tick "$1"; then
             log "$1 ok"
             return 0
+        else
+            rc=$?
         fi
-        rc=$?
         n=$((n + 1))
         [ "$n" -lt 3 ] && sleep $((n * 8)) && log "$1 retry $n after rc=$rc"
     done

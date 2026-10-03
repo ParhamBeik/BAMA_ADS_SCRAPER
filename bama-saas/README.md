@@ -366,3 +366,14 @@ builder, the time split and the promotion gate are pure functions, and that is
 where the interesting mistakes live. The tests that matter most are the ones
 asserting a model is *refused*: a suite that only checked the happy path would
 have passed on every version of this code that shipped a broken model.
+
+## Documentation map
+
+- `ARCHITECTURE.md` — directory responsibilities, dependency direction, runtime
+  services, and invariants.
+- `deploy/CICD.md` — one-time deploy-user setup, GitHub Actions secrets, cutover,
+  and rollback.
+- `docs/STORAGE-POLICY.md` — what may be stored on the shared VPS disk.
+- `ui/web/LIGHTHOUSE.md` — historical frontend measurements and reproduction
+  commands; scores must be rerun against the current trusted origin.
+- `../AGENTS.md` — repository-wide contributor and coding-agent rules.

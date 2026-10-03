@@ -1,38 +1,41 @@
 # BAMA Ads Scraper & Deal Finder
 
-Crawls `bama.ir` listings to surface fair vehicle values, detect deals, track market trends, and deliver buyer alerts.
+Personal vehicle deal finder for `bama.ir`: it crawls listings, stores listing
+history, calculates fair prices and deal scores, tracks market movement, and
+delivers alerts.
 
-Full documentation, stack details, and architecture live in [`bama-saas/README.md`](bama-saas/README.md) and [`bama-saas/ARCHITECTURE.md`](bama-saas/ARCHITECTURE.md).
+The application lives in [`bama-saas/`](bama-saas/). Start with the application
+README, then read [`bama-saas/ARCHITECTURE.md`](bama-saas/ARCHITECTURE.md).
 
-## Quick Start
-
-Run the entire application stack (PostgreSQL, Redis, Django API, crawler worker loop, and Vite frontend):
+## Quick start
 
 ```bash
 cd bama-saas
 docker compose up --build
 ```
 
-- Web UI: <http://localhost:5174>
-- REST API: <http://localhost:8001>
-- Django Admin: <http://localhost:8001/admin/>
+- UI: <http://localhost:5174>
+- API: <http://localhost:8001>
+- Admin: <http://localhost:8001/admin/>
 
-## Running Tests
-
-Run backend tests:
+## Checks
 
 ```bash
-cd bama-saas && .venv/bin/pytest -q
+cd bama-saas
+.venv/bin/ruff check .
+.venv/bin/pytest -q
+.venv/bin/python manage.py makemigrations --check --dry-run
+cd ui/web
+npm run typecheck
+npm test
+npm run check:contrast
+npm run build
 ```
 
-Run frontend tests:
+## Important files
 
-```bash
-cd bama-saas/ui/web && npm test
-```
-
-## Structure
-
-- `bama-saas/` — Django backend (`apps/`), React frontend (`ui/web/`), configuration (`config/`), and deployment definitions (`deploy/`).
-- `bama-saas/ARCHITECTURE.md` — Layer boundaries, domain invariants, and pipeline architecture.
-- `REFACTOR_REPORT.md` — Structural refactoring and consolidation audit log.
+- `AGENTS.md` — repository rules for contributors and coding agents.
+- `bama-saas/README.md` — product, API, jobs, and local setup.
+- `bama-saas/ARCHITECTURE.md` — directory responsibilities and invariants.
+- `bama-saas/deploy/` — worker, training, and deployment docs/scripts.
+- `work/independent-review/` — historical audit evidence; it is not runtime code.
