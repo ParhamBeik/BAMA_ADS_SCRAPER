@@ -11,7 +11,7 @@
  * says what it is, and the nav already says where you are.
  */
 import { lazy, Suspense, useEffect, type ReactNode } from "react";
-import { Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation, useNavigationType, useParams } from "react-router-dom";
 import { useAuth } from "./auth";
 import { AppHeader, AuthHeader, MobileNav } from "./components/AppHeader";
 // Only Login stays eager. Home looked like the other obvious candidate and was
@@ -242,7 +242,12 @@ function AppShell() {
  */
 function ScrollToTop() {
   const { pathname } = useLocation();
-  useEffect(() => { window.scrollTo(0, 0); }, [pathname]);
+  const navigationType = useNavigationType();
+  // Back/forward (POP) keeps the browser's restored offset, so returning from a
+  // listing lands where the reader left the list.
+  useEffect(() => {
+    if (navigationType !== "POP") window.scrollTo(0, 0);
+  }, [pathname, navigationType]);
   return null;
 }
 

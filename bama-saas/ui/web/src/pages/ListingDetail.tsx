@@ -95,16 +95,18 @@ function Gallery({ title, urls }: { title: string; urls: string[] }) {
       {urls.length > 1 && (
         <div className="gallery-strip" role="list">
           {urls.map((src, index) => (
-            <button
-              key={src}
-              type="button"
-              role="listitem"
-              aria-label={`تصویر ${index + 1}`}
-              aria-current={index === active ? "true" : undefined}
-              onClick={() => setActive(index)}
-            >
-              <img src={src} alt="" loading="lazy" />
-            </button>
+            // The listitem wraps the button: role="listitem" on the button
+            // itself replaced its button role for screen readers.
+            <div key={src} role="listitem">
+              <button
+                type="button"
+                aria-label={`تصویر ${index + 1}`}
+                aria-current={index === active ? "true" : undefined}
+                onClick={() => setActive(index)}
+              >
+                <img src={src} alt="" loading="lazy" />
+              </button>
+            </div>
           ))}
         </div>
       )}
@@ -209,6 +211,8 @@ export function ListingDetail() {
             </div>
             <div className="detail-layout">
               <Gallery
+                // Keyed so moving to another listing opens on its first photo.
+                key={code}
                 title={data.title}
                 urls={data.image_urls?.length ? data.image_urls : data.image_url ? [data.image_url] : []}
               />
@@ -463,6 +467,8 @@ function DealVerdict({ code }: { code: string }) {
   // time. This card used to assume every row it received was on the board, so
   // a car 4.6% over the median was captioned "priced below its peers".
   const below = d.discount_pct != null && d.discount_pct > 0;
+  // Zero is "at the median" and null is "no figure"; neither is "above".
+  const above = d.discount_pct != null && d.discount_pct < 0;
   const gap = d.discount_pct != null ? Math.abs(d.discount_pct) : null;
   return (
     <div className="card">
@@ -470,11 +476,13 @@ function DealVerdict({ code }: { code: string }) {
       <p className="stat-sub" style={{ marginTop: 0 }}>
         {below
           ? "این آگهی زیر میانه قیمت آگهی‌های مشابه خودش قیمت خورده و روی تابلوی معامله‌ها می‌آید."
-          : "این آگهی بالاتر از میانه قیمت آگهی‌های مشابه قیمت خورده است، پس روی تابلوی معامله‌ها نیست."}
+          : above
+            ? "این آگهی بالاتر از میانه قیمت آگهی‌های مشابه قیمت خورده است، پس روی تابلوی معامله‌ها نیست."
+            : "این آگهی زیر میانه قیمت آگهی‌های مشابه نیست، پس روی تابلوی معامله‌ها نیست."}
       </p>
       <ul className="spec-list">
         <li>
-          {below ? "ارزان‌تر از میانه: " : "گران‌تر از میانه: "}
+          {below ? "ارزان‌تر از میانه: " : above ? "گران‌تر از میانه: " : "فاصله از میانه: "}
           <span className={below ? "up" : "down"}>
             {gap != null ? pct(gap) : "—"}
           </span>
