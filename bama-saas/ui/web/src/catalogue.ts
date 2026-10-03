@@ -9,7 +9,7 @@
  * against its own cache entry.
  */
 import { useQuery } from "@tanstack/react-query";
-import { api, type Brand, type Paginated } from "./api";
+import { api, type Brand, type City, type Paginated } from "./api";
 
 /** The brand list, unwrapped. Cached for ten minutes; the catalogue barely moves. */
 export function useBrands({ enabled = true }: { enabled?: boolean } = {}) {
@@ -23,4 +23,12 @@ export function useBrands({ enabled = true }: { enabled?: boolean } = {}) {
     ? query.data
     : (query.data?.results ?? []);
   return { query, list };
+}
+
+export function useCities() {
+  return useQuery({
+    queryKey: ["cities"],
+    staleTime: 10 * 60_000,
+    queryFn: ({ signal }) => api.get<City[]>("/api/cities/", signal),
+  });
 }
