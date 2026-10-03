@@ -598,6 +598,50 @@ def test_integrity_error_on_one_ad_does_not_lose_the_rest_of_the_page(
 
 
 @pytest.mark.django_db
+def test_rolled_back_catalog_rows_are_dropped_from_the_cache(
+    known_catalog, monkeypatch, make_payload
+):
+    """A model minted inside a rolled-back savepoint must not be reused.
+
+    The first ad of a never-seen model creates the Model/Variant inside its
+    savepoint. If that ad then fails, the rows are gone but ``_DIM_CACHE``
+    still held them, so the next ad of the same model pointed at a deleted id
+    and the deferred FK check failed the whole page at commit.
+    """
+    from django.db import IntegrityError, connection, transaction
+
+    from apps.jobs import ingest as ingest_mod
+
+    ingest_mod.reset_cache()
+    real_get_or_create = ingest_mod.AdVersion.objects.get_or_create
+
+    def explode_for_first_ad(*args, **kwargs):
+        if kwargs.get("ad") is not None and kwargs["ad"].code == "newm0001":
+            raise IntegrityError("simulated")
+        return real_get_or_create(*args, **kwargs)
+
+    monkeypatch.setattr(ingest_mod.AdVersion.objects, "get_or_create", explode_for_first_ad)
+
+    run = FetchRun.objects.create(source=FetchRun.Source.LIVE_FETCH)
+    observed = datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc)
+    with transaction.atomic():
+        results = [
+            ingest_ad(
+                extract_ad(make_payload(code, 15_000_000_000, model="مدل کاملا نو"), observed),
+                run=run, observed_at=observed, publish_at=observed,
+            )
+            for code in ("newm0001", "newm0002")
+        ]
+        # The page's commit is where the deferred FK check fired.
+        with connection.cursor() as cursor:
+            cursor.execute("SET CONSTRAINTS ALL IMMEDIATE")
+
+    assert [r.rejected for r in results] == [True, False]
+    ad = Ad.objects.get(code="newm0002")
+    assert ad.model.name_fa.startswith("مدل کاملا نو")
+
+
+@pytest.mark.django_db
 def test_rolled_back_version_is_dropped_from_the_cache(known_catalog, monkeypatch, make_payload):
     """The FK violation's actual root cause.
 

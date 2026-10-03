@@ -398,8 +398,12 @@ def ingest_ad(extracted: dict, *, run: FetchRun, observed_at: datetime,
             return _ingest_ad(extracted, run=run, observed_at=observed_at,
                               publish_at=publish_at, dealer=dealer, rank=rank)
     except IntegrityError as exc:
-        # The savepoint is gone, so anything cached from inside it is a lie.
+        # The savepoint is gone, so anything cached from inside it is a lie —
+        # including catalog rows (brand, model, variant, city, dealer) this ad
+        # minted. Rollbacks are rare, so dropping the whole dimension cache is
+        # cheaper than tracking which entries the savepoint created.
         forget_cached(code)
+        reset_cache()
         IngestReject.objects.create(
             code=code, rule="integrity_error", detail=str(exc)[:1000],
             raw_payload=pure_ad(extracted.get("raw_payload") or {}),
