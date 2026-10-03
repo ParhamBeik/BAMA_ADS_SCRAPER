@@ -34,13 +34,23 @@ compose up -d --wait postgres redis
 #
 # The alternative is expand/contract migrations, which is the right answer for a
 # service that cannot go down. This one can.
-compose stop django worker ml frontend
+#
+# The frontend is a static nginx bundle and keeps serving the site throughout;
+# its API calls fail while django is stopped, and `up` below recreates it on
+# the new image.
+compose stop django worker ml
 
-# Migrate as a one-off rather than letting the django service do it on start:
-# `set -e` then aborts the deploy on a bad migration, and `compose up -d` below
-# is never reached, so the stack is restarted on the old image instead of
-# crash-looping on the new one.
-compose run --rm --no-deps django python manage.py migrate --noinput
+# Migrate as a one-off rather than letting the django service do it on start,
+# so a bad migration aborts the deploy before `up` recreates anything. On
+# failure, start the stopped containers again: `start` reuses the existing
+# containers, which still hold the previous image, rather than the rebuilt one.
+# Django runs each atomic migration in its own transaction on PostgreSQL, so
+# the failed one left nothing behind; earlier ones in the batch did apply.
+if ! compose run --rm --no-deps django python manage.py migrate --noinput; then
+    echo "migrate failed; restarting the previous containers" >&2
+    compose start django worker ml || true
+    exit 1
+fi
 
 compose up -d --wait --no-build
 # Retain prior images for rollback; reclaim space only after verifying the release.
