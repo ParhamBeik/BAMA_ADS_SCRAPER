@@ -371,6 +371,11 @@ class AlertViewSet(viewsets.ReadOnlyModelViewSet):
         """
         qs = self.get_queryset().filter(read_at__isnull=True)
         codes = request.data.get("codes")
+        if codes is not None and (
+            not isinstance(codes, list) or not all(isinstance(c, str) for c in codes)
+        ):
+            return Response({"codes": ["Expected a list of listing codes."]},
+                            status=status.HTTP_400_BAD_REQUEST)
         if codes:
             qs = qs.filter(ad_id__in=codes)
         return Response({"marked": qs.update(read_at=timezone.now())})

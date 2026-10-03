@@ -451,12 +451,19 @@ _CONFIDENCE_PEERS = {
 }
 
 
+_PG_BIGINT_MAX = 2**63 - 1
+
+
 def _opt(params, key, cast):
     raw = params.get(key)
     if raw in (None, "", "null"):
         return None
     try:
-        return cast(raw)
+        value = cast(raw)
+        # Past bigint every query fails in Postgres with a DataError (a 500).
+        if cast is int and not -_PG_BIGINT_MAX <= value <= _PG_BIGINT_MAX:
+            raise ValueError(raw)
+        return value
     except (TypeError, ValueError) as exc:
         raise ValueError(
             f"{key} must be {'an integer' if cast is int else 'a number'}"

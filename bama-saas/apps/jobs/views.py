@@ -273,7 +273,10 @@ def jobs_overview(request):
     A step skipped because its prerequisite failed shows up as ``skipped``,
     distinct from both success and silence.
     """
-    limit = min(int(request.query_params.get("limit", 50)), 200)
+    try:
+        limit = max(1, min(int(request.query_params.get("limit", 50)), 200))
+    except ValueError:
+        return Response({"limit": ["Expected an integer."]}, status=400)
     rows = list(JobRun.objects.all()[:limit].values(
         "name", "status", "triggered_by", "started_at", "finished_at",
         "duration_s", "detail", "error",

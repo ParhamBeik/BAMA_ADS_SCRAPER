@@ -1053,6 +1053,26 @@ def test_favorites_are_isolated_between_users(api_client, catalog):
     assert body["results"] == []
 
 
+@pytest.mark.django_db
+def test_malformed_input_is_a_400_not_a_500(api_client, catalog):
+    """Each of these reached the database and came back as a 500."""
+    user = User.objects.create_user(email="input@example.com", password="StrongPass1!",
+                                    is_staff=True)
+    api_client.force_authenticate(user=user)
+    # FK violation on insert.
+    resp = api_client.post("/api/favorites/", {"code": "nosuchad"}, format="json")
+    assert resp.status_code == 400, resp.content
+    # `ad_id__in=5` — not iterable.
+    resp = api_client.post("/api/alerts/mark-read/", {"codes": 5}, format="json")
+    assert resp.status_code == 400, resp.content
+    # Past bigint: DataError in Postgres.
+    resp = api_client.get("/api/analytics/deal-scores/?band=all&offset=" + "9" * 25)
+    assert resp.status_code == 400, resp.content
+    assert api_client.get("/api/admin/jobs/overview/?limit=abc").status_code == 400
+    # Negative slicing raised; it is clamped to one row now.
+    assert api_client.get("/api/admin/jobs/overview/?limit=-1").status_code == 200
+
+
 # ==========================================================================
 # What the API is allowed to hand out, and to whom
 # ==========================================================================

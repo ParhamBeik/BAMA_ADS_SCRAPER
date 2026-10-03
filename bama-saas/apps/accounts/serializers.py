@@ -18,7 +18,7 @@ from rest_framework import serializers
 
 from apps.accounts.models import AlertDelivery, AlertRule, Favorite, Watchlist
 from apps.core import images
-from apps.core.models import PriceDropEvent
+from apps.core.models import Ad, PriceDropEvent
 from apps.core.pricing import MIN_PEERS
 
 User = get_user_model()
@@ -79,6 +79,13 @@ class FavoriteSerializer(serializers.ModelSerializer):
         fields = ["code", "ad_title", "ad_price", "previous_price",
                   "price_changed_at", "created_at"]
         read_only_fields = ["created_at"]
+
+    def validate_code(self, value):
+        # A code with no ad behind it reached the insert and failed the FK
+        # there: a 500 for a typo instead of a 400.
+        if not Ad.objects.filter(code=value).exists():
+            raise serializers.ValidationError("No listing with this code.")
+        return value
 
 
 # The ad's newest price cut, as a correlated subquery. Served by
