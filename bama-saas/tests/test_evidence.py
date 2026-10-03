@@ -2,8 +2,10 @@
 
 from datetime import timedelta
 from hashlib import sha256
+from io import StringIO
 
 import pytest
+from django.core.management import call_command
 from django.test import override_settings
 from django.utils import timezone
 
@@ -167,3 +169,33 @@ def test_holdout_deduplicates_repost_and_uses_prior_baseline():
     ]
     _, deduped = time_split(within)
     assert len(deduped) == 1
+
+
+@pytest.mark.django_db
+def test_review_confirmed_model_is_exact_and_dry_run_has_no_writes(make_payload):
+    brand = Brand.objects.create(name_fa="تویوتا", slug="toyota-confirmed",
+                                 is_confirmed=True)
+    model = Model.objects.create(brand=brand, name_fa="کمری", is_confirmed=True)
+    other = Model.objects.create(brand=brand, name_fa="کرولا", is_confirmed=False)
+    now = timezone.now()
+    versions = []
+    for code, name, current_model in (("confirmed1", "کمری", model),
+                                      ("unconfirmed1", "کرولا", other)):
+        payload = make_payload(code, 3_000_000_000, brand="تویوتا", model=name)
+        ad = Ad.objects.create(code=code, brand=brand, model=current_model,
+                               title=name, raw_payload=payload,
+                               price_type="lumpsum", current_price=3_000_000_000)
+        version = AdVersion.objects.create(
+            ad=ad, semantic_hash=code.ljust(64, "a"), raw_hash="b" * 64,
+            first_observed_at=now, payload=payload,
+        )
+        ad.current_version = version
+        ad.save(update_fields=["current_version"])
+        versions.append(version)
+    call_command("review_confirmed_models", limit=10, stdout=StringIO())
+    assert AdVersion.objects.filter(classification_state="verified").count() == 0
+    call_command("review_confirmed_models", apply=True, limit=10, stdout=StringIO())
+    versions[0].refresh_from_db()
+    versions[1].refresh_from_db()
+    assert versions[0].classification_rule == "confirmed_model"
+    assert versions[1].classification_state == "needs_review"
