@@ -8,9 +8,10 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 
 from apps.common.parsing import extract_ad
+from apps.core import taxonomy
 from apps.core.admission import sync_admission
 from apps.core.models import Ad, AdVersion, Brand, Model, Variant
-from apps.core.normalization import search_document
+from apps.core.normalization import ad_search_document
 
 
 class Command(BaseCommand):
@@ -36,7 +37,13 @@ class Command(BaseCommand):
                 continue
             counts["examined"] += 1
             source = (extracted.get("brand") or "").strip()
-            model_name = (extracted.get("model") or "").strip()
+            # The same identity ingest assigns: label plus powertrain, so a
+            # version is never verified as a different car than the one ingest
+            # would have filed it under.
+            model_name, _ = taxonomy.model_name(
+                source, extracted.get("model"), extracted.get("trim"),
+                extracted.get("transmission"),
+            )
             brand = brands.get(source)
             model = models.get((brand.pk, model_name)) if brand else None
             if model is None:
@@ -57,7 +64,7 @@ class Command(BaseCommand):
                 if ad.current_version_id == version.pk:
                     Ad.objects.filter(pk=ad.pk).update(
                         brand=brand, model=model, variant=variant,
-                        search_text=search_document(
+                        search_text=ad_search_document(
                             ad.title, model.name_fa, brand.name_fa, ad.description,
                         ),
                     )

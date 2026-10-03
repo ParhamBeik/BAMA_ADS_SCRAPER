@@ -11,6 +11,7 @@ from django.utils import timezone
 
 from apps.core.admission import sync_admission
 from apps.core.models import Ad, AdVersion, AdVersionPhoto, ArchivedImage, Brand, Model
+from apps.core.normalization import ad_search_document
 from apps.jobs import photo_archive
 
 
@@ -175,8 +176,12 @@ def test_holdout_deduplicates_repost_and_uses_prior_baseline():
 def test_review_confirmed_model_is_exact_and_dry_run_has_no_writes(make_payload):
     brand = Brand.objects.create(name_fa="تویوتا", slug="toyota-confirmed",
                                  is_confirmed=True)
-    model = Model.objects.create(brand=brand, name_fa="کمری", is_confirmed=True)
+    # Confirmed under the name ingest gives it: label plus powertrain.
+    model = Model.objects.create(brand=brand, name_fa="کمری دنده ای", is_confirmed=True)
     other = Model.objects.create(brand=brand, name_fa="کرولا", is_confirmed=False)
+    # A confirmed bare label must not capture a version whose canonical identity
+    # differs from it (this one canonicalises to «کمری دنده ای»).
+    Model.objects.create(brand=brand, name_fa="کمری", is_confirmed=True)
     now = timezone.now()
     versions = []
     for code, name, current_model in (("confirmed1", "کمری", model),
@@ -198,4 +203,10 @@ def test_review_confirmed_model_is_exact_and_dry_run_has_no_writes(make_payload)
     versions[0].refresh_from_db()
     versions[1].refresh_from_db()
     assert versions[0].classification_rule == "confirmed_model"
+    assert versions[0].classified_model_id == model.pk
     assert versions[1].classification_state == "needs_review"
+    ad = Ad.objects.get(code="confirmed1")
+    assert ad.model_id == model.pk
+    # Same search document as ingest, so the maker alias stays searchable.
+    assert ad.search_text == ad_search_document(ad.title, model.name_fa, brand.name_fa,
+                                                ad.description)
