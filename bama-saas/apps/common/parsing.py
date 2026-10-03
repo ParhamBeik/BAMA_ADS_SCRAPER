@@ -187,6 +187,7 @@ def extract_ad(payload: dict[str, Any], observed_at: datetime) -> dict[str, Any]
         "code": str(code),
         "title": detail.get("title"),
         "brand": detail.get("brand_fa") or (title_parts[0] if title_parts else None),
+        "brand_en": detail.get("brand"),
         "model": title_parts[1] if len(title_parts) > 1 else None,
         "trim": detail.get("trim"),
         "year": parse_int(detail.get("year"), positive=True),
@@ -386,6 +387,11 @@ def _cdn_urls(candidates: list) -> list[str]:
         if u not in urls:
             urls.append(u)
     return urls
+
+
+def front_photo(primary: str, gallery: list) -> str:
+    """The one photo kept on the VPS for an ad (docs/STORAGE-POLICY.md)."""
+    return primary or (gallery[0] if gallery else "")
 
 
 def image_urls(payload: dict) -> tuple[str, list[str]]:

@@ -15,6 +15,7 @@ from django.utils import timezone as djtz
 from apps.common.parsing import extract_ad, parse_publish_time
 from apps.core.models import (
     Ad,
+    AdVersionPhoto,
     Brand,
     City,
     DealScoreCache,
@@ -74,7 +75,7 @@ def known_catalog(db):
     from apps.core.models import Brand, Model
 
     brand = Brand.objects.create(slug="peugeot", name_fa="پژو", is_confirmed=True)
-    Model.objects.create(brand=brand, name_fa="405", is_confirmed=True)
+    Model.objects.create(brand=brand, name_fa="405 دنده ای", is_confirmed=True)
     reset_cache()
     return brand
 
@@ -150,19 +151,29 @@ def test_ad_that_turns_bad_is_removed_not_left_stale(make_payload):
 
 
 @pytest.mark.django_db
-def test_negotiable_zero_price_is_not_quarantined(known_catalog, make_payload):
-    """21.6% of real ads are negotiable with price "0" — the single most
-    important false positive to avoid."""
+def test_a_new_ad_without_a_cash_price_or_photo_never_enters_the_catalog(
+        known_catalog, make_payload):
+    """Price and photo are prerequisites of an ad's existence.
+
+    Negotiable ads (price "0") are 21.6% of the feed; they are refused as having
+    no cash price, not quarantined as a broken one.
+    """
+    from apps.core.models import IngestReject
+
     run = FetchRun.objects.create(source=FetchRun.Source.LIVE_FETCH)
     observed = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
-    payload = make_payload("nego123", 0)
-    payload["price"]["type"] = "negotiable"
-    extracted = extract_ad(payload, observed)
+    negotiable = make_payload("nego1234", 0)
+    negotiable["price"]["type"] = "negotiable"
+    no_photo = make_payload("nophoto1", 1_000_000_000)
+    no_photo["images"] = []
+    for payload in (negotiable, no_photo):
+        assert _ing(extract_ad(payload, observed), run=run,
+                    observed_at=observed, publish_at=observed) is None
 
-    ad = _ing(extracted, run=run, observed_at=observed, publish_at=observed)
-    ad.refresh_from_db()
-
-    assert ad.quality_flags == []
+    assert not Ad.objects.filter(code__in=["nego1234", "nophoto1"]).exists()
+    assert dict(IngestReject.objects.values_list("code", "rule")) == {
+        "nego1234": "cash_price_required", "nophoto1": "photo_missing",
+    }
 
 
 @pytest.mark.django_db
@@ -280,12 +291,12 @@ def test_reingest_sets_price_basis_unclear_through_update(known_catalog, make_pa
     # known model. The finance vocabulary lives in the description — that is
     # where Bama actually puts instalment terms on lumpsum ads, and it is
     # enough for quality.price_basis_unclear.
-    payload["detail"]["description"] = "فروش خودرو به صورت نقد و اقساط"
+    payload["detail"]["description"] = "مبلغ درج شده پیش پرداخت است"
     _ing(extract_ad(payload, later), run=run2, observed_at=later, publish_at=later)
 
     stored = Ad.objects.get(code="instal01")
     assert stored.price_basis_unclear is True
-    assert stored.description.startswith("فروش خودرو به صورت نقد و اقساط")
+    assert stored.description.startswith("مبلغ درج شده پیش پرداخت است")
 
 
 # --- photos ------------------------------------------------------------------
@@ -459,56 +470,76 @@ def test_source_timestamps_are_read_as_tehran_local():
     assert parsed.tzinfo is not None
     assert parsed.hour != 12, "a bare local time must not be taken for UTC"
 
-
 # ---------------------------------------------------------------------------
-# A make is a make; a model filed as one is not
+# One real car, one catalog model — through the reviewed taxonomy
 # ---------------------------------------------------------------------------
 
-@pytest.mark.django_db
-def test_a_model_bama_files_as_a_brand_lands_under_its_real_make(make_payload):
-    """سمند and پراید arrive as top-level brands and must not stay that way.
-
-    Bama's feed has no manufacturer field, so every IKCO and SAIPA model is its
-    own one-model "brand". That splits the two makes covering most of the market
-    into a dozen fragments each and leaves the brand filter unable to answer
-    "show me Iran Khodro". ``BRAND_PARENT`` remaps them on the way in; the model
-    name is what carries the identity, so nothing is lost by the merge.
-    """
+def _ingest_pairs(make_payload, pairs):
+    """``pairs``: (code, brand, label[, trim[, transmission]])."""
     reset_cache()  # the dimension cache outlives a test database
     run = FetchRun.objects.create(source=FetchRun.Source.LIVE_FETCH)
-    for code, brand, model in [
-        ("ikco001", "سمند", "سمند LX"),
-        ("saipa01", "پراید", "پراید ۱۳۱"),
-        ("chery01", "چری", "آریزو ۵"),
-    ]:
-        payload = make_payload(code, 3_000_000_000, brand=brand, model=model)
-        extracted = extract_ad(payload, NOW)
-        _ing(extracted, run=run, observed_at=NOW, publish_at=NOW)
-
-    def brand_of(code):
-        return Ad.objects.get(code=code).brand.name_fa
-
-    assert brand_of("ikco001") == "ایران خودرو"
-    assert brand_of("saipa01") == "سایپا"
-    assert brand_of("chery01") == "چری", "a real make must pass through untouched"
-    assert Ad.objects.get(code="ikco001").model.name_fa == "سمند"
-    assert "سمند LX" in Ad.objects.get(code="ikco001").variant.name_fa
+    for code, brand, label, *rest in pairs:
+        payload = make_payload(code, 3_000_000_000, brand=brand, model=label,
+                               trim=rest[0] if rest else "دنده‌ای")
+        if len(rest) > 1:
+            payload["detail"]["transmission"] = rest[1]
+        _ing(extract_ad(payload, NOW), run=run, observed_at=NOW, publish_at=NOW)
+    return {code: Ad.objects.select_related("brand", "model", "variant").get(code=code)
+            for code, *_ in pairs}
 
 
 @pytest.mark.django_db
-def test_peugeot_206_207_families_stay_distinct(make_payload):
-    run = FetchRun.objects.create(source=FetchRun.Source.LIVE_FETCH)
-    for code, source_model in (("pilot206", "206 SD"), ("pilot207", "207 صندوقدار")):
-        payload = make_payload(code, 3_000_000_000, brand="پژو", model=source_model)
-        _ing(extract_ad(payload, NOW), run=run, observed_at=NOW, publish_at=NOW)
-    first = Ad.objects.get(code="pilot206")
-    second = Ad.objects.get(code="pilot207")
-    assert first.model.name_fa == "206"
-    assert second.model.name_fa == "207"
-    assert "SD" in first.variant.name_fa
-    assert "صندوقدار" in second.variant.name_fa
-    assert first.current_version.classification_state == "verified"
-    assert not Brand.objects.filter(name_fa__in=["سمند", "پراید"]).exists()
+def test_badge_brand_is_kept_and_maker_is_searchable(make_payload):
+    """پراید stays پراید; "سایپا" still finds it through search_text."""
+    ads = _ingest_pairs(make_payload, [("saipa01", "پراید", "131"),
+                                       ("chery01", "چری", "آریزو 5")])
+    assert ads["saipa01"].brand.name_fa == "پراید"
+    assert ads["saipa01"].brand.is_confirmed
+    assert "سایپا" in ads["saipa01"].search_text
+    assert ads["chery01"].brand.name_fa == "چری"
+
+
+@pytest.mark.django_db
+def test_a_different_engine_or_gearbox_is_a_different_model(make_payload):
+    """207 TU5 manual, 207 TU5P automatic and RAV4 2.0 / 2.5 are separate cars."""
+    ads = _ingest_pairs(make_payload, [
+        ("p207tu5m", "پژو", "207", "پانوراما دنده ای TU5", "دنده ای"),
+        ("p207tu5a", "پژو", "207", "پانوراما اتوماتیک TU5P", "اتوماتیک"),
+        ("p207tu5b", "پژو", "207", "دنده ای TU5", "دنده ای"),
+        ("rav4twol", "تویوتا", "راوفور", "2.0 لیتر تک دیفرانسیل", "اتوماتیک"),
+        ("rav4twoh", "تویوتا", "راوفور", "2.5 لیتر دو دیفرانسیل", "اتوماتیک"),
+    ])
+    assert ads["p207tu5m"].model.name_fa == "207 TU5 دنده ای"
+    assert ads["p207tu5a"].model.name_fa == "207 TU5P اتوماتیک"
+    # Panorama is equipment, not a different car: same model, different variant.
+    assert ads["p207tu5b"].model_id == ads["p207tu5m"].model_id
+    assert ads["p207tu5b"].variant_id != ads["p207tu5m"].variant_id
+    assert ads["rav4twol"].model.name_fa == "راوفور 2.0 لیتر اتوماتیک"
+    assert ads["rav4twoh"].model_id != ads["rav4twol"].model_id
+    assert ads["p207tu5m"].model.is_confirmed
+
+
+@pytest.mark.django_db
+def test_only_one_car_spelled_two_ways_is_merged(make_payload):
+    ads = _ingest_pairs(make_payload, [
+        ("fownf7a1", "فونیکس", "تیگو 7 پرو مکس (F7)"),
+        ("fownf7b1", "فونیکس", "تیگو 7 پرو مکس (F7 PRO MAX)"),
+        ("quicks01", "کوییک", "دنده ای S"), ("quickr01", "کوییک", "دنده ای R"),
+        ("cerato01", "کیا", "سراتو"), ("cerato02", "کیا", "سراتو (مونتاژ)"),
+    ])
+    assert ads["fownf7a1"].model_id == ads["fownf7b1"].model_id
+    assert ads["quicks01"].model_id != ads["quickr01"].model_id
+    assert ads["quicks01"].model.name_fa == "دنده ای S", "the label already says manual"
+    assert ads["cerato01"].model_id != ads["cerato02"].model_id
+
+
+@pytest.mark.django_db
+def test_an_unreviewed_pair_passes_through_and_waits_for_review(make_payload):
+    ads = _ingest_pairs(make_payload, [("newpair1", "برند تازه", "مدل تازه")])
+    ad = ads["newpair1"]
+    assert ad.model.name_fa == "مدل تازه دنده ای"
+    assert not ad.model.is_confirmed and not ad.brand.is_confirmed
+    assert ad.current_version.classification_state == "needs_review"
 
 
 # ---------------------------------------------------------------------------
@@ -1303,3 +1334,35 @@ def test_the_deal_board_still_shows_only_bargains(catalog, staff_client):
              staff_client.get("/api/analytics/deal-scores/?band=all").json()["results"]}
     assert "bargain1" in codes
     assert "pricey01" not in codes
+
+
+@pytest.mark.django_db
+def test_only_the_front_photo_is_recorded_for_storage(make_payload):
+    """docs/STORAGE-POLICY.md: one local photo per ad; the gallery stays links."""
+    run = FetchRun.objects.create(source=FetchRun.Source.BULK_IMPORT)
+    extracted = extract_ad(make_payload("front1", 1_000_000_000), NOW)
+    ad = _ing(extracted, run=run, observed_at=NOW,
+              publish_at=parse_publish_time(extracted["publish_phrase"], NOW))
+    photos = list(AdVersionPhoto.objects.filter(version__ad=ad).values_list("position", "source_url"))
+    assert photos == [(0, ad.primary_image_url)]
+    assert len(ad.image_urls) > 1
+
+
+@pytest.mark.django_db
+def test_an_unchanged_resighting_writes_no_observation(make_payload):
+    """docs/STORAGE-POLICY.md: sightings are change-only; a price change still records one."""
+    from apps.core.models import AdObservation
+
+    def sight(price, minutes):
+        at = NOW + timedelta(minutes=minutes)
+        run = FetchRun.objects.create(source=FetchRun.Source.LIVE_FETCH)
+        extracted = extract_ad(make_payload("seen01", price), at)
+        return _ing(extracted, run=run, observed_at=at,
+                    publish_at=parse_publish_time(extracted["publish_phrase"], at))
+
+    sight(1_000_000_000, 0)
+    ad = sight(1_000_000_000, 30)
+    assert AdObservation.objects.filter(ad=ad).count() == 1
+    assert ad.last_seen_at == NOW + timedelta(minutes=30)
+    sight(900_000_000, 60)
+    assert AdObservation.objects.filter(ad=ad).count() == 2

@@ -44,12 +44,12 @@ NOW = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
 
 @pytest.mark.parametrize("text", [
     "مبلغ فوق، پیش پرداخت است",
-    "فروش خودرو به صورت نقد و اقساط با سود بانک مرکزی",
     "ثبت نام محدود خودرو ۲۱۲، پرداخت طی چند مرحله",
     "پیش‌فروش با تحویل ۳ ماهه",
     "پرداخت ۳ مرحله ای برای اطلاعات بیشتر تماس بگیرید",
-    "عاملیت فروش نمایندگی ها",
-    "فروش با لیزینگ بدون ضامن",
+    "حواله کوئیک استاندارد ۸۵ گانه",
+    "صفر خشک تحویل ۶۰روزه قیمت قطعی",
+    "تحویل 60 روز کاری / قرارداد رسمی",
 ])
 def test_finance_vocabularies_are_all_caught(text):
     """Each of these appeared verbatim on a row the old board ranked top-15."""
@@ -73,6 +73,14 @@ def test_bama_labels_most_of_them_lumpsum():
 
 
 @pytest.mark.parametrize("text", [
+    # The commonest dealer boilerplate on Bama, and it says *cash only*.
+    "معاوضه و اقساط نداریم فقط فروش نقدی",
+    # Optional financing on a car whose listed price is the full cash price.
+    "امکان فروش اقساطی نصف نقد الباقی ۱۲ ماه با چک صیادی",
+    "فروش با لیزینگ بدون ضامن",
+    "عاملیت فروش تمام خودروهای وارداتی",
+    # "Delivered two days ago" is not a delivery lead time.
+    "تحویل 2 روز پیش فرمان برقی",
     "بسیار تمیز، تمام رنگ‌ها سالم، کولر و فنی سلامت، فوری فروشی",
     "کیربوکس جدید، بیمه ۶ ماه، فنی درجه یک",
     "تودوزی نو، صندلی نو",

@@ -74,3 +74,25 @@ ASSEMBLER_BRAND_SLUGS: dict[str, list[str]] = {
     "آرین": ["لاماری"],
     "آرین موتور": ["لاماری"],
 }
+
+
+# Who builds a badge, for badges whose maker a buyer searches by. Brands are the
+# badge Bama sends (پراید, دنا, فونیکس); this is the secondary attribute that
+# lets "سایپا" or "مدیران" still find them. A literal table: a fact about the
+# Iranian market, not something to infer.
+MANUFACTURER: dict[str, str] = {
+    **dict.fromkeys(["سمند", "دنا", "رانا", "تارا", "ری را", "ری‌را", "ریرا", "آریسان",
+                     "سورن", "روآ", "پژو", "پیکان"], "ایران خودرو"),
+    **dict.fromkeys(["پراید", "تیبا", "کوییک", "ساینا", "شاهین", "آریو", "سهند",
+                     "اطلس", "زاگرس"], "سایپا"),
+    **dict.fromkeys(["ام وی ام", "فونیکس", "چری", "اکستریم", "لوکانو"], "مدیران خودرو"),
+    **dict.fromkeys(["کی ام سی", "جک", "لیفان"], "کرمان موتور"),
+    **dict.fromkeys(["دیگنیتی", "فیدلیتی", "ریسپکت", "اینرودز"], "بهمن موتور"),
+    "لاماری": "آرین موتور",
+}
+
+
+def ad_search_document(title, model_name, brand_name, description) -> str:
+    """The one definition of an ad's ``search_text``, maker included."""
+    return search_document(title, model_name, brand_name, MANUFACTURER.get(brand_name or ""),
+                           description)

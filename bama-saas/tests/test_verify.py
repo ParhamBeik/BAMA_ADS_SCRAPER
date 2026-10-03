@@ -365,7 +365,7 @@ def test_ad_that_mints_a_dimension_is_flagged(make_payload):
 @pytest.mark.django_db
 def test_ad_using_an_existing_dimension_is_not_flagged(make_payload):
     brand = Brand.objects.create(slug="peugeot", name_fa="پژو", is_confirmed=True)
-    Model.objects.create(brand=brand, name_fa="405", is_confirmed=True)
+    Model.objects.create(brand=brand, name_fa="405 دنده ای", is_confirmed=True)
     reset_cache()
 
     run = FetchRun.objects.create(source=FetchRun.Source.LIVE_FETCH)

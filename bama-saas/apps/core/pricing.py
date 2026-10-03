@@ -469,6 +469,8 @@ def scorable_rows():
             # A direct page check can establish unavailability while the ad
             # still remains in a previously fetched feed window.
             detail_state__in=("", "available"),
+            # A cover photo the CDN now refuses; see Ad.image_dead_at.
+            image_dead_at__isnull=True,
             # The 10M floor is the unit-switch sentinel, not a car.
             current_price__gt=MIN_PLAUSIBLE_PRICE,
             publish_at__isnull=False,

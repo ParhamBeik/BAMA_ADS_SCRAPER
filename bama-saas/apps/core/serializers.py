@@ -4,6 +4,7 @@ from rest_framework import serializers
 
 from apps.common.verify import MAX_PLAUSIBLE_MILEAGE
 from apps.core import images
+from apps.core.admission import verified_local_photo
 from apps.core.models import Ad, AdVersionPhoto, Brand, Model, NotifierSettings, Variant
 from apps.core.pricing import MIN_PEERS
 from apps.core.quality import condition_discounted
@@ -86,12 +87,11 @@ class AdSerializer(serializers.ModelSerializer):
         if not obj.current_version_id:
             return {"state": "legacy_unverified", "archived_count": 0}
         photos = AdVersionPhoto.objects.filter(version_id=obj.current_version_id)
-        archived = photos.filter(state=AdVersionPhoto.State.VERIFIED).count()
-        backed_up = photos.filter(state=AdVersionPhoto.State.VERIFIED,
-                                  asset__backed_up_at__isnull=False).count()
-        return {"state": ("durable" if backed_up else
-                          "archived_pending_backup" if archived else "unverified"),
-                "archived_count": archived, "backed_up_count": backed_up,
+        archived = photos.filter(state=AdVersionPhoto.State.VERIFIED)
+        local = sum(verified_local_photo(photo) for photo in
+                    archived.filter(asset__isnull=False).select_related("asset"))
+        return {"state": ("local_verified" if local else "unverified"),
+                "archived_count": archived.count(), "local_verified_count": local,
                 "source_count": photos.count()}
 
     def get_seller_type(self, obj) -> str:

@@ -20,7 +20,6 @@ from apps.core.models import (
     IngestReject,
     Model,
     PriceObservation,
-    SourceModelAlias,
 )
 
 
@@ -79,7 +78,6 @@ def report(*, now=None) -> dict:
         ).count(),
         "photo_failed": photo_versions.filter(state=AdVersionPhoto.State.FAILED).count(),
         "archive_bytes": ArchivedImage.objects.aggregate(n=Sum("byte_size"))["n"] or 0,
-        "archive_unbacked": ArchivedImage.objects.filter(backed_up_at__isnull=True).count(),
         "missing_model": ads.filter(model__isnull=True).count(),
         "missing_year": ads.filter(year_jalali__isnull=True).count(),
         "invalid_year": ads.filter(year_jalali__isnull=False).exclude(
@@ -93,7 +91,6 @@ def report(*, now=None) -> dict:
         "variant_model_mismatch": ads.exclude(variant__isnull=True).exclude(
             variant__model_id=F("model_id")).count(),
         "unreviewed_versions": AdVersion.objects.exclude(classification_state="verified").count(),
-        "unreviewed_aliases": SourceModelAlias.objects.filter(reviewed=False).count(),
         "confirmed_mixed_models": Model.objects.filter(
             pk__in=mixed.values("model_id"), is_confirmed=True).count(),
         "detail_blocked_7d": DetailPageCheck.objects.filter(

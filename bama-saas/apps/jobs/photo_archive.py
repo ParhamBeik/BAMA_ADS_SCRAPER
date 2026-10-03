@@ -180,12 +180,11 @@ def archive_pending(*, limit: int = 50) -> dict:
     due = (AdVersionPhoto.objects.filter(state__in=["pending", "blocked"])
            .filter(Q(next_retry_at__isnull=True) | Q(next_retry_at__lte=now))
            .select_related("version__ad"))
-    current = list(due.filter(version_id=F("version__ad__current_version_id"))
-                   .order_by("pk")[:limit])
-    historical = list(due.exclude(version_id=F("version__ad__current_version_id"))
-                      .order_by("pk")[:limit - len(current)])
+    # Storage policy: only the current version's front photo is archived.
+    current = list(due.filter(position=0, version_id=F("version__ad__current_version_id"))
+                   .order_by("-pk")[:limit])
     counts: dict[str, int] = {}
-    for photo in [*current, *historical]:
+    for photo in current:
         outcome = archive_one(photo, now=now)
         counts[outcome] = counts.get(outcome, 0) + 1
         if outcome == "capacity_paused":

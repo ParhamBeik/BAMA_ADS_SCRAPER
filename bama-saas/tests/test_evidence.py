@@ -10,9 +10,8 @@ from django.test import override_settings
 from django.utils import timezone
 
 from apps.core.admission import sync_admission
-from apps.core.models import Ad, AdVersion, AdVersionPhoto, ArchivedImage, Brand, FetchRun, Model
+from apps.core.models import Ad, AdVersion, AdVersionPhoto, ArchivedImage, Brand, Model
 from apps.jobs import photo_archive
-from apps.jobs.local_backup import confirm_manifest
 
 
 @pytest.fixture
@@ -34,23 +33,30 @@ def evidence():
 
 
 @pytest.mark.django_db
-def test_admission_requires_current_verified_photo_and_cash(evidence):
+def test_admission_requires_current_verified_photo_and_cash(evidence, tmp_path):
     ad, photo = evidence
     assert sync_admission(ad) == Ad.Admission.PENDING
+    body = b"\xff\xd8\xffsample\xff\xd9"
+    digest = sha256(body).hexdigest()
     asset = ArchivedImage.objects.create(
-        sha256="c" * 64, relative_path=f"cc/{'c' * 64}",
-        content_type="image/jpeg", byte_size=12,
+        sha256=digest, relative_path=f"{digest[:2]}/{digest}",
+        content_type="image/jpeg", byte_size=len(body),
     )
     photo.asset = asset
     photo.state = AdVersionPhoto.State.VERIFIED
     photo.save(update_fields=["asset", "state"])
-    assert sync_admission(ad) == Ad.Admission.PENDING
-    confirm_manifest([f"{asset.sha256} {asset.byte_size}\n"])
-    ad.refresh_from_db()
-    assert sync_admission(ad) == Ad.Admission.READY
-    ad.current_price = None
-    ad.save(update_fields=["current_price"])
-    assert sync_admission(ad) == Ad.Admission.HISTORY_ONLY
+    with override_settings(PHOTO_ARCHIVE_ROOT=str(tmp_path)):
+        assert sync_admission(ad) == Ad.Admission.PENDING
+        path = tmp_path / asset.relative_path
+        path.parent.mkdir()
+        path.write_bytes(body)
+        assert sync_admission(ad) == Ad.Admission.READY
+        path.write_bytes(b"corrupt bytes")
+        assert sync_admission(ad) == Ad.Admission.PENDING
+        path.write_bytes(body)
+        ad.current_price = None
+        ad.save(update_fields=["current_price"])
+        assert sync_admission(ad) == Ad.Admission.HISTORY_ONLY
     assert AdVersion.objects.filter(pk=photo.version_id).exists()
 
 
@@ -101,24 +107,6 @@ def test_archive_cap_and_corrupt_local_copy(evidence, tmp_path, monkeypatch):
         (tmp_path / asset.relative_path).unlink()
         with pytest.raises(RuntimeError, match="missing or corrupt"):
             photo_archive._archive_bytes("image/jpeg", body)
-
-
-@pytest.mark.django_db
-def test_mac_backup_manifest_marks_only_matching_bytes(evidence, tmp_path, monkeypatch):
-    body = b"\xff\xd8\xffsample\xff\xd9"
-    monkeypatch.setattr(photo_archive.shutil, "disk_usage", lambda root: type(
-        "Usage", (), {"free": 10_000})())
-    with override_settings(PHOTO_ARCHIVE_ROOT=str(tmp_path), PHOTO_ARCHIVE_CAP_BYTES=10_000,
-                           PHOTO_ARCHIVE_MIN_FREE_BYTES=0):
-        asset = photo_archive._archive_bytes("image/jpeg", body)
-        with pytest.raises(ValueError, match="size mismatch"):
-            confirm_manifest([f"{asset.sha256} {len(body) + 1}\n"])
-        asset.refresh_from_db()
-        assert asset.backed_up_at is None
-        outcome = confirm_manifest([f"{asset.sha256} {len(body)}\n"])
-        assert outcome["verified_on_mac"] == 1
-        asset.refresh_from_db()
-        assert asset.backed_up_at is not None
 
 
 @pytest.mark.django_db
@@ -181,27 +169,6 @@ def test_holdout_deduplicates_repost_and_uses_prior_baseline():
     ]
     _, deduped = time_split(within)
     assert len(deduped) == 1
-
-
-@pytest.mark.django_db
-def test_backfill_links_legacy_version_without_current_semantic_hash(make_payload):
-    from apps.common.parsing import extract_ad
-    from apps.jobs.ingest import ingest_ad
-
-    now = timezone.now()
-    run = FetchRun.objects.create(source=FetchRun.Source.HISTORY_REPLAY)
-    payload = make_payload("oldhash1", 2_000_000_000, brand="سمند", model="سمند LX")
-    result = ingest_ad(extract_ad(payload, now), run=run, observed_at=now, publish_at=now)
-    ad = result.ad
-    version = ad.current_version
-    Ad.objects.filter(pk=ad.pk).update(current_version=None, model=None)
-    AdVersion.objects.filter(pk=version.pk).update(semantic_hash="f" * 64,
-                                                   semantic_hash_version=1)
-    output = StringIO()
-    call_command("backfill_evidence", known_mixed=True, apply=True, limit=10, stdout=output)
-    ad.refresh_from_db()
-    assert ad.current_version_id == version.pk
-    assert ad.model.name_fa == "سمند"
 
 
 @pytest.mark.django_db

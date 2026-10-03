@@ -54,6 +54,7 @@ JOBS: dict[str, Callable[..., dict]] = {
     "ml_score": jobs.ml_score,
     "coverage": jobs.coverage,
     "backfill_images": jobs.backfill_images,
+    "image_sweep": jobs.image_sweep,
     "prune": jobs.prune,
     "health": health.health,
     "probe_depth": jobs.probe_depth,
@@ -77,7 +78,7 @@ JOBS: dict[str, Callable[..., dict]] = {
 STEP_ORDER = ("fetch", "photo_archive", "mark_inactive", "link_reposts", "episodes", "snapshot",
               "market_index", "deal_scores", "ml_train", "ml_score", "probe_sold",
               "notify", "alerts", "alerts_send", "coverage", "backfill_images",
-              "prune", "health")
+              "image_sweep", "prune", "health")
 
 CADENCES = {
     "hot": ("fetch", "photo_archive", "mark_inactive", "deal_scores", "ml_score", "probe_sold",
@@ -87,7 +88,7 @@ CADENCES = {
     # cadence it was capable of missing a two-and-a-half hour outage entirely.
     # It is the job that tells a human something is wrong; running it four times
     # a day was making detection latency the largest term in every incident.
-    "warm": ("link_reposts", "episodes", "snapshot", "market_index", "health"),
+    "warm": ("link_reposts", "episodes", "snapshot", "market_index", "image_sweep", "health"),
     "coverage": ("coverage",),
     # Training is its own cadence and its own container. It is the one step here
     # that is CPU-bound for minutes rather than seconds, and running it inside

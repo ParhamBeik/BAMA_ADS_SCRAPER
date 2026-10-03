@@ -38,7 +38,7 @@ bama-saas/
 │                            features.py metrics.py train.py registry.py
 │                            inference.py monitoring.py
 ├── ui/web/                  React + Vite + TypeScript
-├── deploy/                  worker.sh + train.sh (the two loops), backup, deploy
+├── deploy/                  worker.sh + train.sh (the two loops), deploy
 ├── tests/                   pytest-django, 12 files
 ├── docker-compose.yml       local: postgres, redis, django, worker, vite (+ ml)
 └── docker-compose.prod.yml  VPS: postgres, redis, gunicorn, worker, ml, nginx

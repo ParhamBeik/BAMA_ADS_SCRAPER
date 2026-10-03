@@ -21,9 +21,9 @@ from django.utils.text import slugify
 from apps.common.parsing import (
     SEMANTIC_HASH_VERSION,
     fingerprint,
+    front_photo,
     image_urls,
     listing_fingerprint,
-    normalize_digits,
     normalize_model_year,
     parse_int,
     parse_mileage,
@@ -31,6 +31,7 @@ from apps.common.parsing import (
     pure_ad,
 )
 from apps.common.verify import verify_extracted
+from apps.core import taxonomy
 from apps.core.models import (
     Ad,
     AdObservation,
@@ -44,10 +45,9 @@ from apps.core.models import (
     Model,
     PriceDropEvent,
     PriceObservation,
-    SourceModelAlias,
     Variant,
 )
-from apps.core.normalization import search_document
+from apps.core.normalization import ad_search_document
 from apps.core.quality import price_basis_unclear
 
 # ---------------------------------------------------------------------------
@@ -68,60 +68,11 @@ def reset_cache() -> None:
     _DIM_CACHE.clear()
 
 
-# Names Bama publishes in its `brand_fa` field that are *models*, not marques,
-# mapped to the manufacturer that actually builds them.
-#
-# Bama's own taxonomy is flat: it sends "دنا" and "پراید" where the maker is
-# ایران خودرو and سایپا. Stored verbatim, the catalogue grew a top-level brand
-# per popular model — 135 of them — and one manufacturer's inventory arrived
-# split across a handful of unrelated rows, so "listings by brand" ranked دنا
-# above the company that makes it and no scope could ever say "every سایپا".
-#
-# Only the brand level is rewritten. Model names already carry the identity
-# ("دنا پلاس", "پراید ۱۳۱", "کوییک R"), because Bama's ad titles repeat it — so
-# nothing is lost by filing them under their maker, and the model rows do not
-# have to be renamed to stay unambiguous.
-#
-# Deliberately a literal table and not a heuristic: this is a fact about the
-# Iranian market, and a rule that guessed would eventually fold two real
-# marques together. Anything absent is left exactly as Bama sent it.
-BRAND_PARENT = {
-    # ایران خودرو (IKCO)
-    "سمند": "ایران خودرو",
-    "دنا": "ایران خودرو",
-    "رانا": "ایران خودرو",
-    "تارا": "ایران خودرو",
-    "ری‌را": "ایران خودرو",
-    "ریرا": "ایران خودرو",
-    "آریسان": "ایران خودرو",
-    "سورن": "ایران خودرو",
-    "روآ": "ایران خودرو",
-    # سایپا (SAIPA)
-    "پراید": "سایپا",
-    "تیبا": "سایپا",
-    "کوییک": "سایپا",
-    "ساینا": "سایپا",
-    "شاهین": "سایپا",
-    "آریو": "سایپا",
-    "سهند": "سایپا",
-    "اطلس": "سایپا",
-    "زاگرس": "سایپا",
-}
-
-PEUGEOT_FAMILIES = {"پژو 206", "پژو 207", "پژو ۲۰۶", "پژو ۲۰۷"}
-
-
-def canonical_peugeot_model(name: str | None) -> str | None:
-    """206/207 family from Bama's title model, including SD/sedan variants."""
-    match = re.match(r"^(206|207)(?=$|\s|\W)", normalize_digits((name or "").strip()))
-    return match.group(1) if match else None
-
-
-def _brand(name: str | None) -> tuple[Any, bool]:
-    """Resolve a brand. Second element is True when this call minted it."""
+def _brand(name: str | None, name_en: str | None = None) -> tuple[Any, bool]:
+    """Resolve a brand — the badge Bama sends. Second element: minted by this call."""
     if not name:
         return None, False
-    name = BRAND_PARENT.get(name.strip(), name.strip())
+    name = name.strip()
     key = ("brand", name)
     if key in _DIM_CACHE:
         return _DIM_CACHE[key], False  # whoever minted it reported that then
@@ -130,27 +81,31 @@ def _brand(name: str | None) -> tuple[Any, bool]:
     if brand is None:
         slug = slugify(name, allow_unicode=True) or name
         minted = True
+        fields = {"name_en": (name_en or "").strip() or None,
+                  "is_confirmed": name in taxonomy.reviewed_brands()}
         try:
-            brand = Brand.objects.create(name_fa=name, slug=slug)
+            brand = Brand.objects.create(name_fa=name, slug=slug, **fields)
         except IntegrityError:
             # Slug collided with a different brand name; keep the name unique.
             existing = Brand.objects.filter(name_fa=name).first()
             if existing is not None:
                 brand, minted = existing, False
             else:
-                brand = Brand.objects.create(name_fa=name, slug=f"{slug}-{name[:40]}")
+                brand = Brand.objects.create(name_fa=name, slug=f"{slug}-{name[:40]}", **fields)
     _DIM_CACHE[key] = brand
     return brand, minted
 
 
-def _model(brand, name: str | None) -> tuple[Any, bool]:
+def _model(brand, name: str | None, reviewed: bool = False) -> tuple[Any, bool]:
     if not brand or not name:
         return None, False
     name = name.strip()
     key = ("model", brand.pk, name)
     if key in _DIM_CACHE:
         return _DIM_CACHE[key], False
-    model, minted = Model.objects.get_or_create(brand=brand, name_fa=name)
+    model, minted = Model.objects.get_or_create(
+        brand=brand, name_fa=name, defaults={"is_confirmed": reviewed},
+    )
     _DIM_CACHE[key] = model
     return model, minted
 
@@ -219,42 +174,21 @@ def _dealer(data: dict | None):
     return _DIM_CACHE[key]
 
 
-def resolve_dimensions(*, brand_name, model_name, trim_name, city_location, dealer=None) -> dict:
+def resolve_dimensions(*, brand_name, model_name, trim_name, city_location, dealer=None,
+                       brand_en=None, transmission=None) -> dict:
     """Resolve every dimension for one ad.
 
-    ``minted`` names the levels this ad brought into existence, so a Bama title
-    format change surfaces as a spike in one place rather than silently growing
-    the catalog.
+    The model is the real car — label plus powertrain, see ``apps.core.taxonomy``;
+    the variant is Bama's trim. A label the taxonomy does not know is kept and
+    marked ``needs_review``; ``minted`` names the levels this ad brought into
+    existence, so a Bama title format change surfaces as a spike in one place
+    rather than silently growing the catalog.
     """
-    source_family = (brand_name or "").strip()
-    alias_key = ("reviewed_alias", source_family)
-    if alias_key not in _DIM_CACHE:
-        _DIM_CACHE[alias_key] = (SourceModelAlias.objects.select_related("model__brand")
-                                 .filter(source_family=source_family, reviewed=True).first())
-    alias = _DIM_CACHE[alias_key]
-    if alias:
-        brand, model = alias.model.brand, alias.model
-        brand_minted = model_minted = False
-        rule = "reviewed_alias"
-    else:
-        canonical_brand = "پژو" if source_family in PEUGEOT_FAMILIES else brand_name
-        peugeot_model = (canonical_peugeot_model(source_family.removeprefix("پژو")) if
-                         source_family in PEUGEOT_FAMILIES else
-                         canonical_peugeot_model(model_name) if source_family == "پژو" else None)
-        canonical_model = (source_family if source_family in BRAND_PARENT else
-                           peugeot_model or model_name)
-        brand, brand_minted = _brand(canonical_brand)
-        model, model_minted = _model(brand, canonical_model)
-        rule = ("peugeot_model" if peugeot_model else
-                "source_family" if canonical_model == source_family else "title_fallback")
-        if (rule == "title_fallback" and brand and model and
-                brand.is_confirmed and model.is_confirmed):
-            rule = "confirmed_model"
-    if rule in ("title_fallback", "confirmed_model"):
-        variant_name = trim_name
-    else:
-        parts = [part.strip() for part in (model_name, trim_name) if part and part.strip()]
-        variant_name = " · ".join(dict.fromkeys(parts))
+    canonical_model, reviewed = taxonomy.model_name(brand_name, model_name, trim_name,
+                                                    transmission)
+    brand, brand_minted = _brand(brand_name, brand_en)
+    model, model_minted = _model(brand, canonical_model, reviewed=reviewed)
+    variant_name = (trim_name or "").strip()
     return {
         "brand": brand,
         "model": model,
@@ -262,8 +196,8 @@ def resolve_dimensions(*, brand_name, model_name, trim_name, city_location, deal
         "city": _city(city_location),
         "dealer": _dealer(dealer),
         "minted": [n for n, m in (("brand", brand_minted), ("model", model_minted)) if m],
-        "classification_rule": rule,
-        "classification_state": "verified" if rule != "title_fallback" else "needs_review",
+        "classification_rule": "taxonomy" if reviewed else "unmapped",
+        "classification_state": "verified" if reviewed else "needs_review",
     }
 
 
@@ -412,7 +346,7 @@ def _ad_defaults(extracted: dict, dims: dict, observed_at, publish_at, quality_f
             price_type=price_type,
             prepayment=prepayment,
         ),
-        "search_text": search_document(
+        "search_text": ad_search_document(
             title, dims["model"].name_fa, dims["brand"].name_fa, description,
         ),
         "canonical_path": (detail.get("url") or "")[:400],
@@ -500,8 +434,11 @@ def _ingest_ad(extracted, *, run, observed_at, publish_at, dealer=None, rank=Non
                 ad.save()
         return IngestResult(ad=None, rejected=True, flags=tuple(quality_flags))
 
-    if (settings.ARCHIVE_ADMISSION_REQUIRED and
-            not Ad.objects.filter(code=extracted["code"]).exists()):
+    # An ad exists in the catalog only with a cash price (and a photo: the hard
+    # ``photo_missing`` rule above). Checked on first sight only; an ad already
+    # stored keeps its history when a later crawl turns it into an instalment
+    # listing, and price_basis_unclear then hides it from every listing surface.
+    if not Ad.objects.filter(code=extracted["code"]).exists():
         detail = payload.get("detail") or {}
         if (extracted.get("price_type") != "lumpsum" or
                 not (extracted.get("current_price") or 0) > 0 or
@@ -520,7 +457,8 @@ def _ingest_ad(extracted, *, run, observed_at, publish_at, dealer=None, rank=Non
     dims = resolve_dimensions(
         brand_name=extracted.get("brand"), model_name=extracted.get("model"),
         trim_name=extracted.get("trim"), city_location=extracted.get("location"),
-        dealer=dealer,
+        dealer=dealer, brand_en=extracted.get("brand_en"),
+        transmission=extracted.get("transmission"),
     )
     # A dimension that did not exist a moment ago is either a genuinely new car
     # or a parse failure inventing catalog rows. Soft: the ad is fine, it is the
@@ -596,25 +534,17 @@ def _ingest_ad(extracted, *, run, observed_at, publish_at, dealer=None, rank=Non
     if not ad.current_version_id or ad.last_seen_at == observed_at:
         Ad.objects.filter(pk=ad.pk).update(current_version=version)
         ad.current_version = version
-    if settings.ARCHIVE_ADMISSION_REQUIRED:
-        _, gallery = image_urls(payload)
+    # Storage policy (docs/STORAGE-POLICY.md): only the front photo is kept on
+    # the VPS; the rest of the gallery stays a CDN link in `image_urls`.
+    front = front_photo(*image_urls(payload))
+    if front:
         AdVersionPhoto.objects.bulk_create(
-            [AdVersionPhoto(version=version, position=i, source_url=url)
-             for i, url in enumerate(gallery)], ignore_conflicts=True,
+            [AdVersionPhoto(version=version, position=0, source_url=front)],
+            ignore_conflicts=True,
         )
+    if settings.ARCHIVE_ADMISSION_REQUIRED:
         from apps.core.admission import sync_admission
         sync_admission(ad)
-
-    # 3) One observation per (run, ad). History replay knows the pair is unique,
-    # so it can skip get_or_create's SELECT.
-    observation_fields = {
-        "version": version, "observed_at": observed_at, "raw_hash": raw_hash,
-        "rank": rank, "publish_phrase": extracted.get("publish_phrase") or "",
-    }
-    if run and run.source == FetchRun.Source.HISTORY_REPLAY:
-        AdObservation.objects.create(fetch_run=run, ad=ad, **observation_fields)
-    else:
-        AdObservation.objects.get_or_create(fetch_run=run, ad=ad, defaults=observation_fields)
 
     # 4) Change-only price: append only when the fingerprint differs from the
     # ad's immediately-preceding observation.
@@ -648,6 +578,21 @@ def _ingest_ad(extracted, *, run, observed_at, publish_at, dealer=None, rank=Non
                 drop_pct=round((old_price - new_price) / old_price * 100, 2),
                 observed_at=observed_at,
             )
+
+    # 5) Change-only sighting (docs/STORAGE-POLICY.md): an AdObservation is written
+    # only when the ad is new, its content changed, or its price changed. An
+    # unchanged re-sighting only moves `Ad.last_seen_at`. One per (run, ad); history
+    # replay knows the pair is unique, so it can skip get_or_create's SELECT.
+    if created or version_created or price_changed:
+        observation_fields = {
+            "version": version, "observed_at": observed_at, "raw_hash": raw_hash,
+            "rank": rank, "publish_phrase": extracted.get("publish_phrase") or "",
+        }
+        if run and run.source == FetchRun.Source.HISTORY_REPLAY:
+            AdObservation.objects.create(fetch_run=run, ad=ad, **observation_fields)
+        else:
+            AdObservation.objects.get_or_create(fetch_run=run, ad=ad,
+                                                defaults=observation_fields)
 
     return IngestResult(ad=ad, created=created, price_changed=price_changed,
                         version_created=version_created, flags=tuple(quality_flags))
