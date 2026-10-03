@@ -62,7 +62,6 @@ from apps.core.serializers import (
     AdListSerializer,
     AdSerializer,
     BrandSerializer,
-    ModelSerializer,
     NotifierSettingsSerializer,
     VariantSerializer,
 )
@@ -87,16 +86,6 @@ class BrandViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = BrandSerializer
     lookup_field = "slug"
     pagination_class = None
-
-
-class BrandModelsView(ListAPIView):
-    serializer_class = ModelSerializer
-    pagination_class = None
-
-    def get_queryset(self):
-        brand = get_object_or_404(Brand, slug=self.kwargs["brand_slug"])
-        return (Model.objects.filter(brand=brand, ads__isnull=False).distinct()
-                .order_by("name_fa"))
 
 
 class ModelVariantsView(ListAPIView):
