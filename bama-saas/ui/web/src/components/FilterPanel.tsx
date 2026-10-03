@@ -85,7 +85,7 @@ const MILEAGE_PRESETS: [string, number][] = [
 ];
 
 export const FILTER_KEYS = [
-  "brand", "model", "variant", "q", "price_min", "price_max",
+  "brand", "model", "variant", "city", "q", "price_min", "price_max",
   "year_min", "year_max", "mileage_min", "mileage_max", "transmission", "fuel",
   "body_type", "condition", "seller_type", "confidence",
 ];
@@ -118,7 +118,7 @@ function Group({
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button variant={active ? "secondary" : "outline"} size="sm">
+        <Button variant={active ? "secondary" : "outline"} size="sm" className="flex-none">
           {label}
           {active > 0 && (
             <span className="bg-primary text-primary-foreground grid size-4 place-items-center rounded-full text-[10px] font-bold">
@@ -272,11 +272,17 @@ export function FilterPanel({
       aria-label="فیلترها"
       className="border-border bg-panel mb-4 rounded-[var(--radius)] border p-3 shadow-sm"
     >
+      {/* On a phone: search on its own full-width row, then the filter
+          buttons as one horizontally scrolling row. The search used to share a
+          wrapping row with them and was squeezed to a 20px sliver — the box
+          was on screen and could not be typed into. From `sm` up it is one
+          wrapping toolbar, as before. */}
       <div className="flex flex-wrap items-center gap-2">
-        <SlidersHorizontal className="text-muted-foreground size-4 flex-none" aria-hidden />
+        <SlidersHorizontal className="text-muted-foreground hidden size-4 flex-none sm:block" aria-hidden />
 
         {showSearch && <SearchBox />}
 
+        <div className="-mx-1 flex min-w-0 basis-full items-center gap-2 overflow-x-auto px-1 pb-0.5 [scrollbar-width:none] sm:mx-0 sm:basis-auto sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
         <Group label="خودرو" keys={["brand", "model", "variant"]}>
           <Choice
             label="برند"
@@ -406,6 +412,7 @@ export function FilterPanel({
             </p>
           </Group>
         )}
+        </div>
       </div>
 
       <ActiveChips />
@@ -430,7 +437,7 @@ function SearchBox() {
   const commit = () => filters.set({ q: draft.trim() || null, page: 1 });
   return (
     <form
-      className="flex min-w-0 flex-1 items-center gap-1 sm:max-w-72"
+      className="flex min-w-0 basis-full items-center gap-1 sm:basis-auto sm:flex-1 sm:max-w-72"
       onSubmit={(e) => { e.preventDefault(); commit(); }}
     >
       <input
@@ -457,6 +464,7 @@ function chipLabel(key: string, value: string, modelName?: string): string {
     case "brand": return `برند: ${value}`;
     case "model": return modelName ? `مدل: ${modelName}` : "مدل انتخاب‌شده";
     case "variant": return "تیپ انتخاب‌شده";
+    case "city": return "شهر انتخاب‌شده";
     case "price_min": return `از ${toman(Number(value))} تومان`;
     case "price_max": return `تا ${toman(Number(value))} تومان`;
     case "year_min": return `از سال ${value}`;
