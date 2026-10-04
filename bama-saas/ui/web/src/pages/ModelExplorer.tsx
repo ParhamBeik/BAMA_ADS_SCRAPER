@@ -68,7 +68,7 @@ function PriceSummary({ title, summary, emphasis = false }: {
           </p>
           <p className="stat-sub">
             میانه <b className="font-mono">{toman(summary.asking_range.median)}</b>
-            {" · "}بازه‌ی ۸۰٪ آگهی‌ها{" "}
+            {" · "}بازه‌ی 80% آگهی‌ها{" "}
             <b className="font-mono">{toman(summary.asking_range.p10)}</b> تا{" "}
             <b className="font-mono">{toman(summary.asking_range.p90)}</b>
           </p>
@@ -268,7 +268,7 @@ export function ModelExplorer() {
                 {data.evidence.latest_selected_sighting && (
                   <p>آخرین مشاهدهٔ آگهی‌های انتخاب‌شده: {new Date(
                     data.evidence.latest_selected_sighting,
-                  ).toLocaleString("fa-IR")}</p>
+                  ).toLocaleString("fa-IR-u-nu-latn")}</p>
                 )}
                 <p>قیمت خرید واقعی فعلاً در دسترس نیست؛ دادهٔ تأییدشده از معامله‌ها نداریم.</p>
               </Card>

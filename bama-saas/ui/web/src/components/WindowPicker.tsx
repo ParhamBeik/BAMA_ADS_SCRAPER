@@ -32,9 +32,9 @@ import { useFilters } from "@/filters";
 const PersianCalendar = lazy(() => import("./PersianCalendar"));
 
 const PRESETS: [string, number][] = [
-  ["۷ روز", 7],
-  ["۳۰ روز", 30],
-  ["۹۰ روز", 90],
+  ["7 روز", 7],
+  ["30 روز", 30],
+  ["90 روز", 90],
   ["یک سال", 365],
 ];
 

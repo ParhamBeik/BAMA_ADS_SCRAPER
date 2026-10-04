@@ -494,7 +494,7 @@ function DealVerdict({ code }: { code: string }) {
         </li>
         {d.liquidity && (
           <li>
-            {Math.round(d.liquidity.left_pct)}٪ از این مدل ظرف{" "}
+            {Math.round(d.liquidity.left_pct)}% از این مدل ظرف{" "}
             {d.liquidity.window_days} روز از باما برداشته می‌شوند — از{" "}
             {d.liquidity.n} آگهی
           </li>

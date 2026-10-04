@@ -378,7 +378,7 @@ function FairPriceSheet({ code, onClose }: { code: string; onClose: () => void }
                 </div>
                 {data.gap_pct != null && (
                   <div className="stat-sub">
-                    {Math.abs(data.gap_pct)}٪{" "}
+                    {Math.abs(data.gap_pct)}%{" "}
                     {data.gap_pct > 0 ? "بالاتر از" : "پایین‌تر از"} قیمت منصفانه
                   </div>
                 )}

@@ -6,11 +6,10 @@
  * primitives, and domain widgets carrying product decisions. Ten to thirteen
  * files import each of these, and none of them wanted a React module to do it.
  *
- * The numeral system is the thing to get right here. `num`, `toman`, `pct` and
- * `km` stay in Latin digits because they sit in `tabular-nums` columns beside
- * Latin magnitude suffixes ("3.90B"); `fa` is the Persian-digit one and is for
- * prose. Mixing them inside one card is what put «۷ روز» on a chip and
- * "30 روز" in the label directly beneath it.
+ * The numeral system is the thing to get right here: every number on the site
+ * is set in Latin digits, and the words around it — units, magnitudes, dates'
+ * month names — stay Persian. Mixing numeral systems inside one card is what
+ * put «۷ روز» on a chip and "30 روز" in the label directly beneath it.
  */
 
 /** Persian and Arabic-Indic digits as ASCII, plus the separators people paste. */
@@ -28,8 +27,10 @@ export function parseBudget(input: string): number | null {
 
 export function toman(value: number | null | undefined): string {
   if (value == null) return "—";
-  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(2)}B`;
-  if (value >= 1_000_000) return `${Math.round(value / 1_000_000)}M`;
+  // Latin digits, Persian magnitude words. Two decimals keep a 50M-toman gap
+  // visible between billions; Number() drops the zeros that carry nothing.
+  if (value >= 1_000_000_000) return `${Number((value / 1_000_000_000).toFixed(2))} میلیارد`;
+  if (value >= 1_000_000) return `${Math.round(value / 1_000_000)} میلیون`;
   return num(value);
 }
 
@@ -80,19 +81,15 @@ export function num(value: number | null | undefined): string {
 export function faDate(value: string | number | Date | null | undefined): string {
   if (!value) return "—";
   const date = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString("fa-IR");
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString("fa-IR-u-nu-latn");
 }
 
 /**
- * A number set in Persian digits, for prose.
- *
- * `toman`, `pct` and `km` stay Latin on purpose — they sit in `tabular-nums`
- * columns beside Latin magnitude suffixes ("3.90B"). Sentences are the other
- * case, and mixing the two inside one card is what put «۷ روز» on a chip and
- * "30 روز" in the label directly beneath it.
+ * A number inside Persian prose. Latin digits like everything else (see the
+ * header); it differs from `num` only in rendering null as a dash.
  */
 export function fa(value: number | null | undefined): string {
-  return value == null ? "—" : value.toLocaleString("fa-IR", { useGrouping: true });
+  return value == null ? "—" : num(value);
 }
 
 /**
@@ -118,13 +115,10 @@ export function since(hours: number | null | undefined): string {
  * missing data rather than as a zero-kilometre car — so the two stay distinct
  * strings ("0 km" vs "—").
  *
- * Western digits throughout, like `toman` and `pct`: numbers on this site sit
- * in `tabular-nums` columns and mix with Latin magnitude suffixes ("3.90B"),
- * so digits stay Latin rather than switching numeral systems mid-line.
+ * Latin digits, Persian unit words — "156 هزار کیلومتر".
  */
 export function km(value: number | null | undefined): string {
   if (value == null) return "—";
-  if (value === 0) return "0 km";
-  if (value < 1000) return `${num(value)} km`;
-  return `${num(Math.round(value / 1000))}k km`;
+  if (value < 1000) return `${num(value)} کیلومتر`;
+  return `${num(Math.round(value / 1000))} هزار کیلومتر`;
 }

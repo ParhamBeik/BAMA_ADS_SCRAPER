@@ -104,7 +104,7 @@ export interface Deal {
 export function liquidityNote(deal: Pick<Deal, "liquidity">): string | null {
   const l = deal.liquidity;
   if (!l) return null;
-  return `${Math.round(l.left_pct)}٪ از این مدل ظرف ${l.window_days} روز از باما برداشته می‌شوند (از ${l.n} آگهی)`;
+  return `${Math.round(l.left_pct)}% از این مدل ظرف ${l.window_days} روز از باما برداشته می‌شوند (از ${l.n} آگهی)`;
 }
 
 /**
@@ -123,7 +123,7 @@ export function modelNote(deal: Pick<Deal, "ml">): string | null {
   if (!ml || ml.anomaly_kind !== "underpriced_candidate" || ml.residual_pct == null) {
     return null;
   }
-  return `${Math.round(ml.residual_pct)}٪ زیر برآورد مدل یادگیرنده`;
+  return `${Math.round(ml.residual_pct)}% زیر برآورد مدل یادگیرنده`;
 }
 
 /** "۰ روز در بازار" is technically right and reads like a bug. */
@@ -204,26 +204,26 @@ export function DealCard({ deal, suspect }: { deal: Deal; suspect: boolean }) {
         {/* Whether the discount is on something that actually moves. Absent
             rather than zeroed when unmeasured — see `liquidityNote`. */}
         {deal.liquidity && (
-          <div className="row">
+          <div className="row deal-extra">
             {/* "Leaves the market", never "is sold": Bama publishes no reason
                 for a delisting, so a sale, an expiry and a withdrawal are
                 indistinguishable and the stronger word would be an assertion
                 nothing here observed. */}
             <span className="stat-sub" title={liquidityNote(deal) ?? undefined}>
-              <Timer size={11} /> {Math.round(deal.liquidity.left_pct)}٪ ظرف{" "}
+              <Timer size={11} /> {Math.round(deal.liquidity.left_pct)}% ظرف{" "}
               {deal.liquidity.window_days} روز از بازار خارج می‌شوند
             </span>
           </div>
         )}
         {modelNote(deal) && (
-          <div className="row">
+          <div className="row deal-extra">
             <span className="stat-sub"
                   title="برآورد مدل یادگیرنده — کارکرد، وضعیت بدنه، شهر و نوع فروشنده را هم می‌بیند، برخلاف میانه‌ی آگهی‌های مشابه که فقط مدل، تیپ و سال را می‌شناسد.">
               <Sparkles size={11} /> {modelNote(deal)}
             </span>
           </div>
         )}
-        <div className="row">
+        <div className="row deal-extra">
           <BamaLink href={deal.bama_url} className="ghost above-stretch" />
         </div>
       </div>

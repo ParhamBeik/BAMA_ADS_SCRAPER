@@ -35,7 +35,7 @@ export interface Check {
  */
 export function passwordChecks(password: string): Check[] {
   return [
-    { id: "length", label: "دست‌کم ۸ نویسه", ok: password.length >= 8 },
+    { id: "length", label: "دست‌کم 8 نویسه", ok: password.length >= 8 },
     {
       id: "not-numeric",
       label: "فقط عدد نباشد",
@@ -88,11 +88,11 @@ export function AuthLayout({
         <dl className="auth-facts">
           <div>
             <dt>آگهی زیر نظر</dt>
-            <dd>+۳۴٬۰۰۰</dd>
+            <dd>+34,000</dd>
           </div>
           <div>
             <dt>به‌روزرسانی</dt>
-            <dd>هر ۱۵ دقیقه</dd>
+            <dd>هر 15 دقیقه</dd>
           </div>
           <div>
             <dt>تاریخچه قیمت</dt>
