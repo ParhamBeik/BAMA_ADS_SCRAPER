@@ -86,13 +86,13 @@ const CONDITION_CHOICES = [
 /** The ladder `pricing.MILEAGE_BUCKETS` is calibrated on. The API refuses
  *  anything off it, so these values must stay in step with that tuple. */
 const MILEAGE_CHOICES = [
-  { value: "0", label: "زیر ۲۰ هزار" },
-  { value: "20000", label: "۲۰ تا ۵۰ هزار" },
-  { value: "50000", label: "۵۰ تا ۱۰۰ هزار" },
-  { value: "100000", label: "۱۰۰ تا ۱۵۰ هزار" },
-  { value: "150000", label: "۱۵۰ تا ۲۰۰ هزار" },
-  { value: "200000", label: "۲۰۰ تا ۳۰۰ هزار" },
-  { value: "300000", label: "بالای ۳۰۰ هزار" },
+  { value: "0", label: "زیر 20 هزار" },
+  { value: "20000", label: "20 تا 50 هزار" },
+  { value: "50000", label: "50 تا 100 هزار" },
+  { value: "100000", label: "100 تا 150 هزار" },
+  { value: "150000", label: "150 تا 200 هزار" },
+  { value: "200000", label: "200 تا 300 هزار" },
+  { value: "300000", label: "بالای 300 هزار" },
 ];
 
 interface Retention extends Partial<Envelope> {
@@ -393,9 +393,9 @@ function RetentionPanel({ model, variant }: { model: string; variant?: string })
             </Table>
             <p className="stat-sub">
               در {num(data.span_years)} سال،{" "}
-              {data.retained_over_span_pct}٪ از ارزش حفظ شده است
+              {data.retained_over_span_pct}% از ارزش حفظ شده است
               {data.avg_annual_decline_pct != null &&
-                ` (حدود ${data.avg_annual_decline_pct}٪ در سال)`}
+                ` (حدود ${data.avg_annual_decline_pct}% در سال)`}
               . مبنا سال {data.reference_year} است: جدیدترین سالی که آگهی کافی دارد،
               نه قیمت کارخانه — چنین قیمتی در این داده وجود ندارد.
             </p>
@@ -479,7 +479,7 @@ function SurvivalPanel({
               </div>
             </div>
             {/* The span every figure above is bounded by, stated the way the
-                price index states its own. "۴ روز" with nothing saying it came
+                price index states its own. "4 روز" with nothing saying it came
                 from a fortnight of history reads as a fact about the market. */}
             <p className="empty-hint">
               روی {fa(data.clean_days)} روز سابقه قابل اتکا محاسبه شده و طولانی‌ترین

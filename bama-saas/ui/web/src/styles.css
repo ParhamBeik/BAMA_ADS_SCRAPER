@@ -1273,6 +1273,9 @@ main:focus { outline: none; }
   .card-grid .listing-meta strong { font-size: 12.5px; }
   .card-grid .deal-price { font-size: 15px; }
   .card-grid .card-badges .badge { font-size: 10px; }
+  /* A deal card is eight rows; two across, that is a screen per pair. The
+     liquidity, model and Bama-link rows all repeat on the listing page. */
+  .card-grid .deal-extra { display: none; }
   /* Tab rows scroll inside the card; clipping them hid the overflow on Home/Deals. */
   .card:not(:has([data-slot="tabs-list"])) { overflow-x: clip; }
   [data-slot="tabs-list"] {

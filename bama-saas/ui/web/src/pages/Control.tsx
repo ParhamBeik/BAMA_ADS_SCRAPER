@@ -123,7 +123,7 @@ function n(value: number | undefined) {
 function when(value: string | null | undefined) {
   if (!value) return "—";
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString("fa-IR", {
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString("fa-IR-u-nu-latn", {
     timeZone: "Asia/Tehran", dateStyle: "short", timeStyle: "medium",
   });
 }
@@ -252,7 +252,7 @@ export function Control() {
               <p className="stat-sub" dir="rtl">
                 هر سطر آگهی یک کد دارد؛ نسخه‌ها و مشاهده‌ها جدا هستند. نرخ آگهی‌های
                 فعال با قیمت نقدی: {data.rates.active_cash_price == null
-                  ? "—" : `${(data.rates.active_cash_price * 100).toFixed(1)}٪`}.
+                  ? "—" : `${(data.rates.active_cash_price * 100).toFixed(1)}%`}.
                 نشانی عکس، اثبات نسخهٔ ذخیره‌شده نیست.
               </p>
               <div className="grid cols-4">
@@ -579,7 +579,14 @@ function MlHealth() {
                         to produce, and it belongs on screen. */}
                     <tr>
                       <th>shadow</th>
-                      <td>{data.shadow.length ? data.shadow.join(", ") : "—"}</td>
+                      <td>
+                        {/* Every refused challenger stays in shadow, so this grew
+                            to 32 versions on one line; the newest few say it. */}
+                        {data.shadow.length
+                          ? data.shadow.slice(0, 3).join(", ") +
+                            (data.shadow.length > 3 ? ` (+${data.shadow.length - 3} more)` : "")
+                          : "—"}
+                      </td>
                     </tr>
                     <tr>
                       <th>live_median_abs_residual</th>

@@ -71,6 +71,10 @@ from apps.ml.models import AdPrediction
 # Shorter than the worker tick, so a cached landing page is never more than one
 # cycle behind the data it summarises.
 MARKETS_CACHE_SECONDS = 120
+# Picker counts (brands, cities, the default model list) scan every listable ad
+# — 1-2 s each on the VPS, and the model browser fires three at once. The
+# crawl moves these by a handful per tick, so ten minutes stale is invisible.
+CATALOG_CACHE_SECONDS = 600
 
 
 
@@ -94,18 +98,23 @@ class BrandViewSet(viewsets.ReadOnlyModelViewSet):
             ad_count=Count("ads", filter=Q(ads__in=listable), distinct=True),
         ).order_by("-ad_count", "name_fa")
 
+    def list(self, request, *args, **kwargs):
+        return Response(cached("catalog:brands", CATALOG_CACHE_SECONDS, lambda: (
+            self.get_serializer(self.get_queryset(), many=True).data
+        )))
+
 
 @api_view(["GET"])
 def cities(request):
     """City choices counted over the same visible listings as the Explorer."""
-    listable = without_high_outliers(pricing.scorable_rows())
-    rows = City.objects.annotate(
-        ad_count=Count("ads", filter=Q(ads__in=listable), distinct=True),
-    ).filter(ad_count__gt=0).order_by("-ad_count", "name_fa", "pk")
-    return Response([
-        {"id": c.pk, "name_fa": c.name_fa, "province": c.province,
-         "ad_count": c.ad_count} for c in rows
-    ])
+    def produce():
+        listable = without_high_outliers(pricing.scorable_rows())
+        rows = City.objects.annotate(
+            ad_count=Count("ads", filter=Q(ads__in=listable), distinct=True),
+        ).filter(ad_count__gt=0).order_by("-ad_count", "name_fa", "pk")
+        return [{"id": c.pk, "name_fa": c.name_fa, "province": c.province,
+                 "ad_count": c.ad_count} for c in rows]
+    return Response(cached("catalog:cities", CATALOG_CACHE_SECONDS, produce))
 
 
 class ModelVariantsView(ListAPIView):
@@ -183,11 +192,17 @@ def model_search(request):
         # reporting an empty count.
         rows = rows.filter(ad_count__gt=0)
     rows = rows.order_by("-ad_count", "name_fa")[:MODEL_SEARCH_LIMIT]
-    return Response([
-        {"id": m.id, "name_fa": m.name_fa, "brand_slug": m.brand_id,
-         "brand_name": m.brand.name_fa, "ad_count": m.ad_count}
-        for m in rows
-    ])
+
+    def produce():
+        return [{"id": m.id, "name_fa": m.name_fa, "brand_slug": m.brand_id,
+                 "brand_name": m.brand.name_fa, "ad_count": m.ad_count}
+                for m in rows]
+    # Only the browse lists are cached: typed text would mint a key per
+    # keystroke, and a by-id lookup is one cheap row.
+    if by_id or params.get("q"):
+        return Response(produce())
+    key = cache_key("catalog:models", {"brand": params.get("brand") or ""})
+    return Response(cached(key, CATALOG_CACHE_SECONDS, produce))
 
 
 @api_view(["GET"])

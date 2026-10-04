@@ -59,9 +59,9 @@ const PAGE_SIZE = 24;
  */
 const BAND_LABEL = [
   "امروز",
-  "۱ تا ۳ روز پیش",
-  "۴ تا ۷ روز پیش",
-  "۱ تا ۲ هفته پیش",
+  "1 تا 3 روز پیش",
+  "4 تا 7 روز پیش",
+  "1 تا 2 هفته پیش",
   "بیش از دو هفته پیش",
 ];
 
@@ -169,21 +169,21 @@ function NotifierPanel() {
           />
         </div>
         <p className="text-muted-foreground text-xs">
-          آگهی‌هایی با دست‌کم {form.min_discount_pct}٪ تخفیف و {form.min_peers} آگهی
+          آگهی‌هایی با دست‌کم {form.min_discount_pct}% تخفیف و {form.min_peers} آگهی
           مشابه — هر آگهی فقط یک بار.
         </p>
 
         <div className="grid grid-cols-2 gap-3">
           <NumberField
-            label="کمترین تخفیف (٪)"
+            label="کمترین تخفیف (%)"
             value={form.min_discount_pct}
-            hint="بین ۱ تا ۹۹"
+            hint="بین 1 تا 99"
             onChange={(raw) => set({ min_discount_pct: Number(raw) })}
           />
           <NumberField
             label="کمترین آگهی مشابه"
             value={form.min_peers}
-            hint="کمتر از ۸ پذیرفته نمی‌شود"
+            hint="کمتر از 8 پذیرفته نمی‌شود"
             onChange={(raw) => set({ min_peers: Number(raw) })}
           />
           <NumberField
@@ -226,7 +226,7 @@ function NotifierPanel() {
         {/* Not a validation nicety: a median built from fewer peers is not a
             reliable basis for interrupting someone. */}
         <p className="text-muted-foreground text-[11px]">
-          تعداد آگهی مشابه کمتر از ۸ پذیرفته نمی‌شود — میانه‌ای که از آگهی‌های کمتر
+          تعداد آگهی مشابه کمتر از 8 پذیرفته نمی‌شود — میانه‌ای که از آگهی‌های کمتر
           ساخته شود، مبنای قابل اتکایی برای اعلان نیست.
         </p>
       </PopoverContent>
@@ -363,10 +363,13 @@ export function Deals() {
                 printing it as "7.15%" offered the reader a precision that is
                 an artefact of which listings happen to be live this hour. */}
             <b>{w ? pct(w.min_discount_pct, 1) : "—"}</b> زیر میانه قیمت
-            آگهی‌های مشابه خود هستند. هر دو حد از همین آگهی‌های امروز محاسبه
-            می‌شوند، نه از عددی ثابت. تازه‌ترین آگهی‌ها اول می‌آیند، چون قیمتشان
-            به بازار امروز نزدیک‌تر است. خودروهایی که خودِ آگهی ارزانی‌شان را
-            توضیح می‌دهد — رنگ‌شدگی یا تعویض قطعه — در زبانه «نیازمند بررسی»‌اند.
+            آگهی‌های مشابه خود هستند.
+            <span className="hide-narrow">
+              {" "}هر دو حد از همین آگهی‌های امروز محاسبه
+              می‌شوند، نه از عددی ثابت. تازه‌ترین آگهی‌ها اول می‌آیند، چون قیمتشان
+              به بازار امروز نزدیک‌تر است. خودروهایی که خودِ آگهی ارزانی‌شان را
+              توضیح می‌دهد — رنگ‌شدگی یا تعویض قطعه — در زبانه «نیازمند بررسی»‌اند.
+            </span>
           </>
         )}
         {band === "all" && (

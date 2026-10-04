@@ -112,7 +112,7 @@ function RuleForm({ onDone }: { onDone: () => void }) {
           <input
             className={field}
             value={form.name}
-            placeholder="مثلاً: پژو ۲۰۶ زیر ۸۰۰ میلیون"
+            placeholder="مثلاً: پژو 206 زیر 800 میلیون"
             onChange={(e) => setForm({ ...form, name: e.target.value })}
           />
         </label>
@@ -132,7 +132,7 @@ function RuleForm({ onDone }: { onDone: () => void }) {
         </div>
         <label className="grid gap-1.5">
           <span className="text-muted-foreground text-xs font-semibold">
-            کمترین تخفیف (٪)
+            کمترین تخفیف (%)
           </span>
           <NumberInput
             className={field}
@@ -144,7 +144,7 @@ function RuleForm({ onDone }: { onDone: () => void }) {
         </label>
         <label className="grid gap-1.5">
           <span className="text-muted-foreground text-xs font-semibold">
-            کمترین اختلاف با برآورد مدل (٪)
+            کمترین اختلاف با برآورد مدل (%)
           </span>
           <NumberInput
             className={field}
@@ -394,7 +394,7 @@ export function Alerts() {
               <div className="state">
                 <strong>هنوز اعلانی نرسیده است.</strong>
                 <p className="empty-hint">
-                  اعلان‌ها هر ۱۵ دقیقه از روی فهرست معامله‌ها ساخته می‌شوند. اگر
+                  اعلان‌ها هر 15 دقیقه از روی فهرست معامله‌ها ساخته می‌شوند. اگر
                   قاعده‌ای ندارید، پایین همین صفحه یکی بسازید.
                 </p>
               </div>

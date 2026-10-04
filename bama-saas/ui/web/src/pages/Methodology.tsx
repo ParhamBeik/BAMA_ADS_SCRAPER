@@ -128,7 +128,7 @@ function dec(value: number | null | undefined, digits = 3): string {
 /** Metrics that mean something to a reader, in the order they should be read. */
 const HEADLINE: Record<string, { key: string; label: string; render: (v: number) => string }[]> = {
   price: [
-    { key: "interval_coverage_pct", label: "پوشش بازه (هدف: ۸۰٪)", render: (v) => pct(v, 1) },
+    { key: "interval_coverage_pct", label: "پوشش بازه (هدف: 80%)", render: (v) => pct(v, 1) },
     { key: "mape", label: "خطای میانگین مدل", render: (v) => pct(v, 2) },
     { key: "baseline_mape", label: "خطای روش آماری فعلی", render: (v) => pct(v, 2) },
     { key: "median_interval_width_pct", label: "پهنای معمول بازه", render: (v) => pct(v, 1) },
@@ -177,7 +177,7 @@ const GATE_REASON: Record<string, string> = {
   loses_to_both: "نه از نسخه‌ی فعلی بهتر بود و نه از روش آماری.",
   interval_coverage_off_target:
     "دقت نقطه‌ای‌اش خوب بود، اما بازه‌ای که رسم می‌کرد با واقعیت نمی‌خواند — " +
-    "بازه‌ای که ادعا می‌کند ۸۰٪ خودروها را در بر می‌گیرد و نمی‌گیرد، از نداشتنِ بازه بدتر است.",
+    "بازه‌ای که ادعا می‌کند 80% خودروها را در بر می‌گیرد و نمی‌گیرد، از نداشتنِ بازه بدتر است.",
   no_measurable_lift: "روی داده‌ی کنارگذاشته‌شده چیزی برای سنجیدن پیدا نشد.",
   no_challenger_metric: "معیار سنجشی برای این نسخه محاسبه نشد.",
 };
@@ -271,8 +271,8 @@ function Reliability({ curve }: { curve: ReliabilityBin[] }) {
       </table>
       <p className="muted text-[11px]">
         هرچه دو ستون به هم نزدیک‌تر باشند، عددی که مدل اعلام می‌کند معنای واقعی‌تری
-        دارد. این مهم‌تر از «درصد پاسخ‌های درست» است: با نرخ پایه‌ی حدود ۲۰٪،
-        مدلی که همیشه «نه» بگوید ۸۰٪ درست است و هیچ چیز مفیدی نگفته.
+        دارد. این مهم‌تر از «درصد پاسخ‌های درست» است: با نرخ پایه‌ی حدود 20%،
+        مدلی که همیشه «نه» بگوید 80% درست است و هیچ چیز مفیدی نگفته.
       </p>
     </div>
   );
@@ -349,7 +349,7 @@ function ModelSection({ card }: { card: ModelCard }) {
                 <td className="num">{pct((precision.base_rate ?? 0) * 100, 1)}</td>
               </tr>
               <tr>
-                <td>نسبت به تصادف (باید بالای ۱ باشد)</td>
+                <td>نسبت به تصادف (باید بالای 1 باشد)</td>
                 <td className="num">{dec(precision.lift, 2)}</td>
               </tr>
             </tbody>

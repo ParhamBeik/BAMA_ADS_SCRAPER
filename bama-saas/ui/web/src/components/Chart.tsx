@@ -70,7 +70,7 @@ interface Series {
 type AxisType = "category" | "time" | "value";
 
 /** Gregorian ISO in, Jalali out — the calendar the rest of the app writes in. */
-const JALALI = new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
+const JALALI = new Intl.DateTimeFormat("fa-IR-u-ca-persian-nu-latn", {
   month: "numeric",
   day: "numeric",
 });

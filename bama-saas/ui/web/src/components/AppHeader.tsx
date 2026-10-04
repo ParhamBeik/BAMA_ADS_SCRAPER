@@ -48,6 +48,10 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 export const NAV = [
   { to: "/models", label: "کاوش مدل", icon: Sparkles, end: false },
   { to: "/explore", label: "آگهی‌ها", icon: Search, end: false },
+  // Deals and analysis were buried in the account menu (60605c8); they are the
+  // two reasons to come back, so they sit in the bar. Five still fit a phone.
+  { to: "/deals", label: "معامله‌ها", icon: Percent, end: false },
+  { to: "/analyse", label: "تحلیل", icon: BarChart3, end: false },
   { to: "/saved", label: "فهرست من", icon: Bookmark, end: false },
 ];
 
@@ -124,12 +128,6 @@ function AccountMenu() {
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => navigate("/pulse")}>
           <Sparkles className="size-4" /> نبض بازار
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => navigate("/analyse")}>
-          <BarChart3 className="size-4" /> تحلیل بازار
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => navigate("/deals")}>
-          <Percent className="size-4" /> معامله‌ها
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => navigate("/budget")}>
           <Wallet className="size-4" /> بودجه من
@@ -261,7 +259,7 @@ function AlertsBell() {
             "text-[10px] font-bold leading-4"
           }
         >
-          {count > 99 ? "۹۹+" : count}
+          {count > 99 ? "99+" : count}
         </span>
       )}
     </IconLink>

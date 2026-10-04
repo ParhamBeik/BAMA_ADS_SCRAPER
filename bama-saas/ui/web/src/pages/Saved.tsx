@@ -100,7 +100,7 @@ export function Saved() {
             // states the same move, with a sign and a magnitude. Its header is
             // `sr-only`, so nothing is announced and then hidden.
             data.results.length ? (
-              <Table head={["خودرو", "تغییر ۳۰ روز", <span key="sp" className="sr-only hide-narrow">روند</span>, <span key="rm" className="sr-only">توقف دنبال کردن</span>]}>
+              <Table head={["خودرو", "تغییر 30 روز", <span key="sp" className="sr-only hide-narrow">روند</span>, <span key="rm" className="sr-only">توقف دنبال کردن</span>]}>
                 {data.results.map((row) => {
                   const dir = directionOf(row.change_pct);
                   return (

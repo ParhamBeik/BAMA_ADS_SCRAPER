@@ -20,14 +20,18 @@
 import { useState } from "react";
 import { useBrands, useCities } from "@/catalogue";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, Search, SlidersHorizontal, X } from "lucide-react";
+import { Check, ChevronDown, ChevronsUpDown, Search, SlidersHorizontal, X } from "lucide-react";
 import { api, type Variant } from "@/api";
 import { useFilters } from "@/filters";
 import { Fa, NumberInput } from "@/ui";
 import { num, toman } from "@/format";
-import { ModelCombobox, useModelLabel } from "@/components/ModelCombobox";
+import { ModelCombobox, normalizePersianInput, useModelLabel } from "@/components/ModelCombobox";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
+} from "@/components/ui/command";
+import { cn } from "@/lib/utils";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -44,18 +48,18 @@ const CONDITIONS = [
 ];
 
 const CONFIDENCES = [
-  { value: "high", label: "زیاد (۴۰ آگهی مشابه و بیشتر)" },
-  { value: "medium", label: "متوسط (۱۵ تا ۳۹)" },
-  { value: "low", label: "کم (۸ تا ۱۴)" },
+  { value: "high", label: "زیاد (40 آگهی مشابه و بیشتر)" },
+  { value: "medium", label: "متوسط (15 تا 39)" },
+  { value: "low", label: "کم (8 تا 14)" },
 ];
 
 const BILLION = 1_000_000_000;
 const PRICE_PRESETS: [string, number | null, number | null][] = [
-  ["تا ۵۰۰ میلیون", null, 500_000_000],
-  ["۵۰۰ تا ۱ میلیارد", 500_000_000, BILLION],
-  ["۱ تا ۲ میلیارد", BILLION, 2 * BILLION],
-  ["۲ تا ۵ میلیارد", 2 * BILLION, 5 * BILLION],
-  ["بالای ۵ میلیارد", 5 * BILLION, null],
+  ["تا 500 میلیون", null, 500_000_000],
+  ["500 تا 1 میلیارد", 500_000_000, BILLION],
+  ["1 تا 2 میلیارد", BILLION, 2 * BILLION],
+  ["2 تا 5 میلیارد", 2 * BILLION, 5 * BILLION],
+  ["بالای 5 میلیارد", 5 * BILLION, null],
 ];
 
 /**
@@ -73,15 +77,15 @@ const THIS_JALALI_YEAR = Number(
 );
 
 const YEAR_PRESETS: [string, number | null][] = [
-  ["۵ سال اخیر", THIS_JALALI_YEAR - 4],
-  ["۱۰ سال اخیر", THIS_JALALI_YEAR - 9],
-  ["۱۳۹۰ به بعد", 1390],
+  ["5 سال اخیر", THIS_JALALI_YEAR - 4],
+  ["10 سال اخیر", THIS_JALALI_YEAR - 9],
+  ["1390 به بعد", 1390],
 ];
 
 const MILEAGE_PRESETS: [string, number][] = [
-  ["زیر ۵۰ هزار", 50_000],
-  ["زیر ۱۰۰ هزار", 100_000],
-  ["زیر ۲۰۰ هزار", 200_000],
+  ["زیر 50 هزار", 50_000],
+  ["زیر 100 هزار", 100_000],
+  ["زیر 200 هزار", 200_000],
 ];
 
 export const FILTER_KEYS = [
@@ -128,7 +132,7 @@ function Group({
           <ChevronDown className="size-3.5 opacity-60" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-[min(20rem,90vw)] space-y-3">
+      <PopoverContent align="start" collisionPadding={8} className="w-[min(20rem,90vw)] space-y-3">
         {children}
       </PopoverContent>
     </Popover>
@@ -231,6 +235,69 @@ function Choice({
   );
 }
 
+/**
+ * 328 cities is too many for a plain select: it needs typing, and it needs to
+ * say it is still loading rather than open on «همه شهرها» alone.
+ */
+function CityPicker() {
+  const filters = useFilters();
+  const cities = useCities();
+  const [open, setOpen] = useState(false);
+  const [term, setTerm] = useState("");
+  const value = filters.get("city");
+  const selected = cities.data?.find((c) => String(c.id) === value);
+  const needle = normalizePersianInput(term);
+  const shown = (cities.data ?? []).filter((c) => !needle || c.name_fa.includes(needle));
+  const pick = (city: string | null) => {
+    filters.set({ city, page: null });
+    setTerm("");
+    setOpen(false);
+  };
+
+  return (
+    <Field label="شهر">
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            variant="outline" role="combobox" aria-expanded={open}
+            aria-label={selected?.name_fa ?? "همه شهرها"}
+            className="w-full justify-between font-normal"
+          >
+            <span className="truncate">
+              {selected ? <Fa>{selected.name_fa}</Fa> : <span className="text-muted-foreground">همه شهرها</span>}
+            </span>
+            <ChevronsUpDown className="size-4 flex-none opacity-50" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="start" collisionPadding={8} className="w-[min(18rem,90vw)] p-0">
+          <Command shouldFilter={false}>
+            <CommandInput placeholder="جست‌وجوی شهر…" value={term} onValueChange={setTerm} />
+            <CommandList>
+              {cities.isLoading ? (
+                <div className="text-muted-foreground p-3 text-sm">در حال دریافت شهرها…</div>
+              ) : cities.isError ? (
+                <div role="alert" className="p-3 text-sm">دریافت شهرها انجام نشد.</div>
+              ) : (
+                <CommandEmpty>شهری پیدا نشد</CommandEmpty>
+              )}
+              <CommandGroup>
+                {value && <CommandItem value="__all__" onSelect={() => pick(null)}>همه شهرها</CommandItem>}
+                {shown.map((c) => (
+                  <CommandItem key={c.id} value={String(c.id)} onSelect={() => pick(String(c.id))}>
+                    <Check className={cn("size-4", String(c.id) === value ? "opacity-100" : "opacity-0")} />
+                    <span className="truncate"><Fa>{c.name_fa}</Fa></span>
+                    <span className="text-muted-foreground ms-auto font-mono text-[11.5px]">{num(c.ad_count)}</span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
+    </Field>
+  );
+}
+
 function TrimPicker() {
   const filters = useFilters();
   const model = filters.get("model");
@@ -261,7 +328,6 @@ export function FilterPanel({
   const brand = filters.get("brand");
 
   const { list: brandList } = useBrands();
-  const cities = useCities();
 
   const priceMin = filters.get("price_min");
   const priceMax = filters.get("price_max");
@@ -312,10 +378,7 @@ export function FilterPanel({
         </Group>
 
         <Group label="شهر" keys={["city"]}>
-          <Choice label="شهر" anyLabel="همه شهرها" value={filters.get("city")}
-            onChange={(v) => filters.set({ city: v, page: null })}
-            options={(cities.data ?? []).map((c) => ({ value: String(c.id), label: `${c.name_fa} (${num(c.ad_count)} آگهی)` }))} />
-          {cities.isError && <p role="alert">دریافت شهرها انجام نشد.</p>}
+          <CityPicker />
         </Group>
 
         <Group label="قیمت" keys={["price_min", "price_max"]}>
@@ -358,7 +421,7 @@ export function FilterPanel({
           <RangeField
             label="سال ساخت (شمسی)"
             minKey="year_min" maxKey="year_max"
-            placeholderMin="از ۱۳۸۰" placeholderMax="تا ۱۴۰۴"
+            placeholderMin="از 1380" placeholderMax="تا 1404"
           />
           <PresetRow>
             {MILEAGE_PRESETS.map(([label, max]) => {

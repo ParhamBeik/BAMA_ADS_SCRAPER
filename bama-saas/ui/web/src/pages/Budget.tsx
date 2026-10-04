@@ -64,11 +64,11 @@ const BILLION = 1_000_000_000;
 
 /** Round numbers people actually think in, so the common case is one click. */
 const PRESETS: [string, number][] = [
-  ["۳۰۰ میلیون", 300_000_000],
-  ["۵۰۰ میلیون", 500_000_000],
-  ["۱ میلیارد", BILLION],
-  ["۲ میلیارد", 2 * BILLION],
-  ["۵ میلیارد", 5 * BILLION],
+  ["300 میلیون", 300_000_000],
+  ["500 میلیون", 500_000_000],
+  ["1 میلیارد", BILLION],
+  ["2 میلیارد", 2 * BILLION],
+  ["5 میلیارد", 5 * BILLION],
 ];
 
 const TOLERANCES = [0, 5, 10, 20];
@@ -115,7 +115,7 @@ export function Budget() {
           <NumberInput
             className="border-border bg-panel min-w-0 flex-1 rounded-md border px-3 py-2 text-sm sm:max-w-64"
             aria-label="بودجه به تومان"
-            placeholder="مثلاً ۱۰۰۰۰۰۰۰۰۰"
+            placeholder="مثلاً 1000000000"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onBlur={(e) => commit(e.target.value)}
@@ -150,7 +150,7 @@ export function Budget() {
               aria-pressed={tolerance === t}
               onClick={() => filters.set({ tolerance: t })}
             >
-              {t === 0 ? "دقیقاً همین مبلغ" : `تا ${fa(t)}٪ بیشتر`}
+              {t === 0 ? "دقیقاً همین مبلغ" : `تا ${fa(t)}% بیشتر`}
             </button>
           ))}
         </div>
@@ -181,7 +181,7 @@ export function Budget() {
                   <Stat
                     label="سقف بررسی"
                     value={toman(data.ceiling)}
-                    sub={`با ${fa(data.tolerance_pct)}٪ تحمل`}
+                    sub={`با ${fa(data.tolerance_pct)}% تحمل`}
                   />
                   <Stat
                     label="دسته‌های در دسترس"
@@ -249,7 +249,7 @@ export function Budget() {
                   «چند درصد این دسته» یعنی بودجه شما چه سهمی از آگهی‌های آن خودرو
                   را پوشش می‌دهد — نه اینکه چقدر ارزان است. ستون «زیر بودجه»
                   آگهی‌هایی است که دقیقاً تا سقف مبلغ شما هستند؛ بقیه تا{" "}
-                  {fa(data.tolerance_pct)}٪ بالاترند و برای همین نمایش داده شده‌اند.
+                  {fa(data.tolerance_pct)}% بالاترند و برای همین نمایش داده شده‌اند.
                 </p>
                 <Provenance envelope={data} />
               </>

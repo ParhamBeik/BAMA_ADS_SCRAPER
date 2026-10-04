@@ -187,7 +187,7 @@ export function Provenance({
   if (compact) {
     return (
       <div className="provenance">
-        {as_of && <span>تا {new Date(as_of).toLocaleString("fa-IR")}</span>}
+        {as_of && <span>تا {new Date(as_of).toLocaleString("fa-IR-u-nu-latn")}</span>}
         {methodology_version != null && <MethodologyLink version={methodology_version} />}
       </div>
     );
@@ -227,7 +227,7 @@ export function Provenance({
           <AlertTriangle size={11} /> قدیمی
         </span>
       )}
-      {as_of && <span>· تا {new Date(as_of).toLocaleString("fa-IR")}</span>}
+      {as_of && <span>· تا {new Date(as_of).toLocaleString("fa-IR-u-nu-latn")}</span>}
       {methodology_version != null && <MethodologyLink version={methodology_version} />}
     </div>
   );
@@ -325,9 +325,9 @@ export function ConfidenceDots({ tier }: { tier?: string | null }) {
   const filled = tier === "high" ? 3 : tier === "medium" ? 2 : tier === "low" ? 1 : 0;
   if (!filled) return <span className="dots">—</span>;
   const label = {
-    high: "اعتبار زیاد — بر پایه ۴۰ آگهی مشابه یا بیشتر",
-    medium: "اعتبار متوسط — بر پایه ۱۵ تا ۳۹ آگهی مشابه",
-    low: "اعتبار کم — بر پایه ۸ تا ۱۴ آگهی مشابه",
+    high: "اعتبار زیاد — بر پایه 40 آگهی مشابه یا بیشتر",
+    medium: "اعتبار متوسط — بر پایه 15 تا 39 آگهی مشابه",
+    low: "اعتبار کم — بر پایه 8 تا 14 آگهی مشابه",
   }[tier as "high" | "medium" | "low"];
   return (
     <span className={`dots ${tier}`} title={label} aria-label={label}>

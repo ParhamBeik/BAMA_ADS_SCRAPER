@@ -68,7 +68,8 @@ describe("scopeKey", () => {
 });
 
 describe("toman", () => {
-  // The same thresholds `apps/core/notify.py:toman` applies, because the deal
+  // The same thresholds `apps/core/notify.py:toman` applies (its English
+  // Telegram text keeps "2.20B"; the UI spells the unit in Persian), because the deal
   // board and the Telegram message quote one price and disagreeing about its
   // magnitude is how a 2.2B car once read as "220M".
   it.each([
@@ -76,18 +77,19 @@ describe("toman", () => {
     [undefined, "—"],
     [0, "0"],
     [999_999, "999,999"],
-    [1_000_000, "1M"],
-    [2_500_000, "3M"],
-    [999_000_000, "999M"],
-    [1_000_000_000, "1.00B"],
-    [2_200_000_000, "2.20B"],
+    [1_000_000, "1 میلیون"],
+    [2_500_000, "3 میلیون"],
+    [999_000_000, "999 میلیون"],
+    [1_000_000_000, "1 میلیارد"],
+    [2_200_000_000, "2.2 میلیارد"],
+    [10_950_000_000, "10.95 میلیارد"],
   ])("%s -> %s", (value, expected) => {
     expect(toman(value)).toBe(expected);
   });
 
   it("switches unit exactly at the boundary, not near it", () => {
-    expect(toman(999_999_999)).toBe("1000M");
-    expect(toman(1_000_000_000)).toBe("1.00B");
+    expect(toman(999_999_999)).toBe("1000 میلیون");
+    expect(toman(1_000_000_000)).toBe("1 میلیارد");
   });
 });
 
