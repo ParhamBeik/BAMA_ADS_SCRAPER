@@ -1,60 +1,140 @@
-# Continuous deployment to the VPS.
-#
-# Flow: push to main -> ci.yml runs in full on GitHub's machines -> if and only
-# if it is green, a self-hosted runner *on the VPS* runs the pull-and-restart
-# wrapper that already lives there.
-#
-# Why a runner and not SSH: GitHub's runners cannot reach the VPS at all — their
-# connections never arrive (Iranian network filtering), while the VPS reaches
-# GitHub fine. The runner dials out and collects the job, so nothing connects in.
-#
-# The runner runs as `bama-deploy`, which has no docker group and whose only
-# sudo right is /opt/apps/deploy_bama.sh. The repo is public, so fork-PR
-# workflows require approval for every outside contributor; a job that did get
-# through would land in that near-empty account. Setup: deploy/CICD.md.
 name: Deploy
 
+# Same shape in all four repositories on this VPS:
+#   CI green on a push to main -> images built HERE, on GitHub's machines -> GHCR :<sha>
+#   -> the VPS's own runner checks out <sha>, pulls those images, runs the release script.
+#
+# Images are built on GitHub because the VPS (Iran) cannot reach files.pythonhosted.org,
+# so `pip install` inside an on-box build fails. The deploy runs on a self-hosted runner
+# because GitHub's machines cannot open a connection INTO the VPS; the runner dials out.
+#
+# workflow_run is the only trigger that waits for CI to finish, and GitHub always reads
+# this file from the default branch.
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Commit SHA already built (the rollback path)."
+        required: true
 
-# Two pushes in quick succession must not build the same checkout at once —
-# `git reset --hard` from one would land under the other's `docker compose build`.
-# Not cancel-in-progress: aborting a half-finished deploy is worse than queueing.
 concurrency:
+  # Never cancel a deploy halfway; queue the next one instead.
   group: deploy-production
   cancel-in-progress: false
 
 jobs:
-  ci:
-    uses: ./.github/workflows/ci.yml
+  build:
+    # A manual dispatch is always allowed: it is the rollback path, and rollback matters most
+    # when CI is red. Otherwise only a green CI on a push to this repository may ship.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      tag: ${{ steps.tag.outputs.value }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # django, worker and ml all run this one image with different commands.
+          - name: app
+            context: bama-saas
+            file: bama-saas/Dockerfile
+            build-args: ""
+          - name: frontend
+            context: bama-saas/ui/web
+            file: bama-saas/ui/web/Dockerfile.prod
+            # The origin the canonical link, sitemap and robots.txt name.
+            build-args: VITE_SITE_URL=https://bama.parhambm.ir
+    steps:
+      # The commit CI tested, not whatever main points at by now.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - id: tag
+        env:
+          REQUESTED_TAG: ${{ inputs.tag }}
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            [[ "$REQUESTED_TAG" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::tag must be a full commit SHA"; exit 1; }
+            echo "value=$REQUESTED_TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=$TESTED_SHA" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # A rollback reuses the image already in GHCR; rebuilding old source would not be one.
+      - if: ${{ github.event_name != 'workflow_dispatch' }}
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          build-args: ${{ matrix.build-args }}
+          push: true
+          tags: |
+            ghcr.io/parhambeik/bama_ads_scraper-${{ matrix.name }}:${{ steps.tag.outputs.value }}
+            ghcr.io/parhambeik/bama_ads_scraper-${{ matrix.name }}:latest
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+          provenance: false
 
   deploy:
-    needs: ci
-    runs-on: [self-hosted, bama-vps]
+    needs: build
+    runs-on: [self-hosted, vps]
     environment: production
+    env:
+      APP: bama
+      TAG: ${{ needs.build.outputs.tag }}
+      PUBLIC_URL: https://bama.parhambm.ir
+      GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      # The wrapper fetches origin/main into its own checkout and rebuilds, so
-      # this job ships no code — it only says "go".
-      - name: Pull and restart
-        run: sudo /opt/apps/deploy_bama.sh
+      # Recorded before anything changes: after the fact it would be the broken version.
+      - name: Record the version currently serving
+        id: record
+        run: echo "previous=$(cat /opt/apps/BAMA_ADS_SCRAPER/.release 2>/dev/null || true)" >> "$GITHUB_OUTPUT"
 
-      # A deploy that "succeeded" but left the stack down is the failure mode
-      # worth catching: compose returns 0 as soon as the containers are created,
-      # long before Django can answer.
-      - name: Smoke-test the running stack
-        env:
-          HEALTH_URL: ${{ secrets.VPS_HEALTH_URL }}
+      # The runner user has no Docker access. Its one sudo right is this root-owned
+      # wrapper: refuse a SHA not on main, check it out, run bama-saas/deploy/vps_pull_deploy.sh
+      # with IMAGE_TAG=<sha>, record it. Source: /usr/local/sbin/app-release.
+      - name: Pull images and restart
+        run: printf '%s\n' "$GHCR_TOKEN" | sudo -n /usr/local/sbin/app-release "$APP" "$TAG" "${{ github.actor }}"
+
+      - name: Smoke-test through the public edge
         run: |
-          set -euo pipefail
-          for endpoint in "api/health/" "api/db/health/"; do
-            url="${HEALTH_URL%/}/$endpoint"
-            echo "probing $url"
-            for attempt in $(seq 1 30); do
-              code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$url" || echo 000)
-              [ "$code" = "200" ] && { echo "  ok after ${attempt}x3s"; break; }
-              [ "$attempt" -eq 30 ] && { echo "  FAILED: last status $code"; exit 1; }
-              sleep 3
-            done
+          for attempt in $(seq 1 30); do
+            # /api/db/health/ as well: the container check is /api/health/ only, so a
+            # database the new code cannot read would otherwise ship green.
+            if curl -fsS -o /dev/null --max-time 10 "$PUBLIC_URL/" &&
+               curl -fsS -o /dev/null --max-time 10 "$PUBLIC_URL/api/health/" &&
+               curl -fsS -o /dev/null --max-time 10 "$PUBLIC_URL/api/db/health/"; then
+              echo "serving after ${attempt} attempt(s)"; exit 0
+            fi
+            sleep 3
           done
+          echo "::error::$PUBLIC_URL did not answer after deploy"; exit 1
+
+      - name: Roll back to the previous release
+        if: failure() && steps.record.outputs.previous != '' && steps.record.outputs.previous != env.TAG
+        env:
+          PREVIOUS: ${{ steps.record.outputs.previous }}
+        run: |
+          echo "::warning::deploy failed - redeploying $PREVIOUS"
+          printf '%s\n' "$GHCR_TOKEN" | sudo -n /usr/local/sbin/app-release "$APP" "$PREVIOUS" "${{ github.actor }}"
+          echo "::notice::rolled back to $PREVIOUS; this run stays red"
