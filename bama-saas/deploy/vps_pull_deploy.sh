@@ -13,9 +13,31 @@ compose() {
     docker compose -f docker-compose.prod.yml --env-file .env.production "$@"
 }
 
-# Build only application images. Postgres and Redis are pulled images; rebuilding
-# them adds time and can never include repository changes.
-compose build django worker ml frontend
+# The images are built on GitHub (.github/workflows/deploy.yml), which passes
+# IMAGE_TAG: this host cannot reach files.pythonhosted.org, and a build here also
+# competes with three other stacks for RAM. They are pulled, then retagged with the
+# compose names so every step below and any later manual `compose up` runs that
+# exact build. Nothing is stopped yet, so a failed pull leaves the site as it was.
+# Without IMAGE_TAG (a manual deploy) the application images still build here.
+if [ -n "${IMAGE_TAG:-}" ]; then
+    for name in app frontend; do
+        remote="ghcr.io/parhambeik/bama_ads_scraper-$name:$IMAGE_TAG"
+        # GHCR resets connections from Iran mid-layer; finished layers are kept.
+        for attempt in 1 2 3 4 5; do
+            docker pull -q "$remote" && break
+            [ "$attempt" = 5 ] && { echo "could not pull $remote; nothing was stopped" >&2; exit 1; }
+            sleep $((attempt * 15))
+        done
+    done
+    for service in django worker ml; do
+        docker tag "ghcr.io/parhambeik/bama_ads_scraper-app:$IMAGE_TAG" "bama-saas-$service:latest"
+    done
+    docker tag "ghcr.io/parhambeik/bama_ads_scraper-frontend:$IMAGE_TAG" bama-saas-frontend:latest
+else
+    # Postgres and Redis are pulled images; rebuilding them adds time and can
+    # never include repository changes.
+    compose build django worker ml frontend
+fi
 
 # --wait blocks until the healthchecks pass, so migrate cannot race the
 # database or cache still doing startup recovery.
