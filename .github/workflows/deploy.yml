@@ -1,16 +1,17 @@
 # Continuous deployment to the VPS.
 #
-# Flow: push to main -> ci.yml runs in full -> if and only if it is green, SSH to
-# the VPS and trigger the pull-and-restart wrapper that already lives there.
+# Flow: push to main -> ci.yml runs in full on GitHub's machines -> if and only
+# if it is green, a self-hosted runner *on the VPS* runs the pull-and-restart
+# wrapper that already lives there.
 #
-# The VPS holds its own git checkout at /opt/apps/BAMA_ADS_SCRAPER with a
-# read-only deploy key, so this workflow ships no code — it only says "go". That
-# keeps the artifact GitHub authenticates for (a git ref) identical to the one
-# the server builds from.
+# Why a runner and not SSH: GitHub's runners cannot reach the VPS at all — their
+# connections never arrive (Iranian network filtering), while the VPS reaches
+# GitHub fine. The runner dials out and collects the job, so nothing connects in.
 #
-# The SSH key here can do exactly one thing: the `deploy` user's authorized_keys
-# entry pins `command="sudo /opt/apps/deploy_bama.sh"`, so even a stolen key
-# cannot open a shell, forward a port, or read the database.
+# The runner runs as `bama-deploy`, which has no docker group and whose only
+# sudo right is /opt/apps/deploy_bama.sh. The repo is public, so fork-PR
+# workflows require approval for every outside contributor; a job that did get
+# through would land in that near-empty account. Setup: deploy/CICD.md.
 name: Deploy
 
 on:
@@ -31,30 +32,13 @@ jobs:
 
   deploy:
     needs: ci
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, bama-vps]
     environment: production
     steps:
-      - name: Trigger the VPS pull-and-restart
-        env:
-          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_USER: ${{ secrets.VPS_USER }}
-          VPS_HOST_KEY: ${{ secrets.VPS_HOST_KEY }}
-        run: |
-          set -euo pipefail
-          mkdir -p ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          # Pin the host key instead of StrictHostKeyChecking=no, so a MITM
-          # between the runner and the VPS fails the deploy rather than
-          # silently succeeding against someone else's box.
-          printf '%s\n' "$VPS_HOST_KEY" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
-          # The forced command on the server side ignores whatever we send, so
-          # the remote command below is documentation, not the instruction.
-          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes \
-              -o UserKnownHostsFile=~/.ssh/known_hosts \
-              "$VPS_USER@$VPS_HOST" 'sudo /opt/apps/deploy_bama.sh'
+      # The wrapper fetches origin/main into its own checkout and rebuilds, so
+      # this job ships no code — it only says "go".
+      - name: Pull and restart
+        run: sudo /opt/apps/deploy_bama.sh
 
       # A deploy that "succeeded" but left the stack down is the failure mode
       # worth catching: compose returns 0 as soon as the containers are created,
