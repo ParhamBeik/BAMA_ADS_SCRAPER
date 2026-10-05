@@ -1,8 +1,8 @@
 # CI/CD setup
 
 `.github/workflows/ci.yml` runs on every push. `.github/workflows/deploy.yml`
-runs on pushes to `main`, calls CI first, and only then tells the VPS to pull and
-restart. This file is the one-time setup that makes the deploy half work.
+runs on pushes to `main`, calls CI first, and only then has a self-hosted runner
+on the VPS pull and restart. This file is the one-time setup that makes the deploy half work.
 
 The VPS already holds its own checkout at `/opt/apps/BAMA_ADS_SCRAPER` with a
 read-only GitHub deploy key, and `/opt/apps/deploy_bama.sh` already does the
@@ -30,55 +30,50 @@ chmod 440 /etc/sudoers.d/bama-deploy
 visudo -c          # must print "parsed OK" before you log out
 ```
 
-## 2. A key that can only run the deploy
+## 2. A self-hosted runner, not inbound SSH
 
-Generate locally (never on the VPS — the private half should not exist there):
+GitHub's hosted runners cannot reach this VPS: their SSH connections never
+arrive (Iranian network filtering; checked 2026-10-05 in `journalctl -u ssh`).
+The VPS reaches GitHub fine, so a runner on the VPS dials out and collects the
+deploy job instead. It runs as `bama-deploy`, so a job gets that account's one
+privilege and nothing more.
 
-```sh
-ssh-keygen -t ed25519 -f ~/.ssh/bama_ci_deploy -C "github-actions-deploy" -N ""
-```
-
-Install the public half on the VPS. The forced command is the security boundary:
-whatever GitHub sends is ignored and only this script runs, so a stolen key
-cannot open a shell, forward a port, or reach Postgres.
-
-```sh
-cat > /home/bama-deploy/.ssh/authorized_keys <<'EOF'
-command="sudo /opt/apps/deploy_bama.sh",no-pty,no-agent-forwarding,no-port-forwarding,no-X11-forwarding,restrict ssh-ed25519 AAAA... github-actions-bama-deploy
-EOF
-chmod 600 /home/bama-deploy/.ssh/authorized_keys
-chown bama-deploy:bama-deploy /home/bama-deploy/.ssh/authorized_keys
-```
-
-Verify from your laptop using the current VPS host. Either command invokes the
-forced deploy, so run these only when a release is authorized. Set `VPS_HOST`
-from your verified server inventory first:
+The repo is public. Before installing, require approval for every fork PR, or a
+stranger's PR could add a workflow with `runs-on: self-hosted`:
 
 ```sh
-ssh -i ~/.ssh/bama_ci_deploy "bama-deploy@$VPS_HOST"
-ssh -i ~/.ssh/bama_ci_deploy "bama-deploy@$VPS_HOST" whoami
+gh api -X PUT repos/ParhamBeik/BAMA_ADS_SCRAPER/actions/permissions/fork-pr-contributor-approval \
+  -f approval_policy=all_external_contributors
 ```
 
-`/opt/apps/deploy_bama.sh` sets `GIT_SSH_COMMAND` explicitly rather than relying
-on `/root/.ssh/config`. `sudo` does not reset `HOME`, so run as `bama-deploy`
-the wrapper's `git fetch` would look for the GitHub deploy key under
-`/home/bama-deploy` and fail to authenticate.
+Install on the VPS as root, taking the version and SHA-256 from the latest
+`actions/runner` release notes:
+
+```sh
+V=2.337.0 SUM=<sha256 from the release notes>
+sudo -u bama-deploy bash -c "mkdir -p ~/actions-runner && cd ~/actions-runner &&
+  curl -sSfL -o runner.tgz https://github.com/actions/runner/releases/download/v$V/actions-runner-linux-x64-$V.tar.gz &&
+  echo '$SUM  runner.tgz' | sha256sum -c - && tar xzf runner.tgz && rm runner.tgz"
+```
+
+Register it with a one-hour token piped from your laptop, so the token is never
+printed or stored, then install it as a service:
+
+```sh
+gh api -X POST repos/ParhamBeik/BAMA_ADS_SCRAPER/actions/runners/registration-token -q .token |
+  ssh root@"$VPS_HOST" 'read -r T; cd /home/bama-deploy/actions-runner &&
+    sudo -u bama-deploy ./config.sh --unattended --replace --name bama-vps --labels bama-vps \
+      --url https://github.com/ParhamBeik/BAMA_ADS_SCRAPER --token "$T" &&
+    ./svc.sh install bama-deploy && ./svc.sh start'
+gh api repos/ParhamBeik/BAMA_ADS_SCRAPER/actions/runners -q '.runners[]|"\(.name) \(.status)"'
+```
 
 ## 3. Repository secrets
 
-Set `VPS_HOST` to the verified VPS hostname or address and `PUBLIC_ORIGIN` to
-the trusted HTTPS origin. Check both before running these commands:
+Only the smoke test needs one now:
 
 ```sh
-: "${VPS_HOST:?set the current VPS host}"
-: "${PUBLIC_ORIGIN:?set the trusted HTTPS origin}"
-gh secret set VPS_SSH_KEY   < ~/.ssh/bama_ci_deploy
-gh secret set VPS_HOST      --body "$VPS_HOST"
-gh secret set VPS_USER      --body "bama-deploy"
 gh secret set VPS_HEALTH_URL --body "$PUBLIC_ORIGIN"
-
-# Verify the host key fingerprint through an independent trusted channel before
-# setting VPS_HOST_KEY. A bare ssh-keyscan result does not establish identity.
 ```
 
 ## 4. First run
