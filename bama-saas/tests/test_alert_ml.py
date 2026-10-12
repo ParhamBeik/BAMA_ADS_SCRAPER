@@ -47,7 +47,7 @@ def _score(ad: Ad, *, discount: float) -> DealScoreCache:
         score=discount,
         discount_pct=discount,
         peer_median=ad.current_price + 100_000_000,
-        components={"peer_count": 12},
+        components={"deal_status": "deal", "peer_count": 12},
         needs_review=False,
     )
 

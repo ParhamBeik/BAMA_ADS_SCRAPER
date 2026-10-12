@@ -17,6 +17,7 @@ from django.core.cache import CacheKeyWarning
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 from django.urls import resolve
+from django.utils import timezone
 from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.test import APIClient
 
@@ -538,7 +539,7 @@ def test_deal_scores_return_envelope_with_evidence(api_client, catalog):
         score=12.5,
         discount_pct=12.5,
         peer_median=1_200_000_000,
-        components={
+        components={"deal_status": "deal",
             "peer_count": 11,
             "confidence": "low",
             "age_days": 3,
@@ -576,7 +577,7 @@ def test_deal_scores_price_bounds(api_client, catalog):
     for ad, score in ((cheap, 10.0), (pricey, 20.0)):
         DealScoreCache.objects.create(
             ad=ad, score=score, discount_pct=score, peer_median=1_200_000_000,
-            components={"peer_count": 11, "confidence": "low", "age_days": 3},
+            components={"deal_status": "deal", "peer_count": 11, "confidence": "low", "age_days": 3},
         )
 
     resp = api_client.get(
@@ -598,7 +599,7 @@ def test_deal_scores_filter_by_city_and_variant(api_client, catalog):
     for ad in (here, there):
         DealScoreCache.objects.create(
             ad=ad, score=10.0, discount_pct=10.0, peer_median=1_200_000_000,
-            components={"peer_count": 11, "confidence": "low", "age_days": 3},
+            components={"deal_status": "deal", "peer_count": 11, "confidence": "low", "age_days": 3},
         )
 
     url = "/api/analytics/deal-scores/?band=all"
@@ -636,7 +637,7 @@ def test_deal_score_pagination_is_stable_when_scores_tie(api_client, catalog):
             score=10.0,
             discount_pct=10.0,
             peer_median=1_200_000_000,
-            components={"peer_count": 11, "confidence": "low", "age_days": 3},
+            components={"deal_status": "deal", "peer_count": 11, "confidence": "low", "age_days": 3},
         )
 
     first = api_client.get("/api/analytics/deal-scores/?band=all&limit=3&offset=0").json()
@@ -681,7 +682,7 @@ def dated_deals(catalog):
         made[ad.code] = DealScoreCache.objects.create(
             ad=ad, score=discount, discount_pct=discount,
             peer_median=1_200_000_000,
-            components={"peer_count": 11, "confidence": "low", "age_days": days},
+            components={"deal_status": "deal", "peer_count": 11, "confidence": "low", "age_days": days},
         )
     return made
 
@@ -769,9 +770,6 @@ def test_top_band_excludes_listings_older_than_the_window(api_client, dated_deal
     # The 40-day-old rows are past MAX_WINDOW_DAYS however good they look.
     assert not codes & {"ad6", "ad7"}
     assert body["window"]["window_days"] <= pricing.MAX_WINDOW_DAYS
-    assert all(
-        r["discount_pct"] >= body["window"]["min_discount_pct"] for r in body["results"]
-    )
 
 
 @pytest.mark.django_db
@@ -2088,8 +2086,26 @@ def test_an_alert_rule_cannot_go_below_the_fair_price_peer_minimum(member):
     assert "min_peers" in response.json()
 
 
+@pytest.fixture
+def deal_market(catalog):
+    """Fourteen more peers priced this week, so the catalogue's cheapest ads are
+    deals by the board's own rule (15+ fresh peers, below their P25)."""
+    for i in range(14):
+        Ad.objects.create(
+            code=f"peer{i:02d}", brand=catalog["brand"], model=catalog["model"],
+            variant=catalog["variant"], city=catalog["city"], title="مدل تست",
+            year=1399, year_jalali=1399, year_gregorian=2020,
+            year_calendar=Ad.YearCalendar.JALALI, mileage=100_000 + i * 5_000,
+            current_price=1_200_000_000, publish_at=_NOW, last_seen_at=_NOW,
+        )
+    # Deals need a recently set price, measured against the real clock rather
+    # than this file's fixed `_NOW`.
+    Ad.objects.filter(model=catalog["model"]).update(first_seen_at=timezone.now())
+    return catalog
+
+
 @pytest.mark.django_db
-def test_alerts_are_delivered_per_user_and_only_once(member, other_member, catalog):
+def test_alerts_are_delivered_per_user_and_only_once(member, other_member, deal_market):
     """`AlertDelivery` is unique per (user, ad), not globally.
 
     `core.NotifiedAd` is global, so once one recipient had seen a listing it was
@@ -2134,7 +2150,7 @@ def test_two_of_one_users_rules_matching_one_car_deliver_it_once(member, catalog
 
 
 @pytest.mark.django_db
-def test_an_alert_keeps_what_was_true_when_it_fired(member, catalog):
+def test_an_alert_keeps_what_was_true_when_it_fired(member, deal_market):
     """The board is dropped and rebuilt on a schedule.
 
     A feed that joined to `DealScoreCache` would blank out an alert the moment
@@ -2157,7 +2173,7 @@ def test_an_alert_keeps_what_was_true_when_it_fired(member, catalog):
 
 
 @pytest.mark.django_db
-def test_alert_telegram_delivery_retries_separately(member, catalog, monkeypatch):
+def test_alert_telegram_delivery_retries_separately(member, deal_market, monkeypatch):
     from apps.core.notify import deliver_alerts, send_alerts
 
     _, user = member
@@ -2174,7 +2190,7 @@ def test_alert_telegram_delivery_retries_separately(member, catalog, monkeypatch
 
 
 @pytest.mark.django_db
-def test_marking_the_feed_read_clears_the_badge(member, catalog):
+def test_marking_the_feed_read_clears_the_badge(member, deal_market):
     from apps.core.notify import deliver_alerts
 
     client, user = member

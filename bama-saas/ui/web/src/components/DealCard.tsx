@@ -13,10 +13,10 @@
  * bargain, and the colour has to carry that before any label is read.
  */
 import { Link } from "react-router-dom";
-import { AlertTriangle, Sparkles, Timer } from "lucide-react";
+import { AlertTriangle, BadgeCheck, Sparkles, Timer } from "lucide-react";
 import type { Envelope } from "@/api";
 import { BamaLink, ConfidenceDots, Fa, Thumb } from "@/ui";
-import { km, modelYear, pct, toman } from "@/format";
+import { fa, km, modelYear, pct, toman } from "@/format";
 
 /**
  * The thresholds the deal board is standing on, so a screen can state them
@@ -81,6 +81,15 @@ export interface Deal {
     n: number;
     window_days: number;
   } | null;
+  /** `pricing.assess_deals`: `deal`, `check` with reasons, or null when no
+   *  fresh, tight peer group exists to judge against. */
+  deal_status?: "deal" | "check" | null;
+  deal_reasons?: string[];
+  fresh_peers?: number | null;
+  cheaper_than_pct?: number | null;
+  /** Days since the asking price was last set (a repost at the same price
+   *  keeps the original date). */
+  price_age_days?: number | null;
   /** What the learned models said, or null when nothing has scored this ad. */
   ml?: {
     price_p50: number | null;
@@ -124,6 +133,32 @@ export function modelNote(deal: Pick<Deal, "ml">): string | null {
     return null;
   }
   return `${Math.round(ml.residual_pct)}% زیر برآورد مدل یادگیرنده`;
+}
+
+/** Why a cheap car went to review rather than onto the board. */
+export const DEAL_REASON: Record<string, string> = {
+  stale_price: "قیمت قدیمی",
+  atypical_mileage: "کارکرد غیرعادی",
+  beyond_spread: "بسیار ارزان‌تر از حد عادی",
+  suspect_misfiled: "شاید در مدل یا سال اشتباه",
+  red_flags: "نکته‌ای در متن آگهی",
+};
+
+/** What the verdict stood on, in one line: the real comparison and how old the price is. */
+export function verdictNote(
+  deal: Pick<Deal, "deal_status" | "deal_reasons" | "cheaper_than_pct" | "fresh_peers" | "price_age_days">,
+): string | null {
+  const age = deal.price_age_days == null ? null
+    : deal.price_age_days <= 0 ? "قیمت امروز" : `قیمتِ ${fa(deal.price_age_days)} روز پیش`;
+  if (deal.deal_status === "check") {
+    const why = (deal.deal_reasons ?? []).map((r) => DEAL_REASON[r] ?? r).join("، ");
+    return [why, age].filter(Boolean).join(" · ") || null;
+  }
+  if (deal.deal_status === "deal" && deal.cheaper_than_pct != null) {
+    return [`ارزان‌تر از ${fa(deal.cheaper_than_pct)}٪ از ${fa(deal.fresh_peers)} آگهی تازه`, age]
+      .filter(Boolean).join(" · ");
+  }
+  return null;
 }
 
 /** "۰ روز در بازار" is technically right and reads like a bug. */
@@ -212,6 +247,14 @@ export function DealCard({ deal, suspect }: { deal: Deal; suspect: boolean }) {
             <span className="stat-sub" title={liquidityNote(deal) ?? undefined}>
               <Timer size={11} /> {Math.round(deal.liquidity.left_pct)}% ظرف{" "}
               {deal.liquidity.window_days} روز از بازار خارج می‌شوند
+            </span>
+          </div>
+        )}
+        {verdictNote(deal) && (
+          <div className="row deal-extra">
+            <span className="stat-sub">
+              {deal.deal_status === "check" ? <AlertTriangle size={11} /> : <BadgeCheck size={11} />}{" "}
+              {verdictNote(deal)}
             </span>
           </div>
         )}

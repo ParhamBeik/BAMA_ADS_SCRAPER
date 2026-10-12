@@ -607,6 +607,14 @@ def _deal_score_row(obj, *, now=None):
         # Null when there is not enough clean history — never zero, which would
         # read as "nothing sells".
         "liquidity": components.get("liquidity"),
+        # The verdict from `pricing.assess_deals` and what it stood on: `deal`,
+        # `check` with its reasons, or null when no fresh, tight peer group
+        # exists to judge against.
+        "deal_status": components.get("deal_status"),
+        "deal_reasons": components.get("deal_reasons") or [],
+        "fresh_peers": components.get("fresh_peers"),
+        "cheaper_than_pct": components.get("cheaper_than_pct"),
+        "price_age_days": components.get("price_age_days"),
         # What the learned models said about this car, or nothing at all. It
         # rides beside the peer median and never replaces it: the discount badge
         # is still measured against `peer_median`, and this is a second,
@@ -687,17 +695,16 @@ def deal_scores(request):
     price is a worse guide to what a car costs today than a fresh one, however
     large the gap looks — the discount still decides order *within* a band.
 
-    * ``top`` (default) — inside ``deal_window()``: recent enough, and in the
-      better part of that window's own discount distribution. Both thresholds
-      are measured from the current board, not hardcoded, so a quiet day is a
-      short board rather than a month of stale listings.
+    * ``top`` (default) — verdict ``deal`` from ``pricing.assess_deals``: price
+      set in the last two weeks, below the P25 of 15+ peers priced in the last
+      month, typical mileage, nothing in the ad explaining the gap, and within
+      three of its group's own spreads. No fixed discount floor or cap.
     * ``all`` — everything at or below the trusted ceiling, same recency
       window, no discount floor.
-    * ``review`` — above the ceiling, *or* carrying a declared body condition
-      that already explains the gap. Same recency window. Not hidden, but not
-      recommended either: past ~25% the gap is an attribute the cohort key
-      cannot see far more often than it is a bargain, and a repainted or
-      panel-replaced car is that same attribute stated outright by the seller.
+    * ``review`` — cheaper than its peers for a visible reason: verdict
+      ``check`` (stale price, unusual mileage, far outside its group's spread,
+      or the ad's own words), a likely mis-filed ad, or past the trusted
+      ceiling. Same recency window. Not hidden, but not recommended either.
       Ranked by discount, since that is the thing being reviewed.
 
     The two ranked bands are therefore disjoint from ``review``: a car whose
@@ -743,10 +750,12 @@ def deal_scores(request):
     # turn into "every listing" the moment the valuation went universal.
     qs = qs.filter(discount_pct__gt=0)
 
-    # "The gap has a cause this score cannot see" — once as a threshold on the
-    # discount, once as the seller's own declaration. Built as one predicate so
-    # the bands cannot drift into overlapping or leaving a row homeless.
-    needs_review = Q(discount_pct__gt=window["ceiling_pct"]) | Q(needs_review=True)
+    # "Cheaper than its peers, and something explains it": a verdict of `check`
+    # from `pricing.assess_deals`, a likely mis-filed ad, or a gap past the
+    # trusted ceiling. Built as one predicate so the bands cannot drift into
+    # overlapping or leaving a row homeless.
+    needs_review = (Q(discount_pct__gt=window["ceiling_pct"]) | Q(needs_review=True)
+                    | Q(components__deal_status="check"))
     if band == "review":
         qs = qs.filter(needs_review)
     elif band == "ml":
@@ -766,7 +775,9 @@ def deal_scores(request):
     else:
         qs = qs.exclude(needs_review)
         if band == "top":
-            qs = qs.filter(discount_pct__gte=window["min_discount_pct"])
+            # Not a discount floor: a recently priced car, cheaper than most
+            # recently priced peers, with nothing in the ad explaining why.
+            qs = qs.filter(components__deal_status="deal")
     qs = qs.filter(ad__publish_at__gte=cutoff)
 
     filters = {

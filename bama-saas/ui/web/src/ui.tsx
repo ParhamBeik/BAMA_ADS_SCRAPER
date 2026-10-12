@@ -763,6 +763,9 @@ export interface Distribution {
   wide?: boolean;
   /** An empty stretch splitting the prices into two real groups. */
   clusters?: { gap_from: number; gap_to: number; below: number; above: number } | null;
+  /** Share of these asks set more than `old_price_days` ago; null when unknown. */
+  old_price_pct?: number | null;
+  old_price_days?: number;
 }
 
 /** Where an ask sits against what its peers support. */
@@ -828,8 +831,11 @@ export function PriceVerdict({
  */
 export function RangeNotes({ distribution }: { distribution?: Distribution }) {
   if (!distribution?.count) return null;
-  const { thin, wide, width_pct, clusters, count } = distribution;
-  if (!thin && !wide && !clusters) return null;
+  const { thin, wide, width_pct, clusters, count, old_price_pct, old_price_days } = distribution;
+  // Old asks stay in the range — they are real prices, not adjusted guesses —
+  // but a market moving ~10% a month makes their share worth saying.
+  const old = old_price_pct != null && old_price_pct >= 25;
+  if (!thin && !wide && !clusters && !old) return null;
   return (
     <div className="stack" style={{ gap: 4 }}>
       {thin && (
@@ -838,6 +844,12 @@ export function RangeNotes({ distribution }: { distribution?: Distribution }) {
       {wide && (
         <p className="badge warn">
           بازه پهن است: نیمه‌ی میانی قیمت‌ها {pct(width_pct, 0)} از میانه را می‌پوشاند.
+        </p>
+      )}
+      {old && (
+        <p className="badge warn">
+          {fa(old_price_pct)}٪ از این قیمت‌ها بیش از {fa(old_price_days)} روز پیش ثبت شده‌اند؛ بازار
+          از آن زمان جابه‌جا شده است.
         </p>
       )}
       {clusters && (

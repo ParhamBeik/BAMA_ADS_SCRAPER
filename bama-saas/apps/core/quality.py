@@ -138,6 +138,52 @@ _FINANCE_RE = re.compile(FINANCE)
 # and "اقساط نداریم" are mostly boilerplate on cash prices. Only a suspect when
 # the price is also far below its peers (`pricing.flag_suspects`).
 INSTALLMENT_WORDS_RE = re.compile(r"اقساط|قسط|لیزینگ|وام")
+
+# Words that explain a low price. Each was kept only if, across all 28,169 live
+# ads on 2026-10-12, ads using it were priced clearly under their strict peer
+# group (median gap; share more than 10% under, against a 13% baseline):
+#   free-zone plates / customs  -34 to -41%, 80-90% under
+#   "خرج داره" (needs money)   -14%, 57% under
+#   "نیاز به تعمیر"            -5%,  43% under
+#   engine burnt                -22% (n=2)
+# Measured and dropped as no signal, mostly denials or routine paperwork:
+# وکالت +5%, تملیکی and مزایده (+10 to +47%, "مزایده‌ای نیست"), "تعمیر اساسی
+# شده" 0%, bare تصادف / ایراد / تعمیر / صافکاری / "به شرط" / تعویض پلاک / پلاک
+# ملی (all within 2% of their peers). حواله, پیش‌فروش and the like are absent
+# here because FINANCE already removes those ads.
+RED_FLAGS = r"منطقه.?آزاد|مناطق.?آزاد|پلاک.?(منطقه|موقت)|گمرک|اسقاط|اوراق|خرج.?(داره|دارد)"
+_RED_FLAGS_RE = re.compile(RED_FLAGS)
+# Damage stated as a fact, after denials are removed. "روغن موتور/گیربکس
+# تعویض" is an oil change, not a new engine.
+_DAMAGE = (
+    r"((?<!روغن )(?<!روغن)(?<!دسته )موتور.?(باز|خراب|تعویض|سوخته)"
+    r"|(?<!روغن )(?<!روغن)(?<!خنک کن )(?<!سرد کن )(?<!فیلتر )گیربکس.?(خراب|تعویض)"
+    r"|نیاز.?به.?تعمیر|تصادفی|شاسی.?(تعویض|خورده|جوش))"
+)
+_DAMAGE_RE = re.compile(_DAMAGE)
+_NEGATED_DAMAGE_RE = re.compile(
+    r"(بدون|بی|عدم|هیچ|فاقد|غیر|نه)[\s\u200c]*(گونه[\s\u200c]*)?"
+    + r"(\S+[\s\u200c]*و[\s\u200c]*)?" + _DAMAGE
+    + r"|" + _DAMAGE + r"[\s\u200c]*(ندارد|نداره|نداشته|نشده|نخورده|نیست|نمی.?باشد)"
+)
+# Paintwork named in prose on an ad whose structured field says "no paint".
+# Not bare "رنگ": that is also the word for colour ("رنگ سفید").
+_PROSE_DAMAGE_RE = re.compile(
+    r"(?<!بدون )(?<!بی )(رنگ.?شده|رنگ.?(دارد|داره)|دور.?رنگ|تک.?لکه|\d.?لکه)"
+)
+# Bama text mixes Arabic and Persian letters ("تعويض" vs "تعویض").
+_ARABIC_TO_PERSIAN = str.maketrans("يكىة", "یکیه")
+
+
+def red_flags(*, title: str = "", description: str = "", body_status: str = "") -> bool:
+    """True when the ad's own words explain a low price."""
+    text = f"{title or ''}\n{description or ''}".translate(_ARABIC_TO_PERSIAN)
+    if _RED_FLAGS_RE.search(text) or _DAMAGE_RE.search(_NEGATED_DAMAGE_RE.sub(" ", text)):
+        return True
+    prose = (description or "").translate(_ARABIC_TO_PERSIAN)
+    return condition_band(body_status) == CLEAN and bool(_PROSE_DAMAGE_RE.search(prose))
+
+
 _CONDITION_RE = re.compile(CONDITION)
 
 

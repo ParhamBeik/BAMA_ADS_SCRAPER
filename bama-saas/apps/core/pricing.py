@@ -27,17 +27,20 @@ import statistics
 from collections import Counter, defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
+from datetime import timezone as dt_timezone
 from statistics import median
 
 from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction
+from django.db.models import OuterRef, Subquery, Value
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from apps.common.verify import MAX_PLAUSIBLE_MILEAGE, MIN_PLAUSIBLE_PRICE
 from apps.core.locks import DEAL_SCORES_REBUILD, rebuild_lock
-from apps.core.models import Ad, DealScoreCache
+from apps.core.models import Ad, DealScoreCache, PriceObservation
 from apps.core.quality import (
     COHORT_FLAGS,
     CONDITION_BANDS,
@@ -46,10 +49,9 @@ from apps.core.quality import (
     FLAG_SUSPECT_INSTALLMENT,
     FLAG_SUSPECT_MISFILED,
     INSTALLMENT_WORDS_RE,
-    PAINTED,
-    STRUCTURAL,
     condition_band,
     exclude_unclear_price,
+    red_flags,
     verified,
     verified_by_ad,
     without_cohort_outliers,
@@ -495,18 +497,19 @@ def cap_confidence(label: str, basis: str) -> str:
 def strict_peers(*, model_id: int, variant_id, year_jalali, band) -> list[tuple]:
     """Every like-for-like peer of a car, however few.
 
-    ``(price, mileage, band, last_seen_at, code)`` tuples, the shape
-    ``cohort_baseline`` reads (it ignores the trailing code). Empty without a
+    ``(price, mileage, band, last_seen_at, price_set_at, code)`` tuples, the
+    shape ``cohort_baseline`` reads (it ignores the last two). Empty without a
     model, trim or year. An unrecognised condition (``band`` None) is a group of
     its own: those cars compare only with each other.
     """
     if None in (model_id, variant_id, year_jalali):
         return []
-    rows = (without_cohort_outliers(scorable_rows())
+    rows = (price_set_rows(without_cohort_outliers(scorable_rows()))
             .filter(model_id=model_id, variant_id=variant_id, year_jalali=year_jalali)
-            .values_list("current_price", "mileage", "last_seen_at", "code", "body_status"))
-    return [(price, mileage, band, seen, code)
-            for price, mileage, seen, code, status in rows
+            .values_list("current_price", "mileage", "last_seen_at", "price_set_at", "code",
+                         "body_status"))
+    return [(price, mileage, band, seen, set_at, code)
+            for price, mileage, seen, set_at, code, status in rows
             if condition_band(status) == band]
 
 
@@ -572,6 +575,7 @@ def fair_price(code: str) -> dict:
     baseline = cohort_baseline(peers)
     if baseline is None:
         prices = [p for p, *_ in peers]
+        set_at = [t[4] for t in peers]
         if len(prices) < MIN_RANGE_PEERS:
             return {
                 "code": code, "available": False, "reason": "insufficient_peers",
@@ -586,7 +590,7 @@ def fair_price(code: str) -> dict:
             "asking": ad.current_price, "fair_value": None, "gap_pct": None,
             "verdict": "unknown", "basis": basis, "components": [],
             "peer_count": len(peers), "confidence": "insufficient",
-            "condition_band": band, "distribution": peer_distribution(prices),
+            "condition_band": band, "distribution": peer_distribution(prices, set_at=set_at),
             "position_pct": position_pct(prices, ad.current_price),
             "peers": [c for *_, c in peers],
         }
@@ -658,7 +662,7 @@ def fair_price(code: str) -> dict:
         # A components table answers "how was the number built"; this answers
         # "is this cheap", which is the question people actually arrive with.
         # Free: it is the same peer list the baseline was computed from.
-        "distribution": peer_distribution(prices),
+        "distribution": peer_distribution(prices, set_at=[t[4] for t in peers]),
         # "Cheaper than 72% of comparable cars" is the sentence people actually
         # want, and it needs no arithmetic from the reader.
         "position_pct": position_pct(prices, ad.current_price),
@@ -704,7 +708,7 @@ def price_clusters(prices: list[int]) -> dict | None:
             "above": sum(1 for p in ordered if p >= inner[i])}
 
 
-def peer_distribution(prices: list[int]) -> dict:
+def peer_distribution(prices: list[int], *, set_at: list | None = None) -> dict:
     """The one price range every screen shows, from a group's asking prices.
 
     The range is P25-P75: where the middle half of real asks sit, robust to a
@@ -712,6 +716,11 @@ def peer_distribution(prices: list[int]) -> dict:
     ``thin`` marks a group under MIN_PEERS, ``wide`` a middle half too loose to
     price by, ``clusters`` a group whose prices split into two lumps. Empty
     below MIN_RANGE_PEERS.
+
+    Given ``set_at`` (when each price was last set), ``old_price_pct`` says how
+    many of the asks are older than PEER_PRICE_FRESH_DAYS. The range stays the
+    real asks — rescaling old prices by an index would invent numbers no seller
+    quoted — and the share tells the reader how much of it predates the market.
     """
     if len(prices) < MIN_RANGE_PEERS:
         return {}
@@ -735,7 +744,17 @@ def peer_distribution(prices: list[int]) -> dict:
         "width_pct": width_pct,
         "wide": width_pct is not None and width_pct > WIDE_RANGE_PCT,
         "clusters": price_clusters(prices),
+        "old_price_pct": _old_share(set_at),
+        "old_price_days": PEER_PRICE_FRESH_DAYS,
     }
+
+
+def _old_share(set_at: list | None) -> int | None:
+    known = [t for t in set_at or [] if t is not None]
+    if not known:
+        return None
+    cutoff = timezone.now() - timedelta(days=PEER_PRICE_FRESH_DAYS)
+    return round(sum(1 for t in known if t < cutoff) / len(known) * 100)
 
 
 # ---------------------------------------------------------------------------
@@ -914,6 +933,137 @@ def flag_suspects(*, model_id: int | None = None) -> dict:
             "changed": len(changed), "model_id": model_id}
 
 
+# What makes a deal, rather than a cheap number. Measured 2026-10-12 with the
+# market rising ~10% a month: the deep "deals" were old prices on freshly
+# bumped ads (36% of the 20-25% band had a price over 30 days old, against 4%
+# at 5-10%). So a deal is a recently priced car, cheaper than most cars like it
+# priced recently, by an amount its own group can explain. No fixed percentage:
+# each group's spread decides what is unusual.
+DEAL_PRICE_FRESH_DAYS = 14   # the deal's own price was set this recently
+PEER_PRICE_FRESH_DAYS = 30   # peers it is compared with, ditto ("today's market")
+DEAL_MIN_PEERS = 15          # a median worth beating needs this many fresh peers
+DEAL_MAX_SPREADS = 3.0       # further below than this many robust spreads: check it
+
+
+_EPOCH = datetime(1970, 1, 1, tzinfo=dt_timezone.utc)
+
+
+def price_set_rows(qs):
+    """``qs`` annotated with ``price_set_at``: when the current amount was set.
+
+    The first observation of today's amount after the last observation of any
+    other amount. Not simply the latest observation: one is also written when
+    only the payment terms change (the fingerprint covers the whole price
+    object), and that must not make a weeks-old amount look fresh. An ad with
+    no matching observation falls back to its first sighting. A bump touches
+    neither, which is the point.
+    """
+    obs = PriceObservation.objects.filter(ad=OuterRef(OuterRef("pk")))
+    last_other = (obs.exclude(price=OuterRef(OuterRef("current_price")))
+                  .order_by("-observed_at").values("observed_at")[:1])
+    first_same = (PriceObservation.objects
+                  .filter(ad=OuterRef("pk"), price=OuterRef("current_price"))
+                  .filter(observed_at__gt=Coalesce(Subquery(last_other), Value(_EPOCH)))
+                  .order_by("observed_at").values("observed_at")[:1])
+    return qs.annotate(price_set_at=Coalesce(Subquery(first_same), "first_seen_at"))
+
+
+REPOST_CHAIN_MAX = 20
+
+
+def inherit_repost_price_dates(rows: list[dict]) -> None:
+    """A repost at the same price keeps its oldest ancestor's price date.
+
+    Deleting and re-listing is a bump by other means, and a chain A → B → C of
+    unchanged reposts is still A's price. Walked one generation per query,
+    stopping at the first ancestor with a different price.
+    """
+    for r in rows:
+        r["_oldest"] = r["price_set_at"]
+    frontier = {r["code"]: r["reposted_from_id"] for r in rows if r["reposted_from_id"]}
+    for _ in range(REPOST_CHAIN_MAX):
+        if not frontier:
+            break
+        parents = {o["code"]: o for o in price_set_rows(Ad.objects.filter(
+            code__in=set(frontier.values()))).values(
+            "code", "current_price", "price_set_at", "reposted_from_id")}
+        by_code = {r["code"]: r for r in rows}
+        nxt = {}
+        for child, parent_code in frontier.items():
+            r, o = by_code[child], parents.get(parent_code)
+            if not o or o["current_price"] != r["current_price"] or not o["price_set_at"]:
+                continue
+            r["_oldest"] = min(filter(None, (r["_oldest"], o["price_set_at"])))
+            if o["reposted_from_id"]:
+                nxt[child] = o["reposted_from_id"]
+        frontier = nxt
+    for r in rows:
+        r["price_set_at"] = r.pop("_oldest")
+
+
+def assess_deals(rows: list[dict], *, now) -> dict[str, dict]:
+    """Deal verdicts for rows carrying ``price_set_at`` and ``condition_band``.
+
+    Only cars priced below the P25 of their fresh, tight peer group are judged.
+    ``deal`` when nothing explains the gap; ``check`` with the reasons when
+    something does. Absent from the result: not cheaper than most peers, or no
+    peer group solid enough to say.
+    """
+    def age(r):
+        return (now - r["price_set_at"]).days if r.get("price_set_at") else None
+
+    groups: dict = defaultdict(list)
+    for r in rows:
+        groups[(r["model_id"], r["variant_id"], r["year_jalali"], r["condition_band"])].append(r)
+
+    out: dict[str, dict] = {}
+    for peers in groups.values():
+        fresh = [p for p in peers
+                 if (a := age(p)) is not None and a <= PEER_PRICE_FRESH_DAYS
+                 and not set(p["cohort_flags"] or []) & COHORT_FLAGS]
+        if len(fresh) < DEAL_MIN_PEERS:
+            continue
+        prices = [p["current_price"] for p in fresh]
+        dist = peer_distribution(prices)
+        if dist["wide"] or dist["clusters"]:
+            continue
+        mid, p25 = dist["median"], dist["p25"]
+        spread = 1.4826 * median([abs(x - mid) for x in prices]) or mid * FALLBACK_SPREAD_RATIO
+        km = [p["mileage"] for p in fresh if p["mileage"] is not None]
+        km_band = (percentile(km, 25), percentile(km, 75)) if len(km) >= MIN_PEERS else None
+        for r in peers:
+            price = r["current_price"]
+            if price >= p25:
+                continue
+            reasons = []
+            if (a := age(r)) is None or a > DEAL_PRICE_FRESH_DAYS:
+                reasons.append("stale_price")
+            km_ok = km_band is not None and r["mileage"] is not None \
+                and km_band[0] <= r["mileage"] <= km_band[1]
+            if not km_ok:
+                reasons.append("atypical_mileage")
+            z = (mid - price) / spread
+            if z > DEAL_MAX_SPREADS:
+                reasons.append("beyond_spread")
+            if FLAG_SUSPECT_MISFILED in (r["cohort_flags"] or []):
+                reasons.append("suspect_misfiled")
+            others = [p["current_price"] for p in fresh if p is not r]
+            out[r["code"]] = {
+                "deal_reasons": reasons, "fresh_peers": len(fresh), "fresh_median": int(mid),
+                "cheaper_than_pct": round(sum(1 for x in others if x > price) / len(others) * 100),
+                "spread_z": round(z, 2),
+            }
+    # Text last, and only for the few candidates.
+    texts = Ad.objects.filter(code__in=out).values_list(
+        "code", "title", "description", "body_status")
+    for code, title, description, status in texts:
+        if red_flags(title=title, description=description, body_status=status):
+            out[code]["deal_reasons"].append("red_flags")
+    for verdict in out.values():
+        verdict["deal_status"] = "check" if verdict["deal_reasons"] else "deal"
+    return out
+
+
 # ---------------------------------------------------------------------------
 # The deal board
 # ---------------------------------------------------------------------------
@@ -943,25 +1093,6 @@ MIN_ASK_VS_MEDIAN = 0.5
 # quarter-price cars.
 TRUSTED_MAX_DISCOUNT = 25.0
 
-# Declared body conditions that route a listing to the review band whatever its
-# discount is.
-#
-# The ceiling above is a *guess* at "this gap has a cause the cohort key cannot
-# see". For these two the cause is not a guess: the seller declared it, in
-# Bama's own structured field, on every ad. Since the score became the plain
-# gap to the peer median, a repainted car reading 16% under its cohort is
-# reported as a 16% deal — which is how the served board came to be 23 damaged
-# cars out of 24, with one clean Lexus on it.
-#
-# `cosmetic` deliberately stays on the board: a single paint spot or light
-# scratches is what an ordinary used car looks like, and measured against
-# cohort medians it costs ~1.4%. Excluding it would empty the board of normal
-# cars to no one's benefit.
-#
-# Nothing is hidden — `review` is a tab, it is labelled, and `band=all` still
-# returns these rows. This is the same rule the ceiling already encodes, applied
-# to evidence rather than to a threshold.
-REVIEW_CONDITION_BANDS = (PAINTED, STRUCTURAL)
 
 # --- the dynamic top-suggestions window ------------------------------------
 #
@@ -1106,19 +1237,22 @@ def _compute_deal_scores(*, model_id: int | None = None,
     """
     outliers = flag_high_outliers(model_id=model_id)
     suspects = flag_suspects(model_id=model_id)
-    base = scorable_rows()
+    base = price_set_rows(scorable_rows())
     if model_id is not None:
         base = base.filter(model_id=model_id)
 
     rows = list(base.values(
         "code", "model_id", "variant_id", "year_jalali",
         "current_price", "first_seen_at", "last_seen_at", "mileage",
-        "cohort_flags", "body_status",
+        "cohort_flags", "body_status", "price_set_at", "reposted_from_id",
     ))
     for r in rows:
         # "unknown" rather than None so the ladder does not skip the row: an
         # unrecognised condition is a peer group of its own (see strict_peers).
         r["condition_band"] = condition_band(r["body_status"]) or "unknown"
+    inherit_repost_price_dates(rows)
+    now = timezone.now()
+    verdicts = assess_deals(rows, now=now)
 
     # Pooled across the whole catalogue, never just this model's slice — a
     # per-model rescore would otherwise measure the haircut on a handful of rows
@@ -1174,7 +1308,6 @@ def _compute_deal_scores(*, model_id: int | None = None,
         built[(basis, key)] = result
         return result
 
-    now = timezone.now()
     objs: list[DealScoreCache] = []
     explained_low: list[Ad] = []
     cleared_low: list[Ad] = []
@@ -1247,8 +1380,9 @@ def _compute_deal_scores(*, model_id: int | None = None,
             score=round(min(100.0, discount_pct), 1),
             discount_pct=round(discount_pct, 2),
             peer_median=int(baseline.base),
-            needs_review=(band in REVIEW_CONDITION_BANDS
-                          or FLAG_SUSPECT_MISFILED in flags),
+            # Condition is in the peer key now, so a repainted car is judged
+            # against repainted cars and needs no review of its own.
+            needs_review=FLAG_SUSPECT_MISFILED in flags,
             components={
                 "discount_pct": round(discount_pct, 2),
                 "peer_median": int(baseline.base),
@@ -1281,6 +1415,8 @@ def _compute_deal_scores(*, model_id: int | None = None,
                 "body_status": r["body_status"],
                 "condition_band": band,
                 "suspect_misfiled": FLAG_SUSPECT_MISFILED in flags,
+                "price_age_days": (now - r["price_set_at"]).days if r["price_set_at"] else None,
+                **verdicts.get(r["code"], {"deal_status": None}),
                 "condition_adjustment": adjusted.band_adjustment,
                 "condition_band_peers": adjusted.band_peers,
                 # The like-for-like number: what cars with *this* much damage
