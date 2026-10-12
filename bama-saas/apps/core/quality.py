@@ -139,29 +139,30 @@ _FINANCE_RE = re.compile(FINANCE)
 # the price is also far below its peers (`pricing.flag_suspects`).
 INSTALLMENT_WORDS_RE = re.compile(r"اقساط|قسط|لیزینگ|وام")
 
-# Things a seller says that explain a low price without making it a bargain:
-# paperwork the buyer inherits, a conditional sale, a deposit, or a mechanical
-# problem. Measured 2026-10-12 on the deal board: present on 5-6% of deals at
-# every discount level, so they are noise to remove, not the cause of the deep
-# "deals" (that was stale prices; see `pricing.DEAL_PRICE_FRESH_DAYS`).
-RED_FLAGS = (
-    r"وکالت|بدون.?سند|سند.?(ندارد|نداره)|منطقه.?آزاد|مناطق.?آزاد"
-    r"|پلاک.?(منطقه|موقت)|شماره.?گذاری.?نشده"
-    r"|تملیکی|مزایده|توقیف|حواله|پیش.?پرداخت|پیش.?فروش|ثبت.?نام"
-    r"|اسقاط|اوراق|خرج.?(داره|دارد)"
-)
+# Words that explain a low price. Each was kept only if, across all 28,169 live
+# ads on 2026-10-12, ads using it were priced clearly under their strict peer
+# group (median gap; share more than 10% under, against a 13% baseline):
+#   free-zone plates / customs  -34 to -41%, 80-90% under
+#   "خرج داره" (needs money)   -14%, 57% under
+#   "نیاز به تعمیر"            -5%,  43% under
+#   engine burnt                -22% (n=2)
+# Measured and dropped as no signal, mostly denials or routine paperwork:
+# وکالت +5%, تملیکی and مزایده (+10 to +47%, "مزایده‌ای نیست"), "تعمیر اساسی
+# شده" 0%, bare تصادف / ایراد / تعمیر / صافکاری / "به شرط" / تعویض پلاک / پلاک
+# ملی (all within 2% of their peers). حواله, پیش‌فروش and the like are absent
+# here because FINANCE already removes those ads.
+RED_FLAGS = r"منطقه.?آزاد|مناطق.?آزاد|پلاک.?(منطقه|موقت)|گمرک|اسقاط|اوراق|خرج.?(داره|دارد)"
 _RED_FLAGS_RE = re.compile(RED_FLAGS)
-# Damage only where the ad states it as a fact. Bare "تصادف", "ایراد", "تعمیر"
-# and "صافکاری" are left out: sampled on the 2026-10-12 board, nearly every use
-# was a denial ("بدون کوچکترین ایراد", "بدون ضربه یا تصادف"), a feature
-# ("رادار تصادف") or routine service, which no pattern separates reliably.
+# Damage stated as a fact, after denials are removed. "روغن موتور/گیربکس
+# تعویض" is an oil change, not a new engine.
 _DAMAGE = (
-    r"(موتور.?(باز|خراب|تعویض)|گیربکس.?(خراب|تعویض)|نیاز.?به.?تعمیر|تعمیر.?اساسی.?شده"
-    r"|تصادفی|موتور.?سوخته|آب.?خورده|سیل.?زده|شاسی.?(تعویض|خورده|جوش))"
+    r"((?<!روغن )(?<!روغن)(?<!دسته )موتور.?(باز|خراب|تعویض|سوخته)"
+    r"|(?<!روغن )(?<!روغن)(?<!خنک کن )(?<!سرد کن )(?<!فیلتر )گیربکس.?(خراب|تعویض)"
+    r"|نیاز.?به.?تعمیر|تصادفی|شاسی.?(تعویض|خورده|جوش))"
 )
 _DAMAGE_RE = re.compile(_DAMAGE)
 _NEGATED_DAMAGE_RE = re.compile(
-    r"(بدون|بی|عدم|هیچ|فاقد|غیر)[\s\u200c]*(گونه[\s\u200c]*)?"
+    r"(بدون|بی|عدم|هیچ|فاقد|غیر|نه)[\s\u200c]*(گونه[\s\u200c]*)?"
     + r"(\S+[\s\u200c]*و[\s\u200c]*)?" + _DAMAGE
     + r"|" + _DAMAGE + r"[\s\u200c]*(ندارد|نداره|نداشته|نشده|نخورده|نیست|نمی.?باشد)"
 )

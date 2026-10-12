@@ -27,19 +27,20 @@ import statistics
 from collections import Counter, defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
+from datetime import timezone as dt_timezone
 from statistics import median
 
 from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction
-from django.db.models import Max
+from django.db.models import OuterRef, Subquery, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from apps.common.verify import MAX_PLAUSIBLE_MILEAGE, MIN_PLAUSIBLE_PRICE
 from apps.core.locks import DEAL_SCORES_REBUILD, rebuild_lock
-from apps.core.models import Ad, DealScoreCache
+from apps.core.models import Ad, DealScoreCache, PriceObservation
 from apps.core.quality import (
     COHORT_FLAGS,
     CONDITION_BANDS,
@@ -944,15 +945,60 @@ DEAL_MIN_PEERS = 15          # a median worth beating needs this many fresh peer
 DEAL_MAX_SPREADS = 3.0       # further below than this many robust spreads: check it
 
 
-def price_set_rows(qs):
-    """``qs`` annotated with ``price_set_at``: when the current price was set.
+_EPOCH = datetime(1970, 1, 1, tzinfo=dt_timezone.utc)
 
-    `PriceObservation` is written only when a price changes (STORAGE-POLICY
-    rule 3), so its latest row is that moment; an ad never repriced falls back
-    to its first sighting. A bump does not touch it, which is the point.
+
+def price_set_rows(qs):
+    """``qs`` annotated with ``price_set_at``: when the current amount was set.
+
+    The first observation of today's amount after the last observation of any
+    other amount. Not simply the latest observation: one is also written when
+    only the payment terms change (the fingerprint covers the whole price
+    object), and that must not make a weeks-old amount look fresh. An ad with
+    no matching observation falls back to its first sighting. A bump touches
+    neither, which is the point.
     """
-    return qs.annotate(price_set_at=Coalesce(Max("price_observations__observed_at"),
-                                             "first_seen_at"))
+    obs = PriceObservation.objects.filter(ad=OuterRef(OuterRef("pk")))
+    last_other = (obs.exclude(price=OuterRef(OuterRef("current_price")))
+                  .order_by("-observed_at").values("observed_at")[:1])
+    first_same = (PriceObservation.objects
+                  .filter(ad=OuterRef("pk"), price=OuterRef("current_price"))
+                  .filter(observed_at__gt=Coalesce(Subquery(last_other), Value(_EPOCH)))
+                  .order_by("observed_at").values("observed_at")[:1])
+    return qs.annotate(price_set_at=Coalesce(Subquery(first_same), "first_seen_at"))
+
+
+REPOST_CHAIN_MAX = 20
+
+
+def inherit_repost_price_dates(rows: list[dict]) -> None:
+    """A repost at the same price keeps its oldest ancestor's price date.
+
+    Deleting and re-listing is a bump by other means, and a chain A → B → C of
+    unchanged reposts is still A's price. Walked one generation per query,
+    stopping at the first ancestor with a different price.
+    """
+    for r in rows:
+        r["_oldest"] = r["price_set_at"]
+    frontier = {r["code"]: r["reposted_from_id"] for r in rows if r["reposted_from_id"]}
+    for _ in range(REPOST_CHAIN_MAX):
+        if not frontier:
+            break
+        parents = {o["code"]: o for o in price_set_rows(Ad.objects.filter(
+            code__in=set(frontier.values()))).values(
+            "code", "current_price", "price_set_at", "reposted_from_id")}
+        by_code = {r["code"]: r for r in rows}
+        nxt = {}
+        for child, parent_code in frontier.items():
+            r, o = by_code[child], parents.get(parent_code)
+            if not o or o["current_price"] != r["current_price"] or not o["price_set_at"]:
+                continue
+            r["_oldest"] = min(filter(None, (r["_oldest"], o["price_set_at"])))
+            if o["reposted_from_id"]:
+                nxt[child] = o["reposted_from_id"]
+        frontier = nxt
+    for r in rows:
+        r["price_set_at"] = r.pop("_oldest")
 
 
 def assess_deals(rows: list[dict], *, now) -> dict[str, dict]:
@@ -1204,15 +1250,7 @@ def _compute_deal_scores(*, model_id: int | None = None,
         # "unknown" rather than None so the ladder does not skip the row: an
         # unrecognised condition is a peer group of its own (see strict_peers).
         r["condition_band"] = condition_band(r["body_status"]) or "unknown"
-    # A repost at the same price keeps the original's price date: deleting and
-    # re-listing is a bump by other means.
-    originals = {o["code"]: o for o in price_set_rows(Ad.objects.filter(
-        code__in={r["reposted_from_id"] for r in rows if r["reposted_from_id"]}))
-        .values("code", "current_price", "price_set_at")}
-    for r in rows:
-        o = originals.get(r["reposted_from_id"])
-        if o and o["current_price"] == r["current_price"] and o["price_set_at"]:
-            r["price_set_at"] = min(r["price_set_at"] or o["price_set_at"], o["price_set_at"])
+    inherit_repost_price_dates(rows)
     now = timezone.now()
     verdicts = assess_deals(rows, now=now)
 

@@ -24,6 +24,7 @@ from apps.core.models import (
     Model,
     NotifiedAd,
     NotifierSettings,
+    PriceObservation,
     Variant,
 )
 from apps.core.pricing import compute_deal_scores
@@ -1167,8 +1168,8 @@ def test_cars_at_or_above_p25_are_not_judged():
 
 
 @pytest.mark.parametrize("text", [
-    "فروش با وکالت", "سند ندارد", "پلاک منطقه آزاد", "موتور خراب", "ماشین تصادفی است",
-    "گیربکس تعویض شده",
+    "خرج داره، از قیمت کم کردم", "پلاک منطقه آزاد", "موتور خراب", "ماشین تصادفی است",
+    "گیربکس تعویض شده", "موتور نیاز به تعمیر دارد",
 ])
 def test_red_flags_catch_what_explains_a_low_price(text):
     assert red_flags(title="", description=text, body_status="بدون رنگ")
@@ -1179,6 +1180,8 @@ def test_red_flags_catch_what_explains_a_low_price(text):
     "تعمیر نداره", "بدون رنگ و بدون تصادف", "بدون رنگ و تصادف", "هشدار تصادف و دوربین ۳۶۰",
     "فنی به شرط کارشناسی", "بدون کوچکترین ضربه و تصادف", "بدون لیسه و صافکاری",
     "تعویض روغن گیربکس", "چپی و تصادفی نیست", "خدمات تعویض پلاک",
+    "روغن موتور تعویض شده", "نه چپی بوده نه تصادفی", "انتقال با وکالت", "تملیکی نیست",
+    "موتور تعمیر اساسی شده",
 ])
 def test_red_flags_ignore_denials_and_colour(text):
     assert not red_flags(title="", description=text, body_status="بدون رنگ")
@@ -1195,3 +1198,51 @@ def test_the_range_says_how_many_of_its_asks_are_old():
                                 set_at=[now, now, now - timedelta(days=45), None])
     assert dist["old_price_pct"] == 33
     assert FP.peer_distribution([100, 110, 120])["old_price_pct"] is None
+
+
+def _price_set_at(code):
+    return FP.price_set_rows(Ad.objects.filter(code=code)).values_list(
+        "price_set_at", flat=True).get()
+
+
+@pytest.mark.django_db
+def test_a_payment_terms_change_does_not_refresh_the_price_date(cohort):
+    ad = cohort("terms001", 1_800_000_000)
+    old, new = NOW - timedelta(days=40), NOW - timedelta(days=2)
+    PriceObservation.objects.create(ad=ad, observed_at=old, price=1_800_000_000, fingerprint="a")
+    PriceObservation.objects.create(ad=ad, observed_at=new, price=1_800_000_000,
+                                    installments=12, fingerprint="b")
+    assert _price_set_at("terms001") == old
+
+
+@pytest.mark.django_db
+def test_a_new_amount_sets_a_new_price_date(cohort):
+    ad = cohort("repri001", 1_800_000_000)
+    old, new = NOW - timedelta(days=40), NOW - timedelta(days=2)
+    PriceObservation.objects.create(ad=ad, observed_at=old, price=1_900_000_000, fingerprint="a")
+    PriceObservation.objects.create(ad=ad, observed_at=new, price=1_800_000_000, fingerprint="b")
+    assert _price_set_at("repri001") == new
+
+
+@pytest.mark.django_db
+def test_a_chain_of_unchanged_reposts_keeps_the_oldest_price_date(cohort):
+    a = cohort("chainA01", 1_800_000_000)
+    b = cohort("chainB01", 1_800_000_000, reposted_from=a)
+    cohort("chainC01", 1_800_000_000, reposted_from=b)
+    Ad.objects.filter(code="chainA01").update(first_seen_at=NOW - timedelta(days=60))
+    rows = list(FP.price_set_rows(Ad.objects.filter(code="chainC01"))
+                .values("code", "current_price", "price_set_at", "reposted_from_id"))
+    FP.inherit_repost_price_dates(rows)
+    assert rows[0]["price_set_at"] == NOW - timedelta(days=60)
+
+
+@pytest.mark.django_db
+def test_a_rule_that_opts_into_review_receives_checked_listings(notifier_catalog):
+    row = make_scored(notifier_catalog, "check001")
+    row.components["deal_status"] = "check"
+    row.save()
+    opted_in = {r.ad_id for r in N.matching_deals(min_discount_pct=10, min_peers=8,
+                                                   exclude_review=False)}
+    strict = {r.ad_id for r in N.matching_deals(min_discount_pct=10, min_peers=8,
+                                                 exclude_review=True)}
+    assert "check001" in opted_in and "check001" not in strict

@@ -89,10 +89,9 @@ def matching_deals(
     qs = (
         verified_by_ad(DealScoreCache.objects.select_related("ad", "ad__ml"))
         .filter(discount_pct__gte=min_discount_pct)
-        # Only what the board calls a deal: an alert is the most acted-upon
-        # thing this app emits, and a stale price or a seller's own caveat is
-        # not worth interrupting anyone for.
-        .filter(components__deal_status="deal")
+        # Only cars a fresh, tight peer group could judge. Whether `check`
+        # verdicts count is the rule's own `exclude_review` choice, below.
+        .filter(components__deal_status__in=("deal", "check"))
     )
     # Gated here as well as at build time: the cache is rebuilt on a schedule,
     # and ordering by -discount_pct puts whatever slipped through straight into
@@ -104,7 +103,7 @@ def matching_deals(
         # The same rule the board's `top` band applies. A repainted car reading
         # 16% under its cohort is what a repainted car costs, and delivering it
         # as a find is how an alert feed teaches someone to ignore it.
-        qs = qs.filter(needs_review=False)
+        qs = qs.filter(needs_review=False, components__deal_status="deal")
     if price_min is not None:
         qs = qs.filter(ad__current_price__gte=price_min)
     if price_max is not None:
@@ -146,6 +145,8 @@ def _candidates(cfg: NotifierSettings, limit: int = MAX_PER_RUN):
         price_min=cfg.price_min,
         price_max=cfg.price_max,
         model_ids=cfg.model_ids,
+        # Deals only: the operator feed has no review opt-in.
+        exclude_review=True,
         # Global rather than per-recipient: this is the one-chat operator feed.
         already_sent=NotifiedAd.objects.values("ad_id"),
         limit=limit,
