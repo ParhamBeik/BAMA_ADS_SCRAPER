@@ -81,9 +81,11 @@ export function App() {
 let intended: string | null = null;
 
 function rememberIntent(pathname: string, search: string) {
-  // "/" is where an unauthenticated visitor lands anyway, and /login and
-  // /signup would bounce the reader straight back out of the app.
-  if (pathname === "/" || pathname.startsWith("/login") || pathname.startsWith("/signup")) return;
+  // Bare "/" is where a signed-in reader lands anyway, but "/?days=7" carries
+  // a choice worth resuming. /login and /signup would bounce the reader
+  // straight back out of the app.
+  if ((pathname === "/" && !search) || pathname.startsWith("/login")
+      || pathname.startsWith("/signup")) return;
   intended = pathname + search;
 }
 

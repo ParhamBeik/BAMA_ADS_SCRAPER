@@ -50,6 +50,12 @@ Allow: /methodology
 # The only route that renders without a session; see App.tsx AuthRoutes.
 # Everything else needs one, so crawling it only produces login pages.
 Disallow: /$
+Disallow: /price
+Disallow: /cars
+Disallow: /mine
+Disallow: /models
+Disallow: /pulse
+Disallow: /account
 Disallow: /deals
 Disallow: /explore
 Disallow: /analyse
