@@ -397,7 +397,7 @@ export function Deals() {
         )}
       </p>
 
-      <FilterPanel showSpecs={false} showConfidence showSearch={false} />
+      <FilterPanel showSpecs={false} showListed={false} showConfidence showSearch={false} />
 
       <Card action={<ViewToggle />}>
         <Async query={deals} empty="هنوز امتیازی محاسبه نشده است." shape="cards">

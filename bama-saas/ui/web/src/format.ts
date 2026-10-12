@@ -135,3 +135,26 @@ export const CONDITION_BANDS = [
 export function conditionLabel(band: unknown): string {
   return CONDITION_BANDS.find((c) => c.value === band)?.label ?? String(band ?? "");
 }
+
+/** `parsing.JALALI_GREGORIAN_OFFSET`: how every stored ad derives one calendar
+ *  from the other, so this matches the server exactly. */
+const JALALI_GREGORIAN_OFFSET = 621;
+
+/**
+ * A model year in both calendars, the ad's own first: "1402 · 2023" for a
+ * domestic car, "2023 · 1402" for an import listed in Gregorian.
+ */
+export function modelYear(jalali: number | null | undefined, calendar?: string | null): string {
+  if (jalali == null) return "—";
+  const both = [String(jalali), String(jalali + JALALI_GREGORIAN_OFFSET)];
+  return (calendar === "gregorian" ? both.reverse() : both).join(" · ");
+}
+
+/** A date in both calendars: "1405/7/12 · 4 Oct 2026". */
+export function bothDates(value: string | null | undefined): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  const gregorian = date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  return `${faDate(date)} · ${gregorian}`;
+}

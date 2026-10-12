@@ -31,7 +31,7 @@ import type { Envelope, Paginated } from "../api";
 import { FilterPanel } from "@/components/FilterPanel";
 import { qs, useFilters } from "../filters";
 import { Async, BamaLink, Card, FLAG_LABEL, Fa, ListingActions, Pager, PriceBar, Provenance, Sheet, Table, Thumb } from "../ui";
-import { conditionLabel, km, num, toman } from "../format";
+import { conditionLabel, km, modelYear, num, toman } from "../format";
 import type { Distribution } from "../ui";
 import { ViewToggle, useListView } from "../components/ViewToggle";
 import { conditionNote } from "../components/DealCard";
@@ -42,6 +42,8 @@ import {
 /** Sort orders the API supports, in the order a buyer reaches for them. */
 const ORDERINGS = [
   { value: "-publish_at", label: "تازه‌ترین" },
+  // Bama's date jumps on every bump; this is when the ad first appeared.
+  { value: "-first_seen_at", label: "تازه‌ترین آگهی ثبت‌شده" },
   { value: "current_price", label: "ارزان‌ترین" },
   { value: "-current_price", label: "گران‌ترین" },
   { value: "mileage", label: "کمترین کارکرد" },
@@ -57,6 +59,7 @@ interface AdRow {
   model_id: number | null;
   year: number | null;
   year_jalali?: number | null;
+  year_calendar?: string;
   mileage: number | null;
   current_price: number | null;
   city_name: string;
@@ -92,6 +95,15 @@ const COMPONENT_LABEL: Record<string, string> = {
   mileage: "تعدیل بابت کارکرد",
 };
 
+
+/** "Listed within N days" as the API's absolute `listed_from`. Floored to the
+ *  hour: it is part of the query key, and a millisecond-fresh timestamp would
+ *  make every render a new query. */
+function listedFrom(days: number | null | undefined): string | null {
+  if (!days) return null;
+  const hour = Math.floor(Date.now() / 3_600_000) * 3_600_000;
+  return new Date(hour - days * 86_400_000).toISOString();
+}
 
 /** One-word badges for `Ad.cohort_flags`; the full sentence is the tooltip. */
 const FLAG_SHORT: Record<string, string> = {
@@ -190,6 +202,7 @@ export function Explorer() {
     price_max: filters.get("price_max"),
     year_min: filters.get("year_min"),
     year_max: filters.get("year_max"),
+    listed_from: listedFrom(filters.getInt("listed_days")),
     mileage_min: filters.get("mileage_min"),
     mileage_max: filters.get("mileage_max"),
     transmission: filters.get("transmission"),
@@ -276,7 +289,7 @@ export function Explorer() {
                         </strong>
                         <span className="deal-price">{toman(ad.current_price)}</span>
                         <div className="row card-facts">
-                          <span>{ad.year_jalali ?? ad.year ?? "—"}</span>
+                          <span>{modelYear(ad.year_jalali, ad.year_calendar)}</span>
                           <span aria-hidden>·</span>
                           <span>{km(ad.mileage)}</span>
                           <span aria-hidden>·</span>
@@ -311,7 +324,7 @@ export function Explorer() {
                           <AdWarnings ad={ad} />
                         </div>
                       </td>
-                      <td className="num">{ad.year_jalali ?? ad.year ?? "—"}</td>
+                      <td className="num">{modelYear(ad.year_jalali, ad.year_calendar)}</td>
                       <td className="num">
                         {ad.mileage == null ? "—" : (
                           <span className={ad.mileage_implausible ? "warn" : undefined}>

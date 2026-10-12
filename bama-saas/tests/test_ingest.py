@@ -740,7 +740,8 @@ def _ad(catalog, code, last_seen, *, price=1_000_000_000, mileage=100_000,
     return Ad.objects.create(
         code=code, brand=catalog["brand"], model=catalog["model"],
         variant=catalog["variant"], city=catalog["city"],
-        year=year_jalali, year_jalali=year_jalali, year_calendar="jalali",
+        year=year_jalali, year_jalali=year_jalali, year_gregorian=year_jalali + 621,
+        year_calendar="jalali",
         mileage=mileage, current_price=price,
         publish_at=last_seen, first_seen_at=last_seen - timedelta(days=10),
         last_seen_at=djtz.now() if seen_recently else last_seen,
@@ -1431,3 +1432,20 @@ def test_a_cheap_instalment_ad_and_a_misfiled_ad_stay_out_of_the_range(catalog):
     assert FLAG_SUSPECT_MISFILED in flags[misfiled.code]
     assert result["installment"] == 1 and result["misfiled"] == 1
     assert pricing.fair_price("y99c0000")["peer_count"] == 10
+
+
+@pytest.mark.django_db
+def test_a_model_year_can_be_searched_in_either_calendar(catalog, api_client):
+    _ad(catalog, "old00001", NOW, year_jalali=1395)
+    _ad(catalog, "new00001", NOW, year_jalali=1402)
+
+    def codes(query):
+        response = api_client.get(f"/api/ads/?{query}")
+        assert response.status_code == 200, response.content
+        return {row["code"] for row in response.json()["results"]}
+
+    assert codes("year_min=1400") == codes("year_min=2021") == {"new00001"}
+    assert codes("year_max=2016") == {"old00001"}
+    row = api_client.get("/api/ads/new00001/").json()
+    assert (row["year_jalali"], row["year_gregorian"]) == (1402, 2023)
+    assert api_client.get("/api/analytics/deal-scores/?year=99").status_code == 400

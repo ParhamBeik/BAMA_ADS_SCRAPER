@@ -16,7 +16,7 @@ import { Link } from "react-router-dom";
 import { AlertTriangle, Sparkles, Timer } from "lucide-react";
 import type { Envelope } from "@/api";
 import { BamaLink, ConfidenceDots, Fa, Thumb } from "@/ui";
-import { km, pct, toman } from "@/format";
+import { km, modelYear, pct, toman } from "@/format";
 
 /**
  * The thresholds the deal board is standing on, so a screen can state them
@@ -193,7 +193,7 @@ export function DealCard({ deal, suspect }: { deal: Deal; suspect: boolean }) {
           <ConfidenceDots tier={deal.confidence} />
           <span>{deal.peer_count ?? "—"} آگهی مشابه</span>
           <span>·</span>
-          <span>{deal.year ?? "—"}</span>
+          <span>{modelYear(deal.year)}</span>
         </div>
         <div className="row">
           <Fa>{deal.city_name || "—"}</Fa>

@@ -9,6 +9,7 @@ answer forever, and ``?has_image=false`` would silently return nothing.
 import django_filters
 from django.db.models import Q
 
+from apps.common.parsing import normalize_model_year
 from apps.core.models import Ad
 
 
@@ -18,12 +19,11 @@ class AdFilter(django_filters.FilterSet):
     variant = django_filters.NumberFilter(field_name="variant_id")
     city = django_filters.NumberFilter(field_name="city_id")
 
-    # `year_min`/`year_max` keep their public names but range-filter on
-    # `year_jalali`: raw `Ad.year` mixes Jalali (1399) and Gregorian (2025) in
-    # one column, so a range over it is meaningless. Incoming values are
-    # therefore interpreted as JALALI.
-    year_min = django_filters.NumberFilter(field_name="year_jalali", lookup_expr="gte")
-    year_max = django_filters.NumberFilter(field_name="year_jalali", lookup_expr="lte")
+    # `year_min`/`year_max` range-filter on `year_jalali`: raw `Ad.year` mixes
+    # Jalali (1399) and Gregorian (2025) in one column, so a range over it is
+    # meaningless. A value in either calendar is accepted and converted.
+    year_min = django_filters.NumberFilter(method="filter_year")
+    year_max = django_filters.NumberFilter(method="filter_year")
 
     price_min = django_filters.NumberFilter(field_name="current_price", lookup_expr="gte")
     price_max = django_filters.NumberFilter(field_name="current_price", lookup_expr="lte")
@@ -37,6 +37,10 @@ class AdFilter(django_filters.FilterSet):
     seller_authenticated = django_filters.BooleanFilter(field_name="seller_authenticated")
     publish_from = django_filters.DateTimeFilter(field_name="publish_at", lookup_expr="gte")
     last_seen_from = django_filters.DateTimeFilter(field_name="last_seen_at", lookup_expr="gte")
+    # When the ad first appeared. Bama's own date (`publish_at`) resets on every
+    # bump, so "listed this week" has to read our first sighting instead.
+    listed_from = django_filters.DateTimeFilter(field_name="first_seen_at", lookup_expr="gte")
+    listed_to = django_filters.DateTimeFilter(field_name="first_seen_at", lookup_expr="lte")
 
     seller_type = django_filters.ChoiceFilter(
         choices=(("dealer", "dealer"), ("private", "private")),
@@ -70,6 +74,13 @@ class AdFilter(django_filters.FilterSet):
             combined_q &= Q(search_text__icontains=t)
 
         return queryset.filter(combined_q)
+
+    def filter_year(self, queryset, name, value):
+        jalali = normalize_model_year(int(value))[0]
+        if jalali is None:
+            return queryset.none()
+        lookup = "gte" if name == "year_min" else "lte"
+        return queryset.filter(**{f"year_jalali__{lookup}": jalali})
 
     def filter_condition(self, queryset, name, value):
         """Four-band body condition, matching ``quality.condition_band``.

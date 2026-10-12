@@ -30,6 +30,7 @@ from rest_framework.generics import ListAPIView
 from rest_framework.permissions import IsAdminUser
 from rest_framework.response import Response
 
+from apps.common.parsing import normalize_model_year
 from apps.common.verify import MAX_JALALI_YEAR, MIN_JALALI_YEAR
 from apps.core import explorer, images, pricing, research
 from apps.core.api import (
@@ -216,7 +217,8 @@ def model_explore(request, model_pk: int):
                         status=status.HTTP_400_BAD_REQUEST)
     try:
         numeric = {}
-        for key in ("variant", "year", "city", "mileage_min", "mileage_max"):
+        numeric["year"] = _year(request.query_params, "year")
+        for key in ("variant", "city", "mileage_min", "mileage_max"):
             raw = request.query_params.get(key)
             numeric[key] = int(raw) if raw else None
             if numeric[key] is not None and numeric[key] < 0:
@@ -269,7 +271,7 @@ class AdViewSet(viewsets.ReadOnlyModelViewSet):
     lookup_field = "code"
     filterset_class = AdFilter
     ordering_fields = ("current_price", "year", "year_jalali", "mileage",
-                       "publish_at", "last_seen_at", "image_count")
+                       "publish_at", "first_seen_at", "last_seen_at", "image_count")
     search_fields = ("title", "brand__name_fa", "model__name_fa")
 
     def get_serializer_class(self):
@@ -469,6 +471,22 @@ _CONFIDENCE_PEERS = {
 _PG_BIGINT_MAX = 2**63 - 1
 
 
+def _year(params, key):
+    """A model year typed in either calendar, as the stored Jalali year.
+
+    Iranian buyers say "1402" for a Saipa and "2023" for an import; both mean
+    the same cohort, and every ad stores both (`normalize_model_year`).
+    """
+    value = _opt(params, key, int)
+    if value is None:
+        return None
+    jalali = normalize_model_year(value)[0]
+    if jalali is None:
+        raise ValueError(f"{key} must be a Jalali (1300-1420) or Gregorian "
+                         f"(1900-2100) model year")
+    return jalali
+
+
 def _opt(params, key, cast):
     raw = params.get(key)
     if raw in (None, "", "null"):
@@ -529,7 +547,7 @@ def _model_year(params):
     already refuses to store a year outside these bounds, so nothing in range is
     excluded and this needs no query to decide.
     """
-    year = _opt(params, "year", int)
+    year = _year(params, "year")
     if year is not None and not (MIN_JALALI_YEAR <= year <= MAX_JALALI_YEAR):
         raise ValueError(f"year must be a Jalali year between "
                          f"{MIN_JALALI_YEAR} and {MAX_JALALI_YEAR}")
@@ -694,9 +712,9 @@ def deal_scores(request):
         model = _opt(params, "model", int)
         variant = _opt(params, "variant", int)
         city = _opt(params, "city", int)
-        year = _opt(params, "year", int)
-        year_min = _opt(params, "year_min", int)
-        year_max = _opt(params, "year_max", int)
+        year = _year(params, "year")
+        year_min = _year(params, "year_min")
+        year_max = _year(params, "year_max")
         price_min = _opt(params, "price_min", int)
         price_max = _opt(params, "price_max", int)
         mileage_min = _opt(params, "mileage_min", int)
@@ -1177,7 +1195,7 @@ def liquidity_view(request, model_id: int):
     """
     try:
         variant = _opt(request.query_params, "variant", int)
-        year = _opt(request.query_params, "year", int)
+        year = _year(request.query_params, "year")
     except ValueError as exc:
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
     return envelope(research.survival(

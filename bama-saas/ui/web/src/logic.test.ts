@@ -11,7 +11,7 @@
 import { describe, expect, it } from "vitest";
 import { scopeKey } from "./components/FollowButton";
 import { qs } from "./filters";
-import { parseBudget, pct, toman } from "./format";
+import { modelYear, parseBudget, pct, toman } from "./format";
 
 it("parses Persian and Arabic-Indic budget input without dropping its digits", () => {
   expect(parseBudget("۱٬۲۰۰٬۰۰۰٬۰۰۰")).toBe(1_200_000_000);
@@ -129,5 +129,13 @@ describe("qs", () => {
 
   it("percent-encodes Persian text", () => {
     expect(qs({ q: "پژو" })).toBe("?q=%D9%BE%DA%98%D9%88");
+  });
+});
+
+describe("modelYear", () => {
+  it("shows both calendars, the ad's own first", () => {
+    expect(modelYear(1402)).toBe("1402 · 2023");
+    expect(modelYear(1402, "gregorian")).toBe("2023 · 1402");
+    expect(modelYear(null)).toBe("—");
   });
 });

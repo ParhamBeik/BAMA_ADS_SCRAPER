@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import { Async, BamaLink, FLAG_LABEL, Fa, ListingActions, PriceBar, PriceVerdict, Provenance, RangeNotes } from "../ui";
-import { fa, faDate, num, pct, toman } from "../format";
+import { bothDates, fa, faDate, modelYear, num, pct, toman } from "../format";
 import type { Basis, Distribution, Verdict } from "../ui";
 
 type Ad = {
@@ -14,8 +14,11 @@ type Ad = {
   model_name: string;
   variant_name: string;
   year_jalali: number | null;
+  year_calendar?: string;
   mileage: number | null;
   current_price: number | null;
+  first_seen_at?: string | null;
+  publish_at?: string | null;
   transmission: string;
   body_type: string;
   fuel: string;
@@ -254,7 +257,11 @@ export function ListingDetail() {
                       sentences made the reader parse nine lines to find the
                       one fact they came for. */}
                   <dl className="spec-grid">
-                    <Spec label="سال ساخت">{data.year_jalali ?? "—"}</Spec>
+                    <Spec label="سال ساخت">{modelYear(data.year_jalali, data.year_calendar)}</Spec>
+                    {/* Bama's date resets whenever the seller bumps the ad,
+                        so the first sighting is the honest "listed on". */}
+                    <Spec label="اولین بار دیده‌شده">{bothDates(data.first_seen_at)}</Spec>
+                    <Spec label="آخرین به‌روزرسانی در باما">{bothDates(data.publish_at)}</Spec>
                     {/* The unit is not decoration: "262,000" alone is a
                         number the reader has to guess the meaning of. */}
                     <Spec label="کارکرد">
