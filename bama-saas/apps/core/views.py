@@ -54,6 +54,7 @@ from apps.core.models import (
 )
 from apps.core.quality import (
     CONDITION_BANDS,
+    PEER_BANDS,
     condition_band,
     condition_discounted,
     verified,
@@ -227,8 +228,8 @@ def model_explore(request, model_pk: int):
                 and numeric["mileage_min"] > numeric["mileage_max"]):
             raise ValueError("mileage_min must not exceed mileage_max")
         condition = request.query_params.get("condition") or None
-        if condition and condition not in CONDITION_BANDS:
-            raise ValueError(f"condition must be one of {', '.join(CONDITION_BANDS)}")
+        if condition and condition not in PEER_BANDS:
+            raise ValueError(f"condition must be one of {', '.join(PEER_BANDS)}")
     except ValueError as exc:
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
     return Response(explorer.model_exploration(

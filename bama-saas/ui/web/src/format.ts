@@ -132,7 +132,9 @@ export const CONDITION_BANDS = [
   { value: "structural", label: "تعویض / تصادفی" },
 ] as const;
 
+/** Peer groups also split 0 km cars out (`quality.peer_band`); body filters do not. */
 export function conditionLabel(band: unknown): string {
+  if (band === "new") return "صفر کیلومتر";
   return CONDITION_BANDS.find((c) => c.value === band)?.label ?? String(band ?? "");
 }
 
