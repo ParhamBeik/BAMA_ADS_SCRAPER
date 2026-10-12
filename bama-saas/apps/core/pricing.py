@@ -1226,7 +1226,7 @@ def _turnover_rates() -> dict[int, dict]:
 
 
 def compute_deal_scores(*, model_id: int | None = None,
-                        liquidity: dict[int, dict] | None = None) -> dict:
+                        liquidity: dict[int, dict] | None = None, market=None) -> dict:
     """Value every eligible ad against its peers, or one model's.
 
     The deal-board lock is taken before the rows are read, not just around the
@@ -1236,11 +1236,11 @@ def compute_deal_scores(*, model_id: int | None = None,
     """
     with transaction.atomic():
         rebuild_lock(DEAL_SCORES_REBUILD)
-        return _compute_deal_scores(model_id=model_id, liquidity=liquidity)
+        return _compute_deal_scores(model_id=model_id, liquidity=liquidity, market=market)
 
 
 def _compute_deal_scores(*, model_id: int | None = None,
-                         liquidity: dict[int, dict] | None = None) -> dict:
+                         liquidity: dict[int, dict] | None = None, market=None) -> dict:
     """Value every eligible ad against its peers, or one model's.
 
     This used to write only bargains, and the name still says "deal" because
@@ -1282,7 +1282,7 @@ def _compute_deal_scores(*, model_id: int | None = None,
         r["condition_band"] = peer_band(r["body_status"], r["mileage"]) or "unknown"
     inherit_repost_price_dates(rows)
     now = timezone.now()
-    verdicts = assess_deals(rows, now=now, market=market_ratio())
+    verdicts = assess_deals(rows, now=now, market=market or market_ratio())
 
     # Pooled across the whole catalogue, never just this model's slice — a
     # per-model rescore would otherwise measure the haircut on a handful of rows
@@ -1514,8 +1514,9 @@ def refresh_cohort_deal_scores(model_ids) -> dict:
     if not targets:
         return totals
     liquidity = _turnover_rates()
+    market = market_ratio()  # likewise once per pass
     for mid in targets:
-        result = compute_deal_scores(model_id=mid, liquidity=liquidity)
+        result = compute_deal_scores(model_id=mid, liquidity=liquidity, market=market)
         totals["refreshed_models"] += 1
         totals["total_scored"] += result["scored"]
         totals["total_outliers_flagged"] += result["outliers_flagged"]

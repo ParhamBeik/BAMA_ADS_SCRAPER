@@ -250,6 +250,14 @@ def test_ads_list_returns_publish_complete_only(api_client, catalog):
 
 
 @pytest.mark.django_db
+def test_the_new_car_peer_group_filters_listings_to_zero_km(api_client, catalog):
+    Ad.objects.filter(code="ad3").update(mileage=0)
+    resp = api_client.get("/api/ads/?condition=new")
+    assert resp.status_code == 200, resp.content
+    assert {r["code"] for r in resp.json()["results"]} == {"ad3"}
+
+
+@pytest.mark.django_db
 def test_ads_list_filters(api_client, catalog):
     model = catalog["model"]
     brand = catalog["brand"]
