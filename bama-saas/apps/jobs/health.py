@@ -364,6 +364,8 @@ def check_model_staleness(now=None) -> Check:
     when the trainer has gone silent (no newer row) or when the newest row was
     refused for a reason that is not a real holdout loss.
     """
+    if not settings.ML_ENABLED:
+        return Check("model_staleness", True, "ML is paused (ML_ENABLED is not 1).", {})
     from apps.ml.models import MLModel
 
     now = now or timezone.now()

@@ -10,6 +10,7 @@
  * Inspecting individual records is Django admin's job, not this page's.
  */
 import { useState } from "react";
+import { useMlEnabled } from "../auth";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { api } from "../api";
@@ -146,6 +147,7 @@ function statusBadge(status: string) {
 }
 
 export function Control() {
+  const mlEnabled = useMlEnabled();
   const client = useQueryClient();
   const [showAllRuns, setShowAllRuns] = useState(false);
   const [pending, setPending] = useState<(typeof TRIGGERS)[number] | null>(null);
@@ -500,8 +502,8 @@ export function Control() {
         </Async>
       </Card>
 
-      <MlHealth />
-      <ReviewQueue />
+      {mlEnabled && <MlHealth />}
+      {mlEnabled && <ReviewQueue />}
     </div>
   );
 }

@@ -19,11 +19,14 @@ export interface AuthUser {
 interface AuthResponse extends Partial<AuthUser> {
   authenticated?: boolean;
   user?: AuthUser | null;
+  features?: { ml?: boolean };
 }
 
 interface AuthState {
   user: AuthUser | null;
   loading: boolean;
+  /** Server switch `ML_ENABLED`; every learned-model surface hides when false. */
+  mlEnabled: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -36,6 +39,7 @@ const AuthContext = createContext<AuthState | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [mlEnabled, setMlEnabled] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -43,6 +47,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .get<AuthResponse>("/api/auth/me/")
       .then((u) => {
         if (cancelled) return;
+        setMlEnabled(u.features?.ml === true);
         // Anonymous users receive the valid 200 envelope
         // `{authenticated: false, user: null}`. Keep accepting the legacy
         // top-level user shape so a rolling deploy cannot log out a live user.
@@ -95,10 +100,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ user, loading, login, register, logout }),
-    [user, loading, login, register, logout],
+    () => ({ user, loading, mlEnabled, login, register, logout }),
+    [user, loading, mlEnabled, login, register, logout],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+export function useMlEnabled(): boolean {
+  return useAuth().mlEnabled;
 }
 
 export function useAuth(): AuthState {

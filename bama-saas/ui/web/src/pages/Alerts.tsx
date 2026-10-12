@@ -20,6 +20,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
+import { useMlEnabled } from "../auth";
 import { Link } from "react-router-dom";
 import { BellOff, Plus, Trash2 } from "lucide-react";
 import { api } from "../api";
@@ -73,6 +74,7 @@ interface Rule {
 const MIN_PEERS = 8;
 
 function RuleForm({ onDone }: { onDone: () => void }) {
+  const mlEnabled = useMlEnabled();
   const client = useQueryClient();
   const [form, setForm] = useState({
     name: "",
@@ -142,24 +144,26 @@ function RuleForm({ onDone }: { onDone: () => void }) {
             }
           />
         </label>
-        <label className="grid gap-1.5">
-          <span className="text-muted-foreground text-xs font-semibold">
-            کمترین اختلاف با برآورد مدل (%)
-          </span>
-          <NumberInput
-            className={field}
-            value={form.min_residual_pct}
-            placeholder="اختیاری"
-            onChange={(e) =>
-              setForm({ ...form, min_residual_pct: e.target.value })
-            }
-          />
-          <span className="text-muted-foreground text-[11px]">
-            خالی بگذارید تا فقط تخفیف نسبت به میانه هم‌گروه ملاک باشد. اگر عدد
-            بگذارید، آگهی باید علاوه بر آن زیر برآورد مدل هم باشد — همان فهرست
-            «مدل» در صفحه معامله‌ها.
-          </span>
-        </label>
+        {mlEnabled && (
+          <label className="grid gap-1.5">
+            <span className="text-muted-foreground text-xs font-semibold">
+              کمترین اختلاف با برآورد مدل (%)
+            </span>
+            <NumberInput
+              className={field}
+              value={form.min_residual_pct}
+              placeholder="اختیاری"
+              onChange={(e) =>
+                setForm({ ...form, min_residual_pct: e.target.value })
+              }
+            />
+            <span className="text-muted-foreground text-[11px]">
+              خالی بگذارید تا فقط تخفیف نسبت به میانه هم‌گروه ملاک باشد. اگر عدد
+              بگذارید، آگهی باید علاوه بر آن زیر برآورد مدل هم باشد — همان فهرست
+              «مدل» در صفحه معامله‌ها.
+            </span>
+          </label>
+        )}
         <label className="grid gap-1.5">
           <span className="text-muted-foreground text-xs font-semibold">
             کمترین آگهی مشابه
@@ -226,6 +230,7 @@ function RuleForm({ onDone }: { onDone: () => void }) {
 }
 
 function Rules() {
+  const mlEnabled = useMlEnabled();
   const client = useQueryClient();
   const [adding, setAdding] = useState(false);
   const rules = useQuery({
@@ -273,7 +278,7 @@ function Rules() {
                   </td>
                   <td className="num">
                     {pct(rule.min_discount_pct, 0)}
-                    {rule.min_residual_pct != null && (
+                    {mlEnabled && rule.min_residual_pct != null && (
                       <div className="stat-sub">مدل {pct(rule.min_residual_pct, 0)}</div>
                     )}
                   </td>
@@ -312,6 +317,7 @@ function Rules() {
 }
 
 export function Alerts() {
+  const mlEnabled = useMlEnabled();
   const client = useQueryClient();
   const feed = useQuery({
     queryKey: ["alerts"],
@@ -368,7 +374,7 @@ export function Alerts() {
                             it stands now — see the file header. */}
                         <span className="deal-median">{toman(alert.peer_median)}</span>
                       </div>
-                      {alert.residual_pct != null && (
+                      {mlEnabled && alert.residual_pct != null && (
                         <div className="stat-sub">
                           برآورد مدل: {pct(alert.residual_pct, 0)} ارزان‌تر
                         </div>

@@ -11,6 +11,9 @@ x-django-env: &django-env
   # indistinguishable from no cache at all when you are testing one.
   REDIS_URL: redis://redis:6379/0
   ML_ARTIFACT_DIR: /artifacts
+  # Paused unless exactly "1" (config/settings.py). The `ml` service also
+  # needs the `ml` profile; deploy/vps_pull_deploy.sh derives it from this.
+  ML_ENABLED: ${ML_ENABLED:-0}
   PHOTO_ARCHIVE_ROOT: /archive
   ARCHIVE_ADMISSION_REQUIRED: ${ARCHIVE_ADMISSION_REQUIRED:-false}
 

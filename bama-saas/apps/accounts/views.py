@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 
+from django.conf import settings
 from django.contrib.auth import authenticate, login, logout, update_session_auth_hash
 from django.contrib.sessions.models import Session
 from django.db import IntegrityError
@@ -65,10 +66,12 @@ class MeView(APIView):
         The envelope keeps `id`/`email` at the top level too, so the existing
         client, which reads the payload directly, does not break on deploy.
         """
+        features = {"ml": settings.ML_ENABLED}
         if not request.user.is_authenticated:
-            return Response({"user": None, "authenticated": False})
+            return Response({"user": None, "authenticated": False, "features": features})
         payload = _user_payload(request.user)
-        return Response({**payload, "user": payload, "authenticated": True})
+        return Response({**payload, "user": payload, "authenticated": True,
+                         "features": features})
 
 
 class LoginView(APIView):

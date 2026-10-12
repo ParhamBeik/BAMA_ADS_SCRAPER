@@ -282,7 +282,12 @@ def deliver_alerts(*, dry_run: bool = False) -> dict:
     """
     from apps.accounts.models import AlertDelivery, AlertRule
 
-    rules = list(AlertRule.objects.filter(enabled=True).select_related("user"))
+    rules = AlertRule.objects.filter(enabled=True).select_related("user")
+    if not settings.ML_ENABLED:
+        # Its ML condition cannot be checked against stale predictions, and
+        # dropping it would deliver cars the rule's owner never asked for.
+        rules = rules.filter(min_residual_pct__isnull=True)
+    rules = list(rules)
     if not rules:
         return {"rules": 0, "delivered": 0, "telegram_sent": 0}
 
@@ -317,7 +322,7 @@ def deliver_alerts(*, dry_run: bool = False) -> dict:
             if dry_run:
                 delivered += 1
                 continue
-            ml = getattr(row.ad, "ml", None)
+            ml = getattr(row.ad, "ml", None) if settings.ML_ENABLED else None
             # get_or_create, not create: two rules of the same user can select
             # the same ad inside one tick, before either is in `seen`.
             entry, created = AlertDelivery.objects.get_or_create(

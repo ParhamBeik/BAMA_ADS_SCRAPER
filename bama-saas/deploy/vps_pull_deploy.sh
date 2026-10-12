@@ -13,6 +13,17 @@ compose() {
     docker compose -f docker-compose.prod.yml --env-file .env.production "$@"
 }
 
+# The learned layer runs only when .env.production says ML_ENABLED=1 (see
+# config/settings.py). Off, the `ml` profile stays inactive and a container left
+# by an earlier deploy is removed; the artifact volume is kept for later.
+ml_enabled=$(sed -n 's/^ML_ENABLED=//p' .env.production | tail -n 1 | tr -d '"\r')
+if [ "$ml_enabled" = 1 ]; then
+    export COMPOSE_PROFILES=ml
+    ml=ml
+else
+    ml=
+fi
+
 # The images are built on GitHub (.github/workflows/deploy.yml), which passes
 # IMAGE_TAG: this host cannot reach files.pythonhosted.org, and a build here also
 # competes with three other stacks for RAM. They are pulled, then retagged with the
@@ -36,7 +47,7 @@ if [ -n "${IMAGE_TAG:-}" ]; then
 else
     # Postgres and Redis are pulled images; rebuilding them adds time and can
     # never include repository changes.
-    compose build django worker ml frontend
+    compose build django worker $ml frontend
 fi
 
 # --wait blocks until the healthchecks pass, so migrate cannot race the
@@ -60,7 +71,8 @@ compose up -d --wait postgres redis
 # The frontend is a static nginx bundle and keeps serving the site throughout;
 # its API calls fail while django is stopped. nginx resolves `backend` once at
 # startup, so it is restarted whenever django is recreated (see below).
-compose stop django worker ml
+compose stop django worker $ml
+[ -z "$ml" ] && docker rm -f bama-ml >/dev/null 2>&1 || true
 
 # Migrate as a one-off rather than letting the django service do it on start,
 # so a bad migration aborts the deploy before `up` recreates anything. On
@@ -70,7 +82,7 @@ compose stop django worker ml
 # the failed one left nothing behind; earlier ones in the batch did apply.
 if ! compose run --rm --no-deps django python manage.py migrate --noinput; then
     echo "migrate failed; restarting the previous containers" >&2
-    compose start django worker ml || true
+    compose start django worker $ml || true
     compose restart frontend || true
     exit 1
 fi

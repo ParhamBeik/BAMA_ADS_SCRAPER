@@ -43,6 +43,12 @@ except ImportError as exc:  # pragma: no cover
     ML_AVAILABLE = False
     ML_UNAVAILABLE_REASON = f"ml extra not installed: {exc}"
 
+# Paused by configuration: every caller already renders "unavailable" as a
+# refusal, so the switch reuses that path rather than adding a second one.
+if ML_AVAILABLE and not settings.ML_ENABLED:
+    ML_AVAILABLE = False
+    ML_UNAVAILABLE_REASON = "ml paused: ML_ENABLED is not 1"
+
 
 def jsonable(value):
     """Plain Python, recursively — numpy scalars are not JSON.

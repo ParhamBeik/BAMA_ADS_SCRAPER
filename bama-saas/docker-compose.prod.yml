@@ -70,6 +70,9 @@ x-django-env: &django-env
   # Where trained model artifacts live. Every service agrees on the path; they
   # disagree on whether the mount is writable — see the `ml` service below.
   ML_ARTIFACT_DIR: /artifacts
+  # Paused unless exactly "1" (config/settings.py). The `ml` service also
+  # needs the `ml` profile; deploy/vps_pull_deploy.sh derives it from this.
+  ML_ENABLED: ${ML_ENABLED:-0}
 
 services:
   # Tuned, because it was running on stock settings. Measured 2026-09-04: the
@@ -260,6 +263,7 @@ services:
       args:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
     container_name: bama-ml
+    profiles: [ml]
     restart: unless-stopped
     logging: *logging
     environment: *django-env
