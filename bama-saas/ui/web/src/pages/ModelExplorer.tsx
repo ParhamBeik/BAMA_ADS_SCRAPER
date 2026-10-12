@@ -14,14 +14,14 @@
  * "refine" card used to sit *under* both price summaries, so a reader read the
  * range, scrolled, changed a trim, and had to scroll back up to see what moved.
  */
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { ArrowLeft, ArrowUpDown, X } from "lucide-react";
 import { api } from "../api";
 import { qs, useFilters } from "../filters";
 import { conditionLabel, km, num, toman } from "../format";
-import { Async, Card, Fa, ListingActions, RangeNotes, Thumb } from "../ui";
+import { Async, Card, Fa, HowWeKnow, ListingActions, RangeNotes, Thumb } from "../ui";
 import type { Distribution } from "../ui";
 import { ModelCombobox, type ModelRow } from "../components/ModelCombobox";
 import { Button } from "../components/ui/button";
@@ -55,13 +55,13 @@ type Exploration = {
 
 const REFINE_KEYS = ["variant", "year", "city", "condition", "mileage_min", "mileage_max"] as const;
 
-function PriceSummary({ title, summary, emphasis = false }: {
-  title: string; summary: Summary; emphasis?: boolean;
+function PriceSummary({ title, summary, emphasis = false, children }: {
+  title: string; summary: Summary; emphasis?: boolean; children?: ReactNode;
 }) {
   return (
     <div className="stack">
       <h2 className={emphasis ? "text-lg" : "text-base"}><Fa>{title}</Fa></h2>
-      <p className="muted">{num(summary.count)} آگهی با قیمت نقدی</p>
+      <p className="muted">{num(summary.count)} آگهی</p>
       {summary.asking_range ? (
         <>
           <p className="text-xl font-bold">
@@ -76,17 +76,26 @@ function PriceSummary({ title, summary, emphasis = false }: {
             <b className="font-mono">{toman(summary.asking_range.p10)}</b> تا{" "}
             <b className="font-mono">{toman(summary.asking_range.p90)}</b>
           </p>
+          {summary.strict === false && <span className="badge">بازه‌ی ترکیبی</span>}
           <RangeNotes distribution={{ ...summary.asking_range, count: summary.count,
-            thin: summary.thin } as Distribution} />
-          {summary.strict === false && (
-            <p className="stat-sub">
-              این بازه خودروهای ناهمسان را کنار هم گذاشته است. برای بازه‌ی دقیق، تیپ، سال ساخت و
-              وضعیت بدنه را انتخاب کنید.
-            </p>
-          )}
+            thin: summary.thin } as Distribution}>
+            {summary.strict === false && (
+              <p>
+                این بازه خودروهای ناهمسان را کنار هم گذاشته است. برای بازه‌ی دقیق، تیپ، سال
+                ساخت و وضعیت بدنه را انتخاب کنید.
+              </p>
+            )}
+            {children}
+          </RangeNotes>
         </>
       ) : (
-        <p>نمونه برای بازهٔ قابل اتکا کافی نیست. این آگهی‌ها همچنان شواهد واقعی‌اند.</p>
+        <>
+          <span className="badge warn">نمونه کم</span>
+          <HowWeKnow>
+            <p>نمونه برای بازه‌ی قابل اتکا کافی نیست. این آگهی‌ها همچنان شواهد واقعی‌اند.</p>
+            {children}
+          </HowWeKnow>
+        </>
       )}
     </div>
   );
@@ -152,18 +161,19 @@ export function ModelExplorer() {
   return (
     <div className="stack" dir="rtl">
       <Card title="کاوش قیمت یک مدل">
-        <p className="mb-3">
-          مدل را جست‌وجو کنید یا از فهرست زیر انتخاب کنید؛ تفاوت تیپ، سال، کارکرد،
-          وضعیت بدنه و شهر را با آگهی‌های پشتیبان ببینید.
-        </p>
         <div className="flex flex-wrap items-center gap-2">
           <div className="min-w-0 flex-1 sm:max-w-md">
             <ModelCombobox value={model} onSelect={pick} />
           </div>
           {model && (
-            <Button variant="ghost" size="sm" onClick={() => pick(null)}>
-              <X className="size-4" /> مدل دیگر
-            </Button>
+            <>
+              <Button variant="ghost" size="sm" onClick={() => pick(null)}>
+                <X className="size-4" /> مدل دیگر
+              </Button>
+              <Button asChild variant="ghost" size="sm">
+                <Link to={`/analyse${qs({ model })}`}>روند و تحلیل</Link>
+              </Button>
+            </>
           )}
         </div>
       </Card>
@@ -174,7 +184,7 @@ export function ModelExplorer() {
         {(data) => {
           // Everything in the model page's selection that the listings page
           // can also filter on; both speak the same four condition bands.
-          const toListings = `/explore${qs({
+          const toListings = `/cars${qs({
             model: data.model.id,
             variant: params.variant,
             condition: params.condition,
@@ -182,6 +192,23 @@ export function ModelExplorer() {
             city: params.city,
             mileage_min: params.mileage_min, mileage_max: params.mileage_max,
           })}`;
+          const evidence = (
+            <>
+              <p>
+                بازه‌ها فقط از قیمت‌های درخواستی نقدی ساخته می‌شوند و فقط وقتی نشان داده
+                می‌شوند که دست‌کم {num(data.evidence.minimum_for_range)} آگهی وجود داشته باشد.
+              </p>
+              <p>{data.evidence.feed_coverage_complete
+                ? "پوشش خوراک در پنجره‌ی اخیر کامل بوده است."
+                : "پوشش خوراک در پنجره‌ی اخیر کامل نبوده است؛ غیبت یک آگهی به معنی فروش نیست."}</p>
+              {data.evidence.latest_selected_sighting && (
+                <p>آخرین مشاهده‌ی آگهی‌های انتخاب‌شده: {new Date(
+                  data.evidence.latest_selected_sighting,
+                ).toLocaleString("fa-IR-u-nu-latn")}</p>
+              )}
+              <p>قیمت خرید واقعی در دسترس نیست؛ داده‌ی تأییدشده از معامله‌ها نداریم.</p>
+            </>
+          );
           return (
             <>
               <Card
@@ -208,10 +235,6 @@ export function ModelExplorer() {
                     options={[...data.facets.mileage].sort((a, b) => Number(a.value) - Number(b.value))}
                     onChange={(value) => filters.set({ mileage_max: value })} />
                 </div>
-                <p className="stat-sub mt-3">
-                  بازه‌ها فقط از قیمت‌های درخواستی نقدی ساخته شده‌اند. بازه فقط وقتی نشان
-                  داده می‌شود که دست‌کم {num(data.evidence.minimum_for_range)} آگهی وجود داشته باشد.
-                </p>
               </Card>
 
               {/* "Your selection" beside "the whole market" only once there is a
@@ -220,11 +243,15 @@ export function ModelExplorer() {
               <div className={refined ? "grid cols-2" : "stack"}>
                 <Card title="بازار سراسری">
                   <PriceSummary title={`${data.model.brand} ${data.model.name}`}
-                                summary={data.national} emphasis={!refined} />
+                                summary={data.national} emphasis={!refined}>
+                    {!refined && evidence}
+                  </PriceSummary>
                 </Card>
                 {refined && (
                   <Card title="انتخاب شما">
-                    <PriceSummary title="آگهی‌های دقیق‌تر" summary={data.selected} emphasis />
+                    <PriceSummary title="آگهی‌های دقیق‌تر" summary={data.selected} emphasis>
+                      {evidence}
+                    </PriceSummary>
                   </Card>
                 )}
               </div>
@@ -266,24 +293,11 @@ export function ModelExplorer() {
                 ) : <p>آگهی‌ای برای این انتخاب پیدا نشد.</p>}
                 {data.selected.count > data.ads.length && (
                   <p className="stat-sub mt-3">
-                    این‌ها {num(data.ads.length)} آگهی تازه‌ترند.{" "}
-                    <Link to={toListings}>هر {num(data.selected.count)} آگهی را در صفحه‌ی آگهی‌ها ببینید</Link>
-                    {" "}— آنجا می‌توانید بر اساس قیمت، کارکرد یا سال مرتب کنید.
+                    <Link to={toListings}>همه‌ی {num(data.selected.count)} آگهی</Link>
                   </p>
                 )}
               </Card>
 
-              <Card title="حد شواهد">
-                <p>{data.evidence.feed_coverage_complete
-                  ? "پوشش خوراک در پنجرهٔ اخیر کامل بوده است."
-                  : "پوشش خوراک در پنجرهٔ اخیر کامل نبوده است؛ غیبت یک آگهی به معنی فروش نیست."}</p>
-                {data.evidence.latest_selected_sighting && (
-                  <p>آخرین مشاهدهٔ آگهی‌های انتخاب‌شده: {new Date(
-                    data.evidence.latest_selected_sighting,
-                  ).toLocaleString("fa-IR-u-nu-latn")}</p>
-                )}
-                <p>قیمت خرید واقعی فعلاً در دسترس نیست؛ دادهٔ تأییدشده از معامله‌ها نداریم.</p>
-              </Card>
             </>
           );
         }}

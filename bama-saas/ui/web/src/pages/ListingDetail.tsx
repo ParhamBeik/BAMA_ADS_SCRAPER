@@ -3,7 +3,7 @@ import { useMlEnabled } from "../auth";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
-import { Async, BamaLink, FLAG_LABEL, Fa, ListingActions, PriceBar, PriceVerdict, Provenance, RangeNotes } from "../ui";
+import { Async, BamaLink, FLAG_LABEL, Fa, ListingActions, PriceBar, PriceVerdict, Provenance, RangeNotes, HowWeKnow } from "../ui";
 import { bothDates, fa, faDate, modelYear, num, pct, toman } from "../format";
 import type { Basis, Distribution, Verdict } from "../ui";
 
@@ -214,7 +214,7 @@ export function ListingDetail() {
                 first of them pointing at the home page and labelled as the
                 deal board. A listing is reached from the Explorer. */}
             <div className="breadcrumb">
-              <Link to="/explore">جست‌وجوی آگهی‌ها</Link> / <Fa>{data.title}</Fa>
+              <Link to="/cars">خودروها</Link> / <Fa>{data.title}</Fa>
             </div>
             <div className="detail-layout">
               <Gallery
@@ -495,13 +495,13 @@ function DealVerdict({ code }: { code: string }) {
   return (
     <div className="card">
       <h2>{below ? "در فهرست معامله‌ها" : "مقایسه با میانه مشابه‌ها"}</h2>
-      <p className="stat-sub" style={{ marginTop: 0 }}>
+      <HowWeKnow><p>
         {below
           ? "این آگهی زیر میانه قیمت آگهی‌های مشابه خودش قیمت خورده و روی تابلوی معامله‌ها می‌آید."
           : above
             ? "این آگهی بالاتر از میانه قیمت آگهی‌های مشابه قیمت خورده است، پس روی تابلوی معامله‌ها نیست."
             : "این آگهی زیر میانه قیمت آگهی‌های مشابه نیست، پس روی تابلوی معامله‌ها نیست."}
-      </p>
+      </p></HowWeKnow>
       <ul className="spec-list">
         <li>
           {below ? "ارزان‌تر از میانه: " : above ? "گران‌تر از میانه: " : "فاصله از میانه: "}
@@ -522,7 +522,7 @@ function DealVerdict({ code }: { code: string }) {
           </li>
         )}
       </ul>
-      <Link className="btn" to="/deals">همه معامله‌ها</Link>
+      <Link className="btn" to="/cars?deals=1">همه معامله‌ها</Link>
     </div>
   );
 }
@@ -599,11 +599,11 @@ function ModelEstimate({ code }: { code: string }) {
   return (
     <div className="card">
       <h2>برآورد مدل یادگیرنده</h2>
-      <p className="stat-sub" style={{ marginTop: 0 }}>
+      <HowWeKnow><p>
         این برآورد جای میانه‌ی آگهی‌های مشابه را نمی‌گیرد — کنارش می‌نشیند.
         تفاوتش این است که کارکرد، وضعیت بدنه، شهر و نوع فروشنده را هم می‌بیند،
         چیزهایی که کلید «مدل، تیپ، سال» درباره‌شان چیزی نمی‌داند.
-      </p>
+      </p></HowWeKnow>
 
       <ul className="spec-list">
         <li>برآورد میانی: {toman(p.price_p50)}</li>

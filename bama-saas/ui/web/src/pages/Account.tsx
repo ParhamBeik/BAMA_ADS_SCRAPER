@@ -8,7 +8,7 @@ import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth";
 import { ApiError, api } from "../api";
-import { Card } from "../ui";
+import { Card, HowWeKnow } from "../ui";
 import {
   FormError,
   PasswordField,
@@ -160,10 +160,10 @@ export function Account() {
         <p className="stat-sub" dir="rtl">
           وارد شده با <span dir="ltr" className="font-mono">{user?.email}</span>
         </p>
-        <p className="empty-hint">
+        <HowWeKnow><p>
           خروج از همه دستگاه‌ها نشست‌های دیگر را می‌بندد. این دستگاه هم خارج
           می‌شود و باید دوباره وارد شوید.
-        </p>
+        </p></HowWeKnow>
         <Button variant="outline" onClick={() => setConfirmOpen(true)}>
           خروج از همه دستگاه‌ها
         </Button>
