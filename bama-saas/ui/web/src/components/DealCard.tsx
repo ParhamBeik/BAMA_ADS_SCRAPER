@@ -3,19 +3,17 @@
  *
  * Shared rather than duplicated because both surfaces are showing the same
  * object and the card carries product decisions that must not drift between
- * them: the discount is measured against the peer group's own median, the peer
- * count says how many cars that median was built from, and the confidence dots
- * say whether the backend considers that enough. A 40% discount off three
- * listings is not a better deal than 12% off forty.
+ * them. Four rows: title, price and mileage, year · city · age, and the deal
+ * verdict, whose line also says how many fresh peers it stood on.
  *
  * `suspect` turns the ribbon amber. Past the trusted ceiling the gap is an
  * attribute the (model, trim, year) key cannot see far more often than it is a
  * bargain, and the colour has to carry that before any label is read.
  */
 import { Link } from "react-router-dom";
-import { AlertTriangle, BadgeCheck, Sparkles, Timer } from "lucide-react";
+import { AlertTriangle, BadgeCheck } from "lucide-react";
 import type { Envelope } from "@/api";
-import { BamaLink, ConfidenceDots, Fa, Thumb } from "@/ui";
+import { Fa, Thumb } from "@/ui";
 import { fa, km, modelYear, pct, toman } from "@/format";
 
 /**
@@ -99,42 +97,6 @@ export interface Deal {
   } | null;
 }
 
-/**
- * How quickly this model moves, in words.
- *
- * A discount is not a deal on its own: 15% off a car that leaves the feed in
- * ten days and 15% off one that sits for ninety are different propositions, and
- * the board presented them identically because liquidity lived on a screen the
- * buyer never had open at the same time.
- *
- * "Left the feed", never "sold" — Bama publishes no reason, so a delisting is a
- * sale, an expiry or a withdrawal with no way to tell which.
- */
-export function liquidityNote(deal: Pick<Deal, "liquidity">): string | null {
-  const l = deal.liquidity;
-  if (!l) return null;
-  return `${Math.round(l.left_pct)}% از این مدل ظرف ${l.window_days} روز از باما برداشته می‌شوند (از ${l.n} آگهی)`;
-}
-
-/**
- * The model's own reading, shown only when it has actually picked this car out.
- *
- * The ribbon is the gap to the peer median and it means that on every board —
- * changing what it means per tab is exactly the drift this codebase keeps
- * fixing. But on the `ml` tab that produced a card ribboned "0%" sitting in a
- * list of listings the model called underpriced, which reads as a bug. So the
- * second reading gets its own line rather than overwriting the first, and it
- * appears only on the rows the model flagged: 20 of 1,895 on the last scoring
- * run, so it is a signal and not another number on every card.
- */
-export function modelNote(deal: Pick<Deal, "ml">): string | null {
-  const ml = deal.ml;
-  if (!ml || ml.anomaly_kind !== "underpriced_candidate" || ml.residual_pct == null) {
-    return null;
-  }
-  return `${Math.round(ml.residual_pct)}% زیر برآورد مدل یادگیرنده`;
-}
-
 /** Why a cheap car went to review rather than onto the board. */
 export const DEAL_REASON: Record<string, string> = {
   stale_price: "قیمت قدیمی",
@@ -159,13 +121,6 @@ export function verdictNote(
       .filter(Boolean).join(" · ");
   }
   return null;
-}
-
-/** "۰ روز در بازار" is technically right and reads like a bug. */
-export function ageLabel(days: number | null): string {
-  if (days == null) return "—";
-  if (days <= 0) return "امروز ثبت شده";
-  return `${days} روز در بازار`;
 }
 
 /**
@@ -199,6 +154,10 @@ export function conditionNote(deal: Pick<Deal, "body_status" | "condition_band">
  * for a screen reader to announce.
  */
 export function DealCard({ deal, suspect }: { deal: Deal; suspect: boolean }) {
+  // Four rows. The peer median, sample size, days on Bama, liquidity, the Bama
+  // link and the model's note are on the listing page one tap away; on the card they made
+  // eight rows, and a struck-through median read as the car's old price.
+  const note = verdictNote(deal);
   return (
     <div className="listing-card stretch-host">
       <Thumb src={deal.image_url}>
@@ -222,55 +181,22 @@ export function DealCard({ deal, suspect }: { deal: Deal; suspect: boolean }) {
         <div className="row">
           <span className="deal-price">{toman(deal.price)}</span>
           <span>{km(deal.mileage)}</span>
-          <span className="deal-median">{toman(deal.peer_median)}</span>
         </div>
-        <div className="row">
-          <ConfidenceDots tier={deal.confidence} />
-          <span>{deal.peer_count ?? "—"} آگهی مشابه</span>
-          <span>·</span>
+        <div className="row card-facts">
           <span>{modelYear(deal.year)}</span>
-        </div>
-        <div className="row">
+          <span aria-hidden>·</span>
           <Fa>{deal.city_name || "—"}</Fa>
-          {deal.district ? <><span>·</span><Fa>{deal.district}</Fa></> : null}
-          <span>·</span>
-          <span>{ageLabel(deal.days_listed)}</span>
         </div>
-        {/* Whether the discount is on something that actually moves. Absent
-            rather than zeroed when unmeasured — see `liquidityNote`. */}
-        {deal.liquidity && (
-          <div className="row deal-extra">
-            {/* "Leaves the market", never "is sold": Bama publishes no reason
-                for a delisting, so a sale, an expiry and a withdrawal are
-                indistinguishable and the stronger word would be an assertion
-                nothing here observed. */}
-            <span className="stat-sub" title={liquidityNote(deal) ?? undefined}>
-              <Timer size={11} /> {Math.round(deal.liquidity.left_pct)}% ظرف{" "}
-              {deal.liquidity.window_days} روز از بازار خارج می‌شوند
-            </span>
-          </div>
+        {/* The verdict line carries the price's age, which is the age that
+            matters; how long the ad has sat on Bama is on the listing page. */}
+        {note && (
+          <p className="stat-sub" style={{ margin: 0 }}>
+            {deal.deal_status === "check"
+              ? <AlertTriangle size={11} className="inline align-[-1px]" />
+              : <BadgeCheck size={11} className="inline align-[-1px]" />}{" "}
+            {note}
+          </p>
         )}
-        {/* Not a deal-extra row: on a phone those are hidden, and the reason is
-            what the review tab exists to show. */}
-        {verdictNote(deal) && (
-          <div className="row stat-sub">
-            <span className="stat-sub">
-              {deal.deal_status === "check" ? <AlertTriangle size={11} /> : <BadgeCheck size={11} />}{" "}
-              {verdictNote(deal)}
-            </span>
-          </div>
-        )}
-        {modelNote(deal) && (
-          <div className="row deal-extra">
-            <span className="stat-sub"
-                  title="برآورد مدل یادگیرنده — کارکرد، وضعیت بدنه، شهر و نوع فروشنده را هم می‌بیند، برخلاف میانه‌ی آگهی‌های مشابه که فقط مدل، تیپ و سال را می‌شناسد.">
-              <Sparkles size={11} /> {modelNote(deal)}
-            </span>
-          </div>
-        )}
-        <div className="row deal-extra">
-          <BamaLink href={deal.bama_url} className="ghost above-stretch" />
-        </div>
       </div>
     </div>
   );
