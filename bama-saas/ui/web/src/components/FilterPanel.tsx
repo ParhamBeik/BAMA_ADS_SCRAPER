@@ -24,7 +24,7 @@ import { Check, ChevronDown, ChevronsUpDown, Search, SlidersHorizontal, X } from
 import { api, type Variant } from "@/api";
 import { useFilters } from "@/filters";
 import { Fa, NumberInput } from "@/ui";
-import { num, toman } from "@/format";
+import { CONDITION_BANDS, conditionLabel, num, toman } from "@/format";
 import { ModelCombobox, normalizePersianInput, useModelLabel } from "@/components/ModelCombobox";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -40,12 +40,6 @@ const TRANSMISSIONS = ["اتوماتیک", "دنده ای"];
 const FUELS = ["بنزینی", "هیبریدی", "برقی", "دوگانه سوز", "پلاگین هیبرید", "بردافزا", "هیبرید ملایم", "دیزلی"];
 const BODY_TYPES = ["سدان", "کراس اور", "هاچبک", "وانت", "شاسی بلند‌", "ون", "کوپه", "کروک"];
 
-const CONDITIONS = [
-  { value: "clean", label: "بدون رنگ" },
-  { value: "cosmetic", label: "لکه / خط و خش" },
-  { value: "painted", label: "رنگ‌شده" },
-  { value: "structural", label: "تعویض / تصادفی" },
-];
 
 const CONFIDENCES = [
   { value: "high", label: "زیاد (40 آگهی مشابه و بیشتر)" },
@@ -82,6 +76,15 @@ const YEAR_PRESETS: [string, number | null][] = [
   ["1390 به بعد", 1390],
 ];
 
+/** Days back from today, kept relative in the URL so a shared link still means
+ *  "this week" tomorrow. Explorer turns it into the API's `listed_from`. */
+const LISTED_PRESETS: [string, number][] = [
+  ["امروز", 1],
+  ["3 روز اخیر", 3],
+  ["هفته اخیر", 7],
+  ["ماه اخیر", 30],
+];
+
 const MILEAGE_PRESETS: [string, number][] = [
   ["زیر 50 هزار", 50_000],
   ["زیر 100 هزار", 100_000],
@@ -90,7 +93,7 @@ const MILEAGE_PRESETS: [string, number][] = [
 
 export const FILTER_KEYS = [
   "brand", "model", "variant", "city", "q", "price_min", "price_max",
-  "year_min", "year_max", "mileage_min", "mileage_max", "transmission", "fuel",
+  "year_min", "year_max", "listed_days", "mileage_min", "mileage_max", "transmission", "fuel",
   "body_type", "condition", "seller_type", "confidence",
 ];
 
@@ -98,6 +101,8 @@ export const FILTER_KEYS = [
  *  explorer has no confidence one. */
 export interface FilterOptions {
   showSpecs?: boolean;
+  /** "Listed within N days". Off on the deal board, which groups by freshness. */
+  showListed?: boolean;
   showConfidence?: boolean;
   showSearch?: boolean;
 }
@@ -321,6 +326,7 @@ function TrimPicker() {
 
 export function FilterPanel({
   showSpecs = true,
+  showListed = true,
   showConfidence = false,
   showSearch = true,
 }: FilterOptions) {
@@ -333,6 +339,7 @@ export function FilterPanel({
   const priceMax = filters.get("price_max");
   const yearMin = filters.get("year_min");
   const mileageMax = filters.get("mileage_max");
+  const listedDays = filters.get("listed_days");
 
   return (
     <section
@@ -419,9 +426,9 @@ export function FilterPanel({
             })}
           </PresetRow>
           <RangeField
-            label="سال ساخت (شمسی)"
+            label="سال ساخت (شمسی یا میلادی)"
             minKey="year_min" maxKey="year_max"
-            placeholderMin="از 1380" placeholderMax="تا 1404"
+            placeholderMin="از 1395 یا 2016" placeholderMax="تا 1404 یا 2025"
           />
           <PresetRow>
             {MILEAGE_PRESETS.map(([label, max]) => {
@@ -438,6 +445,20 @@ export function FilterPanel({
             placeholderMin="از" placeholderMax="تا"
           />
         </Group>
+
+        {showListed && (
+          <Group label="تاریخ ثبت" keys={["listed_days"]}>
+            <PresetRow>
+              {LISTED_PRESETS.map(([label, days]) => {
+                const on = String(days) === (listedDays ?? "");
+                return (
+                  <Preset key={label} label={label} on={on}
+                          onClick={() => filters.set({ listed_days: on ? null : days, page: null })} />
+                );
+              })}
+            </PresetRow>
+          </Group>
+        )}
 
         {showSpecs && (
           <Group label="مشخصات" keys={["transmission", "fuel", "body_type", "condition"]}>
@@ -463,7 +484,7 @@ export function FilterPanel({
               label="وضعیت بدنه" anyLabel="همه"
               value={filters.get("condition")}
               onChange={(v) => filters.set({ condition: v, page: null })}
-              options={CONDITIONS}
+              options={[...CONDITION_BANDS]}
             />
           </Group>
         )}
@@ -540,10 +561,11 @@ function chipLabel(key: string, value: string, modelName?: string): string {
     case "price_max": return `تا ${toman(Number(value))} تومان`;
     case "year_min": return `از سال ${value}`;
     case "year_max": return `تا سال ${value}`;
+    case "listed_days": return `ثبت در ${num(Number(value))} روز اخیر`;
     case "mileage_min": return `کارکرد از ${num(Number(value))}`;
     case "mileage_max": return `کارکرد زیر ${num(Number(value))}`;
     case "condition":
-      return `بدنه: ${CONDITIONS.find((c) => c.value === value)?.label ?? value}`;
+      return `بدنه: ${conditionLabel(value)}`;
     case "transmission": return `گیربکس: ${value}`;
     case "fuel": return `سوخت: ${value}`;
     case "body_type": return `بدنه: ${value}`;

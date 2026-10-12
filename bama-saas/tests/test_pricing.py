@@ -327,7 +327,8 @@ def test_a_thin_condition_band_uses_the_measured_haircut():
 
 @pytest.mark.django_db
 def test_a_repainted_car_carries_the_band_that_keeps_it_off_the_board(cohort):
-    """Unit of the product: paint is a price, not a discount.
+    """Unit of the product: paint is a price, not a discount, so a repainted car
+    is compared only with other repainted cars.
 
     The score itself is now the plain gap to the peer median — that is what the
     card prints beside it, and scoring against something else made the card's
@@ -350,9 +351,10 @@ def test_a_repainted_car_carries_the_band_that_keeps_it_off_the_board(cohort):
     assert painted.components["condition_band"] in FP.REVIEW_CONDITION_BANDS
     assert clean.components["condition_band"] == "clean"
     assert clean.components["condition_band"] not in FP.REVIEW_CONDITION_BANDS
-    # Both ask the same price against the same peers, so the *gap* is identical.
-    # The difference between them is evidence, not arithmetic.
-    assert painted.discount_pct == clean.discount_pct
+    # Peers share the band: the repainted car is judged against repainted cars,
+    # which all ask 1.7B, so it is no bargain however the clean cohort prices.
+    assert painted.peer_median == 1_700_000_000
+    assert painted.discount_pct == 0
 
 
 @pytest.mark.django_db

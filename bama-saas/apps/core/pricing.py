@@ -43,6 +43,9 @@ from apps.core.quality import (
     CONDITION_BANDS,
     FLAG_OUTLIER_HIGH,
     FLAG_OUTLIER_LOW,
+    FLAG_SUSPECT_INSTALLMENT,
+    FLAG_SUSPECT_MISFILED,
+    INSTALLMENT_WORDS_RE,
     PAINTED,
     STRUCTURAL,
     condition_band,
@@ -60,18 +63,18 @@ MIN_PEERS = 8
 TIERS = ((40, "high"), (15, "medium"), (MIN_PEERS, "low"))
 TIER_ORDER = ("insufficient", "low", "medium", "high")
 
-# When the exact cohort is too thin, widen the comparison rather than refuse.
-# Widest last; each rung must clear MIN_PEERS on its own to be used.
-#
-# Measured on production 2026-09-02: a quarter of live listings sit in a
-# (model, variant, year) cohort with fewer than eight peers, and every one of
-# them got no answer at all. A weaker comparison that says which comparison it
-# is beats a blank panel — but only if it says so, which is why `basis` is
-# returned beside every number built this way and why the cap below exists.
+# Below MIN_PEERS a group still gets a range, labelled with its headcount and
+# listed ad by ad, but no fair value, verdict or deal score. Below this it gets
+# nothing: two prices are not a range.
+MIN_RANGE_PEERS = 3
+
+# Peers are like for like: same model, trim, model year and condition band.
+# Mileage differs and is adjusted for. One rung on purpose: the ladder used to
+# widen to "same model, any year" when a group was thin, so a 1395 car was
+# priced against 1403s and 21% of the deal board was judged that way
+# (production, 2026-10-12). A thin group now says it is thin instead.
 PEER_LADDER = (
-    ("exact", ("model_id", "variant_id", "year_jalali")),
-    ("model_year", ("model_id", "year_jalali")),
-    ("model", ("model_id",)),
+    ("exact", ("model_id", "variant_id", "year_jalali", "condition_band")),
 )
 
 # A widened comparison cannot claim more confidence than this however many cars
@@ -489,30 +492,22 @@ def cap_confidence(label: str, basis: str) -> str:
     return label if TIER_ORDER.index(label) <= TIER_ORDER.index(cap) else cap
 
 
-def laddered_peers(*, model_id: int, variant_id, year_jalali
-                   ) -> tuple[list[tuple], str]:
-    """Peers for a car, widening the comparison until one rung is thick enough.
+def strict_peers(*, model_id: int, variant_id, year_jalali, band) -> list[tuple]:
+    """Every like-for-like peer of a car, however few.
 
-    Returns ``(peers, basis)``. The basis is not a diagnostic — it changes what
-    the number *means*, so it travels with it to every caller and onto the
-    screen. ``exact`` compares like with like; ``model`` has thrown away the
-    model year, which for a car that depreciates is a large thing to throw away.
+    ``(price, mileage, band, last_seen_at, code)`` tuples, the shape
+    ``cohort_baseline`` reads (it ignores the trailing code). Empty without a
+    model, trim or year. An unrecognised condition (``band`` None) is a group of
+    its own: those cars compare only with each other.
     """
-    values = {"model_id": model_id, "variant_id": variant_id,
-              "year_jalali": year_jalali}
-    base = without_cohort_outliers(scorable_rows())
-    for basis, fields in PEER_LADDER:
-        if any(values[f] is None for f in fields):
-            continue
-        peers = [
-            (price, mileage, condition_band(status), last_seen)
-            for price, mileage, status, last_seen in base
-            .filter(**{f: values[f] for f in fields})
-            .values_list("current_price", "mileage", "body_status", "last_seen_at")
-        ]
-        if len(peers) >= MIN_PEERS:
-            return peers, basis
-    return [], "none"
+    if None in (model_id, variant_id, year_jalali):
+        return []
+    rows = (without_cohort_outliers(scorable_rows())
+            .filter(model_id=model_id, variant_id=variant_id, year_jalali=year_jalali)
+            .values_list("current_price", "mileage", "last_seen_at", "code", "body_status"))
+    return [(price, mileage, band, seen, code)
+            for price, mileage, seen, code, status in rows
+            if condition_band(status) == band]
 
 
 # Sellers quote round numbers, so the most *common* asking price is a real
@@ -570,21 +565,35 @@ def fair_price(code: str) -> dict:
     if not ad.model_id or not ad.current_price:
         return {"code": code, "available": False, "reason": "missing_model_or_price"}
 
-    peers, basis = laddered_peers(
-        model_id=ad.model_id, variant_id=ad.variant_id, year_jalali=ad.year_jalali,
-    )
+    band = condition_band(ad.body_status)
+    peers = strict_peers(model_id=ad.model_id, variant_id=ad.variant_id,
+                         year_jalali=ad.year_jalali, band=band)
+    basis = "exact" if peers else "none"
     baseline = cohort_baseline(peers)
     if baseline is None:
+        prices = [p for p, *_ in peers]
+        if len(prices) < MIN_RANGE_PEERS:
+            return {
+                "code": code, "available": False, "reason": "insufficient_peers",
+                "asking": ad.current_price, "peer_count": len(peers),
+                "min_peers": MIN_RANGE_PEERS, "basis": basis, "condition_band": band,
+            }
+        # A thin group still has a range, but too few cars for a fair value or a
+        # verdict. The ads it came from are listed so "based on 5 ads" can be
+        # checked rather than trusted.
         return {
-            "code": code, "available": False, "reason": "insufficient_peers",
-            "asking": ad.current_price, "peer_count": len(peers),
-            "min_peers": MIN_PEERS, "basis": basis,
+            "code": code, "available": True, "reason": "few_peers",
+            "asking": ad.current_price, "fair_value": None, "gap_pct": None,
+            "verdict": "unknown", "basis": basis, "components": [],
+            "peer_count": len(peers), "confidence": "insufficient",
+            "condition_band": band, "distribution": peer_distribution(prices),
+            "position_pct": position_pct(prices, ad.current_price),
+            "peers": [c for *_, c in peers],
         }
 
-    adjusted = baseline.adjusted(
-        ad.mileage, condition_band(ad.body_status),
-        condition_haircuts(), mileage_haircuts(),
-    )
+    # No condition haircut: every peer already shares this car's band, so the
+    # median already prices the condition. Mileage still differs and adjusts.
+    adjusted = baseline.adjusted(ad.mileage, None, None, mileage_haircuts())
     components = [{
         "name": "cohort_median",
         "amount": int(baseline.base),
@@ -594,6 +603,7 @@ def fair_price(code: str) -> dict:
         "facts": {
             "peers": baseline.peer_count,
             "model": ad.model.name_fa if ad.model else "",
+            "band": band,
         },
     }]
     if adjusted.band_adjustment is not None:
@@ -655,21 +665,65 @@ def fair_price(code: str) -> dict:
     }
 
 
-def peer_distribution(prices: list[int]) -> dict:
-    """The cohort's asking-price shape: the band, the middle, and the edges.
+# A middle half wider than this share of the median is too loose to price a car
+# by. Measured 2026-10-12: the typical strict group is 13% wide and 14% of ads
+# sit in groups wider than 20%.
+WIDE_RANGE_PCT = 20.0
 
-    p10/p90 rather than min/max define the drawn band — one typo listing at
-    5.8 trillion toman would otherwise squash every real car into the left
-    pixel. min/max ride along for labelling the tails honestly.
+# Two clusters: an empty stretch inside P10-P90 wider than this share of the
+# median, with a real group of cars on each side. 15% of groups had one.
+CLUSTER_GAP_PCT = 10.0
+CLUSTER_MIN_SIDE = 3
+CLUSTER_MIN_SHARE = 0.2
+
+
+def price_clusters(prices: list[int]) -> dict | None:
+    """The widest empty gap inside P10-P90, when it splits two real groups.
+
+    ``None`` when there is no such gap. P10-P90 rather than the full list so a
+    lone straggler at either end cannot pass for a second cluster.
     """
-    if not prices:
+    if len(prices) < MIN_PEERS:
+        return None
+    ordered = sorted(prices)
+    mid = statistics.median(ordered)
+    inner = [p for p in ordered if percentile(ordered, 10) <= p <= percentile(ordered, 90)]
+    best = None
+    for i in range(1, len(inner)):
+        gap = inner[i] - inner[i - 1]
+        if best is None or gap > best[0]:
+            best = (gap, i)
+    if best is None or not mid or best[0] / mid * 100 <= CLUSTER_GAP_PCT:
+        return None
+    gap, i = best
+    side = max(CLUSTER_MIN_SIDE, math.ceil(CLUSTER_MIN_SHARE * len(inner)))
+    if i < side or len(inner) - i < side:
+        return None
+    return {"gap_from": inner[i - 1], "gap_to": inner[i],
+            "below": sum(1 for p in ordered if p <= inner[i - 1]),
+            "above": sum(1 for p in ordered if p >= inner[i])}
+
+
+def peer_distribution(prices: list[int]) -> dict:
+    """The one price range every screen shows, from a group's asking prices.
+
+    The range is P25-P75: where the middle half of real asks sit, robust to a
+    junk ad at either end. p10/p90 and min/max ride along for drawing the tails.
+    ``thin`` marks a group under MIN_PEERS, ``wide`` a middle half too loose to
+    price by, ``clusters`` a group whose prices split into two lumps. Empty
+    below MIN_RANGE_PEERS.
+    """
+    if len(prices) < MIN_RANGE_PEERS:
         return {}
+    mid = statistics.median(prices)
+    p25, p75 = int(percentile(prices, 25)), int(percentile(prices, 75))
+    width_pct = round((p75 - p25) / mid * 100, 1) if mid else None
     return {
         "min": min(prices),
         "p10": int(percentile(prices, 10)),
-        "p25": int(percentile(prices, 25)),
-        "median": int(statistics.median(prices)),
-        "p75": int(percentile(prices, 75)),
+        "p25": p25,
+        "median": int(mid),
+        "p75": p75,
         "p90": int(percentile(prices, 90)),
         "max": max(prices),
         "count": len(prices),
@@ -677,6 +731,10 @@ def peer_distribution(prices: list[int]) -> dict:
         # actually asking", and in a market that quotes round numbers those are
         # different and both worth showing.
         "mode": price_mode(prices),
+        "thin": len(prices) < MIN_PEERS,
+        "width_pct": width_pct,
+        "wide": width_pct is not None and width_pct > WIDE_RANGE_PCT,
+        "clusters": price_clusters(prices),
     }
 
 
@@ -762,6 +820,98 @@ def flag_high_outliers(*, model_id: int | None = None) -> dict:
         "cleared": len(cleared),
         "model_id": model_id,
     }
+
+
+# A price under this share of its cohort median, in an ad that talks about
+# instalments, is taken to be a down payment rather than the car. 137 such ads
+# on 2026-10-12, mostly dealer stock ("نقد و اقساط تا ۵ سال").
+INSTALLMENT_MAX_RATIO = 0.8
+
+# A car this far from its own group's median, outside its P10-P90, with an
+# ordinary odometer for its group, and sitting inside another trim's or year's
+# middle half of the same model and condition, is more likely filed under the
+# wrong trim or year than priced oddly. Typical mileage is required because a
+# 196,000 km car priced like an older year is simply a high-mileage car.
+MISFILED_MIN_GAP = 0.20
+
+
+def flag_suspects(*, model_id: int | None = None) -> dict:
+    """Recompute the two suspect-price flags across scorable ads.
+
+    Idempotent and self-clearing, like ``flag_high_outliers``: a flag set when
+    the peers looked one way is removed when they no longer support it.
+    """
+    base = scorable_rows().filter(has_high_outlier=False)
+    if model_id is not None:
+        base = base.filter(model_id=model_id)
+    rows = list(base.values("code", "model_id", "variant_id", "year_jalali",
+                            "body_status", "mileage", "current_price", "cohort_flags"))
+
+    cohorts: dict = defaultdict(list)
+    for r in rows:
+        r["band"] = condition_band(r["body_status"])
+        cohorts[(r["model_id"], r["variant_id"], r["year_jalali"])].append(r["current_price"])
+    medians = {k: median(v) for k, v in cohorts.items() if len(v) >= MIN_PEERS}
+
+    # Instalment: cheap first, then read text only for those few rows.
+    cheap = {r["code"] for r in rows
+             if (m := medians.get((r["model_id"], r["variant_id"], r["year_jalali"])))
+             and r["current_price"] < INSTALLMENT_MAX_RATIO * m}
+    installment = {
+        code for code, title, description in
+        Ad.objects.filter(code__in=cheap).values_list("code", "title", "description")
+        if INSTALLMENT_WORDS_RE.search(f"{title or ''}\n{description or ''}")
+    }
+
+    groups: dict = defaultdict(list)
+    for r in rows:
+        if r["code"] not in installment:
+            groups[(r["model_id"], r["variant_id"], r["year_jalali"], r["band"])].append(r)
+    stats = {}
+    for key, peers in groups.items():
+        if len(peers) < MIN_PEERS:
+            continue
+        prices = [r["current_price"] for r in peers]
+        km = [r["mileage"] for r in peers if r["mileage"] is not None]
+        stats[key] = {
+            "median": median(prices), "p10": percentile(prices, 10),
+            "p90": percentile(prices, 90), "p25": percentile(prices, 25),
+            "p75": percentile(prices, 75),
+            "km": (percentile(km, 25), percentile(km, 75)) if len(km) >= MIN_PEERS else None,
+        }
+    by_model_band: dict = defaultdict(list)
+    for key in stats:
+        by_model_band[(key[0], key[3])].append(key)
+
+    misfiled = set()
+    for key, peers in groups.items():
+        own = stats.get(key)
+        if own is None or own["km"] is None:
+            continue
+        for r in peers:
+            price, km = r["current_price"], r["mileage"]
+            if (own["p10"] <= price <= own["p90"]
+                    or abs(price - own["median"]) < MISFILED_MIN_GAP * own["median"]
+                    or km is None or not own["km"][0] <= km <= own["km"][1]):
+                continue
+            if any(stats[o]["p25"] <= price <= stats[o]["p75"]
+                   for o in by_model_band[(key[0], key[3])] if o != key):
+                misfiled.add(r["code"])
+
+    changed = []
+    for r in rows:
+        flags = [f for f in (r["cohort_flags"] or [])
+                 if f not in (FLAG_SUSPECT_INSTALLMENT, FLAG_SUSPECT_MISFILED)]
+        if r["code"] in installment:
+            flags.append(FLAG_SUSPECT_INSTALLMENT)
+        if r["code"] in misfiled:
+            flags.append(FLAG_SUSPECT_MISFILED)
+        if sorted(flags) != sorted(r["cohort_flags"] or []):
+            changed.append(Ad(code=r["code"], cohort_flags=flags))
+    if changed:
+        Ad.objects.bulk_update(changed, ["cohort_flags"], batch_size=500)
+    return {"installment": len(installment), "misfiled": len(misfiled),
+            "changed": len(changed), "model_id": model_id}
 
 
 # ---------------------------------------------------------------------------
@@ -955,6 +1105,7 @@ def _compute_deal_scores(*, model_id: int | None = None,
     ~200 identical full scans per tick — see ``refresh_cohort_deal_scores``.
     """
     outliers = flag_high_outliers(model_id=model_id)
+    suspects = flag_suspects(model_id=model_id)
     base = scorable_rows()
     if model_id is not None:
         base = base.filter(model_id=model_id)
@@ -964,6 +1115,10 @@ def _compute_deal_scores(*, model_id: int | None = None,
         "current_price", "first_seen_at", "last_seen_at", "mileage",
         "cohort_flags", "body_status",
     ))
+    for r in rows:
+        # "unknown" rather than None so the ladder does not skip the row: an
+        # unrecognised condition is a peer group of its own (see strict_peers).
+        r["condition_band"] = condition_band(r["body_status"]) or "unknown"
 
     # Pooled across the whole catalogue, never just this model's slice — a
     # per-model rescore would otherwise measure the haircut on a handful of rows
@@ -1035,13 +1190,16 @@ def _compute_deal_scores(*, model_id: int | None = None,
         if found is None:
             continue
         basis, baseline, spread = found
+        flags = set(r["cohort_flags"] or [])
+        if FLAG_SUSPECT_INSTALLMENT in flags:
+            # A down payment is not a deal, and no verdict on it means anything.
+            continue
         mid, vid, yj = r["model_id"], r["variant_id"], r["year_jalali"]
+        band = condition_band(r["body_status"])
         floor = MIN_ASK_VS_MEDIAN * baseline.base
 
-        adjusted = baseline.adjusted(
-            r["mileage"], condition_band(r["body_status"]),
-            haircuts, mile_haircuts,
-        )
+        # Peers share this car's band, so condition is already in the median.
+        adjusted = baseline.adjusted(r["mileage"], None, None, mile_haircuts)
         fair_value = adjusted.fair_value
         price = r["current_price"]
         has_low = FLAG_OUTLIER_LOW in (r["cohort_flags"] or [])
@@ -1089,7 +1247,8 @@ def _compute_deal_scores(*, model_id: int | None = None,
             score=round(min(100.0, discount_pct), 1),
             discount_pct=round(discount_pct, 2),
             peer_median=int(baseline.base),
-            needs_review=adjusted.band in REVIEW_CONDITION_BANDS,
+            needs_review=(band in REVIEW_CONDITION_BANDS
+                          or FLAG_SUSPECT_MISFILED in flags),
             components={
                 "discount_pct": round(discount_pct, 2),
                 "peer_median": int(baseline.base),
@@ -1120,7 +1279,8 @@ def _compute_deal_scores(*, model_id: int | None = None,
                 "mileage_bucket_peers": adjusted.bucket_peers,
                 "mileage_basis": adjusted.mileage_basis,
                 "body_status": r["body_status"],
-                "condition_band": adjusted.band,
+                "condition_band": band,
+                "suspect_misfiled": FLAG_SUSPECT_MISFILED in flags,
                 "condition_adjustment": adjusted.band_adjustment,
                 "condition_band_peers": adjusted.band_peers,
                 # The like-for-like number: what cars with *this* much damage
@@ -1169,6 +1329,7 @@ def _compute_deal_scores(*, model_id: int | None = None,
         "model_id": model_id,
         "outliers_flagged": outliers["flagged"],
         "outliers_cleared": outliers["cleared"],
+        "suspects": suspects,
     }
 
 

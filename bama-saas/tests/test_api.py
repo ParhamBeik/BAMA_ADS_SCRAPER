@@ -1897,7 +1897,7 @@ YEAR_GUARDED = (
     ("/api/analytics/distribution/?year=1", "apps.core.research.price_distribution"),
     ("/api/analytics/distribution/?year=99999999999999999999",
      "apps.core.research.price_distribution"),
-    ("/api/analytics/movement/?model=1&year=2020", "apps.core.research.cohort_series"),
+    ("/api/analytics/movement/?model=1&year=3020", "apps.core.research.cohort_series"),
     ("/api/analytics/movement/?model=1&year=1299", "apps.core.research.cohort_series"),
 )
 
@@ -1911,8 +1911,8 @@ def test_a_year_outside_the_calendar_is_refused_before_the_scan(api_client, url,
     cache and re-runs the scan behind it. `verify` will not store a year outside
     these bounds, so refusing them excludes no real data.
 
-    1299 and 2020 both matter: one is just off the end of the range, the other is
-    a Gregorian year, which is the plausible mistake a hand-written call makes.
+    1299 is just off the end of the Jalali range and 3020 is in neither
+    calendar. A Gregorian year such as 2020 is accepted and means 1399.
     """
     with patch(expensive) as spy:
         assert api_client.get(url).status_code == 400

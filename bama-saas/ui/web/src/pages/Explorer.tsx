@@ -31,7 +31,7 @@ import type { Envelope, Paginated } from "../api";
 import { FilterPanel } from "@/components/FilterPanel";
 import { qs, useFilters } from "../filters";
 import { Async, BamaLink, Card, FLAG_LABEL, Fa, ListingActions, Pager, PriceBar, Provenance, Sheet, Table, Thumb } from "../ui";
-import { km, num, toman } from "../format";
+import { conditionLabel, km, modelYear, num, toman } from "../format";
 import type { Distribution } from "../ui";
 import { ViewToggle, useListView } from "../components/ViewToggle";
 import { conditionNote } from "../components/DealCard";
@@ -42,6 +42,8 @@ import {
 /** Sort orders the API supports, in the order a buyer reaches for them. */
 const ORDERINGS = [
   { value: "-publish_at", label: "تازه‌ترین" },
+  // Bama's date jumps on every bump; this is when the ad first appeared.
+  { value: "-first_seen_at", label: "تازه‌ترین آگهی ثبت‌شده" },
   { value: "current_price", label: "ارزان‌ترین" },
   { value: "-current_price", label: "گران‌ترین" },
   { value: "mileage", label: "کمترین کارکرد" },
@@ -57,6 +59,7 @@ interface AdRow {
   model_id: number | null;
   year: number | null;
   year_jalali?: number | null;
+  year_calendar?: string;
   mileage: number | null;
   current_price: number | null;
   city_name: string;
@@ -89,15 +92,25 @@ interface FairPrice extends Envelope {
 
 const COMPONENT_LABEL: Record<string, string> = {
   cohort_median: "میانه قیمت آگهی‌های مشابه",
-  condition: "تعدیل بابت وضعیت بدنه",
   mileage: "تعدیل بابت کارکرد",
 };
 
-const CONDITION_BAND: Record<string, string> = {
-  clean: "بدون رنگ",
-  cosmetic: "لکه یا خط و خش",
-  painted: "رنگ‌شده",
-  structural: "تعویض یا تصادفی",
+
+/** "Listed within N days" as the API's absolute `listed_from`. Floored to the
+ *  hour: it is part of the query key, and a millisecond-fresh timestamp would
+ *  make every render a new query. */
+function listedFrom(days: number | null | undefined): string | null {
+  if (!days) return null;
+  const hour = Math.floor(Date.now() / 3_600_000) * 3_600_000;
+  return new Date(hour - days * 86_400_000).toISOString();
+}
+
+/** One-word badges for `Ad.cohort_flags`; the full sentence is the tooltip. */
+const FLAG_SHORT: Record<string, string> = {
+  price_outlier_high: "گران‌تر از مشابه‌ها",
+  price_outlier_low: "ارزان‌تر از مشابه‌ها",
+  suspect_installment_price: "پیش‌پرداخت؟",
+  suspect_misfiled: "تیپ یا سال مشکوک",
 };
 
 /**
@@ -113,15 +126,10 @@ function componentDetail(name: string, facts?: Record<string, unknown>): string 
   const peers = Number(facts.peers ?? 0);
   switch (name) {
     case "cohort_median":
-      return `میانه ${peers} آگهی ${String(facts.model ?? "")} با همان تیپ و سال ساخت`;
-    case "condition":
-      // Always the catalogue-wide figure now. The per-cohort branch this used
-      // to describe was removed: `median(band) - median(cohort)` came out
-      // positive whenever a cohort's damaged cars were its newer ones, so paint
-      // damage raised a car's value. The pooled haircut cannot change sign.
-      return `اختلاف اندازه‌گیری‌شده در کل کاتالوگ برای بدنه ${
-        CONDITION_BAND[String(facts.band)] ?? String(facts.band ?? "")
-      }${peers ? `، ${peers} آگهی مشابه هم همین وضعیت را دارند` : ""}`;
+      // Peers share trim, year and condition, so condition needs no line of
+      // its own: it is already in this median.
+      return `میانه ${peers} آگهی ${String(facts.model ?? "")} با همان تیپ، سال ساخت و بدنه ${
+        conditionLabel(facts.band)}`;
     case "mileage":
       return `بر پایه ${peers} آگهی در بازه کارکرد ${num(Number(
         facts.bucket ?? 0,
@@ -139,7 +147,6 @@ function componentDetail(name: string, facts?: Record<string, unknown>): string 
  * The unabbreviated explanation lives on the listing page.
  */
 function AdWarnings({ ad }: { ad: AdRow }) {
-  const flag = ad.cohort_flags?.[0];
   return (
     <>
       {ad.price_basis_unclear && (
@@ -167,12 +174,11 @@ function AdWarnings({ ad }: { ad: AdRow }) {
           <Gauge size={11} /> کارکرد مشکوک
         </span>
       )}
-      {flag && (
-        <span className="badge warn" title={FLAG_LABEL[flag] ?? flag}>
-          <AlertTriangle size={11} />{" "}
-          {flag === "price_outlier_high" ? "گران‌تر از مشابه‌ها" : "ارزان‌تر از مشابه‌ها"}
+      {(ad.cohort_flags ?? []).map((flag) => (
+        <span key={flag} className="badge warn" title={FLAG_LABEL[flag] ?? flag}>
+          <AlertTriangle size={11} /> {FLAG_SHORT[flag] ?? flag}
         </span>
-      )}
+      ))}
     </>
   );
 }
@@ -196,6 +202,7 @@ export function Explorer() {
     price_max: filters.get("price_max"),
     year_min: filters.get("year_min"),
     year_max: filters.get("year_max"),
+    listed_from: listedFrom(filters.getInt("listed_days")),
     mileage_min: filters.get("mileage_min"),
     mileage_max: filters.get("mileage_max"),
     transmission: filters.get("transmission"),
@@ -282,7 +289,7 @@ export function Explorer() {
                         </strong>
                         <span className="deal-price">{toman(ad.current_price)}</span>
                         <div className="row card-facts">
-                          <span>{ad.year_jalali ?? ad.year ?? "—"}</span>
+                          <span>{modelYear(ad.year_jalali, ad.year_calendar)}</span>
                           <span aria-hidden>·</span>
                           <span>{km(ad.mileage)}</span>
                           <span aria-hidden>·</span>
@@ -317,7 +324,7 @@ export function Explorer() {
                           <AdWarnings ad={ad} />
                         </div>
                       </td>
-                      <td className="num">{ad.year_jalali ?? ad.year ?? "—"}</td>
+                      <td className="num">{modelYear(ad.year_jalali, ad.year_calendar)}</td>
                       <td className="num">
                         {ad.mileage == null ? "—" : (
                           <span className={ad.mileage_implausible ? "warn" : undefined}>

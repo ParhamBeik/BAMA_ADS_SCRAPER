@@ -9,7 +9,10 @@ from django.utils import timezone
 
 from apps.core.coverage import coverage_state
 from apps.core.models import Model
-from apps.core.pricing import MILEAGE_BUCKETS, MIN_PEERS, percentile, scorable_rows
+from apps.core.pricing import MILEAGE_BUCKETS, MIN_PEERS, peer_distribution, scorable_rows
+from apps.core.quality import condition_band, without_cohort_outliers
+
+RANGE_KEYS = ("p10", "p25", "median", "p75", "p90", "width_pct", "wide", "clusters")
 
 
 def _bucket(km: int | None) -> str:
@@ -21,17 +24,11 @@ def _bucket(km: int | None) -> str:
 
 def _summary(rows: list[dict]) -> dict:
     prices = [row["current_price"] for row in rows]
-    enough = len(prices) >= MIN_PEERS
+    dist = peer_distribution(prices)
     return {
         "count": len(rows),
-        "thin": not enough,
-        "asking_range": ({
-            "p10": int(percentile(prices, 10)),
-            "p25": int(percentile(prices, 25)),
-            "median": int(percentile(prices, 50)),
-            "p75": int(percentile(prices, 75)),
-            "p90": int(percentile(prices, 90)),
-        } if enough else None),
+        "thin": len(prices) < MIN_PEERS,
+        "asking_range": {k: dist[k] for k in RANGE_KEYS} if dist else None,
         "observed_min": min(prices) if prices else None,
         "observed_max": max(prices) if prices else None,
     }
@@ -53,19 +50,22 @@ def model_exploration(model_id: int, *, variant_id: int | None = None,
                       condition: str | None = None, mileage_min: int | None = None,
                       mileage_max: int | None = None) -> dict:
     model = Model.objects.select_related("brand").get(pk=model_id)
-    base = scorable_rows().filter(model_id=model_id)
+    # The same population every range is built from: extremes and suspect
+    # prices (down payments, likely mis-filed ads) stay out.
+    base = without_cohort_outliers(scorable_rows()).filter(model_id=model_id)
     fields = ("code", "title", "current_price", "variant_id", "variant__name_fa",
               "year_jalali", "mileage", "body_status", "city_id", "city__name_fa",
               "publish_at", "last_seen_at")
     national = list(base.values(*fields))
     for row in national:
         row["mileage_bucket"] = _bucket(row["mileage"])
+        row["condition_band"] = condition_band(row["body_status"])
     selected = [
         row for row in national
         if (variant_id is None or row["variant_id"] == variant_id)
         and (year is None or row["year_jalali"] == year)
         and (city_id is None or row["city_id"] == city_id)
-        and (condition is None or row["body_status"] == condition)
+        and (condition is None or row["condition_band"] == condition)
         and (mileage_min is None or
              (row["mileage"] is not None and row["mileage"] >= mileage_min))
         and (mileage_max is None or
@@ -81,11 +81,14 @@ def model_exploration(model_id: int, *, variant_id: int | None = None,
         "model": {"id": model.pk, "name": model.name_fa, "brand": model.brand.name_fa},
         "basis": "observed Bama cash asking prices",
         "national": _summary(national),
-        "selected": _summary(selected),
+        # True peers only once trim, year and condition are all pinned; until
+        # then the range mixes cars that are not comparable, and says so.
+        "selected": {**_summary(selected),
+                     "strict": None not in (variant_id, year, condition)},
         "facets": {
             "variants": _facet(national, "variant_id", name_key="variant__name_fa"),
             "years": _facet(national, "year_jalali"),
-            "conditions": _facet(national, "body_status"),
+            "conditions": _facet(national, "condition_band"),
             "mileage": _facet(national, "mileage_bucket"),
             "cities": _facet(national, "city_id", name_key="city__name_fa"),
         },

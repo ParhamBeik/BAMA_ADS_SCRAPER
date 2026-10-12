@@ -20,17 +20,21 @@ import { Link } from "react-router-dom";
 import { ArrowLeft, ArrowUpDown, X } from "lucide-react";
 import { api } from "../api";
 import { qs, useFilters } from "../filters";
-import { km, num, toman } from "../format";
-import { Async, Card, Fa, ListingActions, Thumb } from "../ui";
+import { conditionLabel, km, num, toman } from "../format";
+import { Async, Card, Fa, ListingActions, RangeNotes, Thumb } from "../ui";
+import type { Distribution } from "../ui";
 import { ModelCombobox, type ModelRow } from "../components/ModelCombobox";
 import { Button } from "../components/ui/button";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "../components/ui/select";
 
-type Range = { p10: number; p25: number; median: number; p75: number; p90: number };
+type Range = Pick<Distribution, "p10" | "p25" | "median" | "p75" | "p90" | "width_pct"
+  | "wide" | "clusters">;
 type Summary = { count: number; thin: boolean; asking_range: Range | null;
-  observed_min: number | null; observed_max: number | null };
+  observed_min: number | null; observed_max: number | null;
+  /** True once trim, year and condition are all pinned: the range is peers. */
+  strict?: boolean };
 type Facet = Summary & { value: string | number | null; label: string | number | null };
 type Ad = { code: string; title: string; current_price: number; year_jalali: number | null;
   mileage: number | null; body_status: string; city__name_fa: string | null;
@@ -72,6 +76,14 @@ function PriceSummary({ title, summary, emphasis = false }: {
             <b className="font-mono">{toman(summary.asking_range.p10)}</b> تا{" "}
             <b className="font-mono">{toman(summary.asking_range.p90)}</b>
           </p>
+          <RangeNotes distribution={{ ...summary.asking_range, count: summary.count,
+            thin: summary.thin } as Distribution} />
+          {summary.strict === false && (
+            <p className="stat-sub">
+              این بازه خودروهای ناهمسان را کنار هم گذاشته است. برای بازه‌ی دقیق، تیپ، سال ساخت و
+              وضعیت بدنه را انتخاب کنید.
+            </p>
+          )}
         </>
       ) : (
         <p>نمونه برای بازهٔ قابل اتکا کافی نیست. این آگهی‌ها همچنان شواهد واقعی‌اند.</p>
@@ -161,12 +173,11 @@ export function ModelExplorer() {
       {model && <Async query={exploration}>
         {(data) => {
           // Everything in the model page's selection that the listings page
-          // can also filter on. Condition is left out on purpose: here it is
-          // Bama's raw body-status text, there it is the four-band grouping,
-          // and passing one as the other would silently match nothing.
+          // can also filter on; both speak the same four condition bands.
           const toListings = `/explore${qs({
             model: data.model.id,
             variant: params.variant,
+            condition: params.condition,
             year_min: params.year, year_max: params.year,
             city: params.city,
             mileage_min: params.mileage_min, mileage_max: params.mileage_max,
@@ -186,6 +197,7 @@ export function ModelExplorer() {
                     options={[...data.facets.years].sort((a, b) => Number(b.value) - Number(a.value))}
                     onChange={(value) => filters.set({ year: value })} />
                   <FacetSelect label="وضعیت بدنه" value={params.condition} options={data.facets.conditions}
+                    format={(o) => conditionLabel(o.value)}
                     onChange={(value) => filters.set({ condition: value })} />
                   <FacetSelect label="شهر" value={params.city} options={data.facets.cities}
                     onChange={(value) => filters.set({ city: value })} />

@@ -3,8 +3,8 @@ import { useMlEnabled } from "../auth";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
-import { Async, BamaLink, FLAG_LABEL, Fa, ListingActions, PriceBar, PriceVerdict, Provenance } from "../ui";
-import { fa, faDate, num, pct, toman } from "../format";
+import { Async, BamaLink, FLAG_LABEL, Fa, ListingActions, PriceBar, PriceVerdict, Provenance, RangeNotes } from "../ui";
+import { bothDates, fa, faDate, modelYear, num, pct, toman } from "../format";
 import type { Basis, Distribution, Verdict } from "../ui";
 
 type Ad = {
@@ -14,8 +14,11 @@ type Ad = {
   model_name: string;
   variant_name: string;
   year_jalali: number | null;
+  year_calendar?: string;
   mileage: number | null;
   current_price: number | null;
+  first_seen_at?: string | null;
+  publish_at?: string | null;
   transmission: string;
   body_type: string;
   fuel: string;
@@ -61,6 +64,8 @@ type FairPrice = {
   peer_count?: number;
   cohort_stale?: boolean;
   distribution?: Distribution;
+  /** Codes of the peers, sent only for a thin group so it can be checked. */
+  peers?: string[];
   as_of?: string;
   methodology_version?: number;
   coverage?: Record<string, unknown>;
@@ -252,7 +257,11 @@ export function ListingDetail() {
                       sentences made the reader parse nine lines to find the
                       one fact they came for. */}
                   <dl className="spec-grid">
-                    <Spec label="سال ساخت">{data.year_jalali ?? "—"}</Spec>
+                    <Spec label="سال ساخت">{modelYear(data.year_jalali, data.year_calendar)}</Spec>
+                    {/* Bama's date resets whenever the seller bumps the ad,
+                        so the first sighting is the honest "listed on". */}
+                    <Spec label="اولین بار دیده‌شده">{bothDates(data.first_seen_at)}</Spec>
+                    <Spec label="آخرین به‌روزرسانی در باما">{bothDates(data.publish_at)}</Spec>
                     {/* The unit is not decoration: "262,000" alone is a
                         number the reader has to guess the meaning of. */}
                     <Spec label="کارکرد">
@@ -357,11 +366,13 @@ export function ListingDetail() {
                       </td>
                     </tr>
                   )}
-                  {fp.distribution?.p10 != null && (
+                  {/* The range is the middle half of peer asks, the same
+                      P25-P75 every screen shows. */}
+                  {fp.distribution?.p25 != null && (
                     <tr>
-                      <th>بازه‌ی رایج</th>
+                      <th>بازه‌ی قیمت</th>
                       <td className="num">
-                        {toman(fp.distribution.p10)} — {toman(fp.distribution.p90)}
+                        {toman(fp.distribution.p25)} — {toman(fp.distribution.p75)}
                       </td>
                     </tr>
                   )}
@@ -382,6 +393,15 @@ export function ListingDetail() {
               </table>
               {/* Where this car sits among its peers, before the arithmetic. */}
               <PriceBar distribution={fp.distribution} asking={fp.asking} />
+              <RangeNotes distribution={fp.distribution} />
+              {fp.peers && fp.peers.length > 0 && (
+                <p className="stat-sub">
+                  آگهی‌های هم‌گروه:{" "}
+                  {fp.peers.map((c, i) => (
+                    <span key={c}>{i > 0 && " · "}<Link to={`/listing/${c}`}>{c}</Link></span>
+                  ))}
+                </p>
+              )}
               {/* Why the confidence may read lower than the peer count alone
                   suggests. Without this the badge appears to contradict the
                   number printed beside it. */}

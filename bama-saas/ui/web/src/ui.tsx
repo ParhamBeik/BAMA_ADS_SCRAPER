@@ -28,6 +28,9 @@ import { fa, latinDigits, num, pct, since, toman } from "./format";
 export const FLAG_LABEL: Record<string, string> = {
   price_outlier_low: "خیلی پایین‌تر از آگهی‌های مشابه — دلیلش را بررسی کنید",
   price_outlier_high: "خیلی بالاتر از آگهی‌های مشابه",
+  // Kept out of every price range; the listing itself stays visible.
+  suspect_installment_price: "احتمالاً پیش‌پرداخت اقساطی است، نه قیمت کامل",
+  suspect_misfiled: "قیمتش به تیپ یا سال دیگری از همین مدل می‌خورد — شاید اشتباه ثبت شده",
 };
 
 /**
@@ -753,13 +756,20 @@ export interface Distribution {
   count: number;
   /** The most commonly asked price, after rounding to ~1% of the cohort's scale. */
   mode?: { value: number; count: number; step: number };
+  /** Fewer than `pricing.MIN_PEERS` cars: a range, but no fair value. */
+  thin?: boolean;
+  /** P25-P75 as a share of the median; `wide` above `pricing.WIDE_RANGE_PCT`. */
+  width_pct?: number | null;
+  wide?: boolean;
+  /** An empty stretch splitting the prices into two real groups. */
+  clusters?: { gap_from: number; gap_to: number; below: number; above: number } | null;
 }
 
 /** Where an ask sits against what its peers support. */
 export type Verdict = "below" | "inline" | "above" | "unknown";
 
-/** Which comparison produced a valuation. Anything but `exact` widened the net. */
-export type Basis = "exact" | "model_year" | "model" | "none";
+/** Which comparison produced a valuation. Peers never widen past `exact`. */
+export type Basis = "exact" | "none";
 
 const VERDICT_WORD: Record<Verdict, string> = {
   below: "پایین‌تر از حد معمول",
@@ -768,21 +778,11 @@ const VERDICT_WORD: Record<Verdict, string> = {
   unknown: "بدون ارزیابی",
 };
 
-/**
- * How the comparison was built. This is not a footnote — it changes what the
- * number means, so it is printed with every valuation that used a wider net.
- * `model` has thrown away the model year, which for a depreciating car is a
- * large thing to throw away, and the reader has to be told.
- */
+/** Who the peers were, printed with every valuation. */
 const BASIS_NOTE: Record<Basis, (n: number) => string> = {
-  exact: (n) => `بر پایه ${fa(n)} آگهی با همان مدل، تیپ و سال ساخت.`,
-  model_year: (n) =>
-    `بر پایه ${fa(n)} آگهی از همین مدل و سال — تیپ در این مقایسه لحاظ نشده.`,
-  model: (n) =>
-    `بر پایه ${fa(n)} آگهی از همین مدل در همه‌ی سال‌ها — سال ساخت در این مقایسه لحاظ نشده.`,
+  exact: (n) => `بر پایه ${fa(n)} آگهی با همان مدل، تیپ، سال ساخت و وضعیت بدنه.`,
   none: () => "",
 };
-
 /**
  * The headline a buyer can act on without reading anything else.
  *
@@ -815,11 +815,36 @@ export function PriceVerdict({
       {basis && basis !== "none" && peerCount != null && (
         <span className="muted">{BASIS_NOTE[basis](peerCount)}</span>
       )}
-      {/* A widened comparison is capped at low confidence however many cars it
-          found, so this badge and the peer count above can look contradictory
-          unless the note explains which comparison ran. */}
       {confidence === "low" && (
         <span className="badge warn">اطمینان: کم</span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * What a reader must know before trusting a range: how many cars it came from,
+ * whether it is too loose to price by, and whether the prices split in two.
+ */
+export function RangeNotes({ distribution }: { distribution?: Distribution }) {
+  if (!distribution?.count) return null;
+  const { thin, wide, width_pct, clusters, count } = distribution;
+  if (!thin && !wide && !clusters) return null;
+  return (
+    <div className="stack" style={{ gap: 4 }}>
+      {thin && (
+        <p className="badge warn">بر پایه‌ی تنها {fa(count)} آگهی هم‌گروه — با احتیاط بخوانید.</p>
+      )}
+      {wide && (
+        <p className="badge warn">
+          بازه پهن است: نیمه‌ی میانی قیمت‌ها {pct(width_pct, 0)} از میانه را می‌پوشاند.
+        </p>
+      )}
+      {clusters && (
+        <p className="badge warn">
+          قیمت‌ها دو دسته‌اند: {fa(clusters.below)} آگهی تا {toman(clusters.gap_from)} و{" "}
+          {fa(clusters.above)} آگهی از {toman(clusters.gap_to)}.
+        </p>
       )}
     </div>
   );

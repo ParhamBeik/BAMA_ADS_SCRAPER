@@ -116,8 +116,10 @@ class AdSerializer(serializers.ModelSerializer):
         model = Ad
         fields = (
             "code", "brand_slug", "brand_name", "model_id", "model_name",
-            "variant_id", "variant_name", "year", "year_jalali", "mileage",
-            "current_price", "price_type", "publish_at", "last_seen_at", "title",
+            "variant_id", "variant_name", "year", "year_jalali", "year_gregorian",
+            "year_calendar", "mileage",
+            "current_price", "price_type", "publish_at", "first_seen_at", "last_seen_at",
+            "title",
             "transmission", "body_type", "fuel", "city_id", "city_name",
             "district", "body_status",
             "bama_url", "description", "image_url", "image_urls", "image_count",
