@@ -356,6 +356,9 @@ def prediction_for(code: str) -> dict | None:
     ``available: false`` refusal every other thin answer here produces, rather
     than into an empty object that renders as a chart of nothing.
     """
+    if not registry.ML_AVAILABLE:
+        # Paused or not installed: stored rows are kept but must not be served.
+        return None
     row = AdPrediction.objects.filter(ad_id=code).first()
     if row is None or row.price_p50 is None:
         return None
