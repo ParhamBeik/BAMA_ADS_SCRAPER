@@ -812,7 +812,7 @@ const VERDICT_WORD: Record<Verdict, string> = {
 
 /** Who the peers were, printed with every valuation. */
 const BASIS_NOTE: Record<Basis, (n: number) => string> = {
-  exact: (n) => `بر پایه ${fa(n)} آگهی با همان مدل، تیپ، سال ساخت و وضعیت بدنه.`,
+  exact: (n) => `${fa(n)} آگهی هم‌گروه`,
   none: () => "",
 };
 /**
