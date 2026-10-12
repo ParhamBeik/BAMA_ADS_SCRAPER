@@ -567,7 +567,7 @@ function BestBuys() {
       title="بهترین خریدهای امروز"
       action={
         <Button asChild variant="ghost" size="sm">
-          <Link to="/deals">همه معامله‌ها <ArrowLeft className="size-4" /></Link>
+          <Link to="/cars?deals=1">همه معامله‌ها <ArrowLeft className="size-4" /></Link>
         </Button>
       }
     >
@@ -626,6 +626,18 @@ export function Home() {
 
   return (
     <div className="stack">
+      {/* What most visitors came for, first: one car's price. */}
+      <div className="grid cols-2">
+        <Card title="قیمت یک خودرو">
+          <ModelCombobox
+            onSelect={(model) => model && navigate(`/price?model=${model.id}`)}
+            placeholder="نام مدل را بنویسید…"
+          />
+        </Card>
+        <Card title="با بودجه‌ی شما">
+          <Link to="/budget" className="btn">چه خودرویی می‌شود خرید؟</Link>
+        </Card>
+      </div>
       <div className="row between gap-y-2" style={{ marginBottom: 2 }}>
         <div className="min-w-0">
           <h1 style={{ margin: 0, fontSize: 22, letterSpacing: "-0.01em" }}>
@@ -731,19 +743,6 @@ export function Home() {
       <MoversPanel days={days} />
       <SupplyAndDemand days={days} />
       <BestBuys />
-
-      <Card title="یک خودرو را بررسی کنید">
-        <p className="stat-sub" style={{ marginTop: 0 }}>
-          روند قیمت، توزیع قیمت، افت ارزش و مدت ماندن در بازار — برای هر مدل، تیپ و
-          سال ساخت.
-        </p>
-        <div style={{ maxWidth: 360 }}>
-          <ModelCombobox
-            onSelect={(model) => model && navigate(`/analyse?model=${model.id}`)}
-            placeholder="نام مدل را بنویسید…"
-          />
-        </div>
-      </Card>
 
       <Async query={overview}>
         {(data) => (

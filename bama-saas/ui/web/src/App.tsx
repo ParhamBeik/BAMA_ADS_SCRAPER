@@ -30,15 +30,12 @@ import { Login } from "./pages/Login";
 
 const Home = lazy(() => import("./pages/Home").then((m) => ({ default: m.Home })));
 
-const Deals = lazy(() => import("./pages/Deals").then((m) => ({ default: m.Deals })));
-const Explorer = lazy(() =>
-  import("./pages/Explorer").then((m) => ({ default: m.Explorer })),
-);
+const Cars = lazy(() => import("./pages/Cars").then((m) => ({ default: m.Cars })));
 const ModelExplorer = lazy(() =>
   import("./pages/ModelExplorer").then((m) => ({ default: m.ModelExplorer })),
 );
 const Signup = lazy(() => import("./pages/Signup").then((m) => ({ default: m.Signup })));
-const Saved = lazy(() => import("./pages/Saved").then((m) => ({ default: m.Saved })));
+const Mine = lazy(() => import("./pages/Mine").then((m) => ({ default: m.Mine })));
 const ListingDetail = lazy(() =>
   import("./pages/ListingDetail").then((m) => ({ default: m.ListingDetail })),
 );
@@ -51,14 +48,6 @@ const Analyse = lazy(() =>
 );
 const Budget = lazy(() =>
   import("./pages/Budget").then((m) => ({ default: m.Budget })),
-);
-const Alerts = lazy(() =>
-  import("./pages/Alerts").then((m) => ({ default: m.Alerts })),
-);
-// Lazy like the rest: it is a page a reader opens once to understand the
-// numbers, not one they live on, and it carries a page of Persian prose.
-const Account = lazy(() =>
-  import("./pages/Account").then((m) => ({ default: m.Account })),
 );
 const Methodology = lazy(() =>
   import("./pages/Methodology").then((m) => ({ default: m.Methodology })),
@@ -191,17 +180,22 @@ function AppShell() {
       <main id="main" tabIndex={-1}
             className="mx-auto max-w-[1600px] px-4 pt-2 pb-24 sm:px-6 lg:pb-16">
         <Routes>
-          <Route path="/" element={<Navigate to="/models" replace />} />
-          <Route path="/models" element={<Lazy><ModelExplorer /></Lazy>} />
-          <Route path="/pulse" element={<Lazy><Home /></Lazy>} />
-          <Route path="/deals" element={<Lazy><Deals /></Lazy>} />
-          <Route path="/explore" element={<Lazy><Explorer /></Lazy>} />
+          {/* Four tabs: home, price lookup, cars, mine. */}
+          <Route path="/" element={<Lazy><Home /></Lazy>} />
+          <Route path="/price" element={<Lazy><ModelExplorer /></Lazy>} />
+          <Route path="/cars" element={<Lazy><Cars /></Lazy>} />
+          <Route path="/mine" element={<Lazy><Mine /></Lazy>} />
           <Route path="/analyse" element={<Lazy><Analyse /></Lazy>} />
           <Route path="/budget" element={<Lazy><Budget /></Lazy>} />
-          <Route path="/alerts" element={<Lazy><Alerts /></Lazy>} />
           <Route path="/methodology" element={<Lazy><Methodology /></Lazy>} />
-          <Route path="/saved" element={<Lazy><Saved /></Lazy>} />
-          <Route path="/account" element={<Lazy><Account /></Lazy>} />
+          {/* Where the pages were before the four tabs, filters kept. */}
+          <Route path="/models" element={<Moved to="/price" />} />
+          <Route path="/pulse" element={<Moved to="/" />} />
+          <Route path="/explore" element={<Moved to="/cars" />} />
+          <Route path="/deals" element={<Moved to="/cars" add={{ deals: "1" }} />} />
+          <Route path="/saved" element={<Moved to="/mine" />} />
+          <Route path="/alerts" element={<Moved to="/mine" add={{ tab: "alerts" }} />} />
+          <Route path="/account" element={<Moved to="/mine" add={{ tab: "account" }} />} />
           <Route path="/listing/:code" element={<Lazy><ListingDetail /></Lazy>} />
           <Route
             path="/control"
@@ -249,6 +243,14 @@ function ScrollToTop() {
     if (navigationType !== "POP") window.scrollTo(0, 0);
   }, [pathname, navigationType]);
   return null;
+}
+
+/** An old address, sent to its tab with its query string intact. */
+function Moved({ to, add }: { to: string; add?: Record<string, string> }) {
+  const params = new URLSearchParams(useLocation().search);
+  for (const [key, value] of Object.entries(add ?? {})) params.set(key, value);
+  const query = params.toString();
+  return <Navigate to={query ? `${to}?${query}` : to} replace />;
 }
 
 /** `/research/42` was the old per-model analysis URL; it is now a scope query. */

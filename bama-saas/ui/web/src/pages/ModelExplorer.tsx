@@ -161,9 +161,14 @@ export function ModelExplorer() {
             <ModelCombobox value={model} onSelect={pick} />
           </div>
           {model && (
-            <Button variant="ghost" size="sm" onClick={() => pick(null)}>
-              <X className="size-4" /> مدل دیگر
-            </Button>
+            <>
+              <Button variant="ghost" size="sm" onClick={() => pick(null)}>
+                <X className="size-4" /> مدل دیگر
+              </Button>
+              <Button asChild variant="ghost" size="sm">
+                <Link to={`/analyse${qs({ model })}`}>روند و تحلیل</Link>
+              </Button>
+            </>
           )}
         </div>
       </Card>
@@ -174,7 +179,7 @@ export function ModelExplorer() {
         {(data) => {
           // Everything in the model page's selection that the listings page
           // can also filter on; both speak the same four condition bands.
-          const toListings = `/explore${qs({
+          const toListings = `/cars${qs({
             model: data.model.id,
             variant: params.variant,
             condition: params.condition,

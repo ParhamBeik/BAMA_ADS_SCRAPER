@@ -501,7 +501,7 @@ function ScopedDeals({ brand, model }: { brand?: string; model?: string }) {
       title="معامله‌های این دسته"
       action={
         <Button asChild variant="ghost" size="sm">
-          <Link to={`/deals${qs({ brand, model })}`}>همه معامله‌ها</Link>
+          <Link to={`/cars${qs({ deals: 1, brand, model })}`}>همه معامله‌ها</Link>
         </Button>
       }
     >

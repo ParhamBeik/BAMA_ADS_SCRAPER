@@ -214,7 +214,7 @@ export function ListingDetail() {
                 first of them pointing at the home page and labelled as the
                 deal board. A listing is reached from the Explorer. */}
             <div className="breadcrumb">
-              <Link to="/explore">جست‌وجوی آگهی‌ها</Link> / <Fa>{data.title}</Fa>
+              <Link to="/cars">خودروها</Link> / <Fa>{data.title}</Fa>
             </div>
             <div className="detail-layout">
               <Gallery
@@ -522,7 +522,7 @@ function DealVerdict({ code }: { code: string }) {
           </li>
         )}
       </ul>
-      <Link className="btn" to="/deals">همه معامله‌ها</Link>
+      <Link className="btn" to="/cars?deals=1">همه معامله‌ها</Link>
     </div>
   );
 }
