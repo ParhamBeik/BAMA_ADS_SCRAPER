@@ -23,7 +23,7 @@ import { AlertTriangle } from "lucide-react";
 import { api } from "../api";
 import type { Envelope } from "../api";
 import { qs, useFilters } from "../filters";
-import { Async, Card, Fa, Provenance, SeriesCaveats, Stat, Table } from "../ui";
+import { Async, Card, Fa, HowWeKnow, Provenance, SeriesCaveats, Stat, Table } from "../ui";
 import { CONDITION_BANDS, fa, num, pct, toman } from "../format";
 import { ScopePicker, useScopeLabel } from "../components/ScopePicker";
 import { WindowPicker } from "../components/WindowPicker";
@@ -180,14 +180,14 @@ function TrendPanel({ url }: { url: string }) {
                 <div className="state">برای رسم نمودار دست‌کم دو روز داده لازم است.</div>
               )}
               {last && (
-                <p className="empty-hint">
+                <HowWeKnow><p>
                   در آخرین روزِ دارای پوشش کامل از{" "}
                   {num(data.sample.cohort_count)} دسته و{" "}
                   {num(data.sample.ad_count)} آگهی ساخته شده است.
                   هر دسته تنها با خودش مقایسه می‌شود، پس ورود و خروج آگهی‌ها شاخص را
                   جابه‌جا نمی‌کند — روزهای کم‌پوشش هم اصلاً وارد محاسبه نمی‌شوند،
                   چون آنجا «ترکیب آگهی‌ها» همان بخشی است که خزنده به آن نرسیده.
-                </p>
+                </p></HowWeKnow>
               )}
               <Provenance envelope={data} />
             </>
@@ -322,7 +322,7 @@ function DistributionPanel({ query }: { query: ReturnType<typeof useQuery<Distri
               {/* What sits outside the drawn band, stated rather than dropped.
                   The band is p10-p90 because one typo listing at 5.8 trillion
                   toman would otherwise put every real car in the first bar. */}
-              <p className="empty-hint">
+              <HowWeKnow><p>
                 نمودار بازه {toman(h.from)} تا {toman(h.to)} تومان را نشان می‌دهد.
                 {h.below > 0 && ` ${num(h.below)} آگهی ارزان‌تر`}
                 {h.below > 0 && h.above > 0 && " و"}
@@ -330,7 +330,7 @@ function DistributionPanel({ query }: { query: ReturnType<typeof useQuery<Distri
                 {(h.below > 0 || h.above > 0) && " بیرون از این بازه‌اند و در نمودار دیده نمی‌شوند."}
                 {" "}آگهی‌های اقساطی کنار گذاشته شده‌اند، چون عددشان پیش‌پرداخت است نه
                 قیمت خودرو.
-              </p>
+              </p></HowWeKnow>
 
               {data.cities.length > 1 && (
                 <Table head={["شهر", "تعداد آگهی", "سهم"]}>
@@ -475,11 +475,11 @@ function SurvivalPanel({
             {/* The span every figure above is bounded by, stated the way the
                 price index states its own. "4 روز" with nothing saying it came
                 from a fortnight of history reads as a fact about the market. */}
-            <p className="empty-hint">
+            <HowWeKnow><p>
               روی {fa(data.clean_days)} روز سابقه قابل اتکا محاسبه شده و طولانی‌ترین
               آگهیِ زیر نظر {fa(Math.round(data.observed_days))} روز است — هیچ‌کدام
               از این اعداد درباره بازه‌های بلندتر از آن چیزی نمی‌گویند.
-            </p>
+            </p></HowWeKnow>
             <Provenance envelope={data} />
           </>
         )}
@@ -512,10 +512,10 @@ function ScopedDeals({ brand, model }: { brand?: string; model?: string }) {
             return (
               <div className="state">
                 <strong>امروز آگهی زیرقیمتی در این دسته نیست.</strong>
-                <p className="empty-hint">
+                <HowWeKnow><p>
                   فهرست معامله‌ها فقط آگهی‌های تازه را می‌سنجد، پس خالی بودنش یعنی
                   همین امروز چیزی پیدا نشده، نه اینکه این خودرو ارزان نمی‌شود.
-                </p>
+                </p></HowWeKnow>
               </div>
             );
           }
@@ -568,9 +568,7 @@ export function Analyse() {
     <div className="stack">
       <div>
         <h1 style={{ margin: 0, fontSize: 22, letterSpacing: "-0.01em" }}>تحلیل بازار</h1>
-        <p className="stat-sub" style={{ margin: 0 }}>
-          هرچه داده اجازه بدهد، از کل بازار تا یک تیپ و سال ساخت مشخص.
-        </p>
+        
       </div>
 
       <Card
@@ -616,11 +614,11 @@ export function Analyse() {
         <Card title="افت ارزش و مدت ماندن در بازار">
           <div className="state">
             <strong>برای این دو تحلیل یک مدل انتخاب کنید.</strong>
-            <p className="empty-hint">
+            <HowWeKnow><p>
               افت ارزش، مقایسه سال‌های ساخت یک مدل با یکدیگر است و مدت ماندن در بازار
               هم برای هر مدل جداگانه معنا دارد — در سطح کل بازار عددی که بشود به آن
               اتکا کرد به دست نمی‌آید.
-            </p>
+            </p></HowWeKnow>
           </div>
         </Card>
       )}

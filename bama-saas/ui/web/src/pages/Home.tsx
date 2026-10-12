@@ -24,12 +24,12 @@ import { lazy, Suspense } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import {
-  AlertTriangle, ArrowLeft, PackagePlus, Timer, TrendingDown, TrendingUp,
+  AlertTriangle, ArrowLeft, Timer, TrendingDown, TrendingUp,
 } from "lucide-react";
 import { api } from "../api";
 import type { Envelope } from "../api";
 import { qs, useFilters } from "../filters";
-import { Async, Card, Fa, Provenance, SeriesCaveats, Stat, Table, type IndexSample } from "../ui";
+import { Async, Card, Fa, HowWeKnow, Provenance, SeriesCaveats, Stat, Table, type IndexSample } from "../ui";
 import { fa, num, pct } from "../format";
 import { Sparkline } from "../components/Sparkline";
 import { WindowPicker } from "../components/WindowPicker";
@@ -257,7 +257,6 @@ function MarketReadPanel({ days }: { days: number }) {
               <p style={{ margin: "0 0 4px", fontSize: 18, fontWeight: 700 }}>
                 {position.title}
               </p>
-              <p className="stat-sub" style={{ marginTop: 0 }}>{position.advice}</p>
 
               {/* The two inputs, never hidden behind the conclusion. A reader
                   who disagrees needs to see which half they disagree with. */}
@@ -281,17 +280,19 @@ function MarketReadPanel({ days }: { days: number }) {
               </div>
 
               {data.price_trend?.turning && (
-                <p className="badge warn" style={{ display: "block", lineHeight: 1.7 }}>
-                  <AlertTriangle size={11} /> روند هفته گذشته خلاف جهت بلندمدت است —
-                  ممکن است بازار در حال چرخش باشد.
-                </p>
+                <span className="badge warn">
+                  <AlertTriangle size={11} /> در حال چرخش
+                </span>
               )}
 
-              <p className="empty-hint">
+              <HowWeKnow>
+                <p>{position.advice}</p>
+                <p>
                 «جهت قیمت» از شیب شاخص هم‌ترکیب می‌آید، نه از اختلاف دو روز؛ و
                 «عرضه و تقاضا» نسبت آگهی‌های خارج‌شده به آگهی‌های تازه در همین
                 بازه است. هیچ‌کدام پیش‌بینی نیستند — وضعیت امروزند.
               </p>
+              </HowWeKnow>
               <Provenance envelope={data} compact />
             </>
           );
@@ -430,9 +431,6 @@ function MoversPanel({ days }: { days: number }) {
                     <div className="card-title">
                       <AlertTriangle size={12} /> در حال چرخش
                     </div>
-                    <p className="stat-sub" style={{ marginTop: 0 }}>
-                      روند هفته گذشته این دسته‌ها خلاف جهت بلندمدتشان است.
-                    </p>
                     <MoversTable
                       rows={data.turning}
                       direction="up"
@@ -442,13 +440,15 @@ function MoversPanel({ days }: { days: number }) {
                   </div>
                 )}
 
-                <p className="empty-hint">
+                <HowWeKnow>
+                  <p>
                   از میان {num(data.scopes_ranked)} دسته‌ای که
                   سابقه کافی داشتند. «تغییر» حرکت شاخص هم‌ترکیب بین ابتدا و انتهای
                   بازه است و «روند فعلی» شیب همه روزها — یک دسته می‌تواند در کل
                   بازه بالا رفته باشد ولی همین حالا رو به پایین باشد. ستون‌های
                   آگهی و دسته می‌گویند این اعداد بر چه پایه‌ای ساخته شده‌اند.
                 </p>
+                </HowWeKnow>
                 <Provenance envelope={data} compact />
               </>
             )}
@@ -474,9 +474,6 @@ function SupplyAndDemand({ days }: { days: number }) {
   return (
     <div className="grid cols-2">
       <Card title="بیشترین آگهی تازه">
-        <p className="stat-sub" style={{ marginTop: 0 }}>
-          <PackagePlus size={12} /> چه خودروهایی بیشتر از همه به بازار اضافه شده‌اند
-        </p>
         <Async query={arrivals} shape="table">
           {(data) => (
             <>
@@ -508,18 +505,15 @@ function SupplyAndDemand({ days }: { days: number }) {
             30 days against a much shorter clean history, the endpoint refused
             and this card was empty for every reader, every time. */}
         <p className="stat-sub" style={{ marginTop: 0 }}>
-          <Timer size={12} /> چه سهمی از آگهی‌ها ظرف{" "}
-          {fa(turnover.data?.window_days ?? days)} روز از سایت برداشته شدند
+          <Timer size={12} /> خروج ظرف {fa(turnover.data?.window_days ?? days)} روز
         </p>
         <Async query={turnover} shape="table">
           {(data) => (
             <>
               {data.clamped && (
-                <p className="badge warn" style={{ display: "block", lineHeight: 1.7 }}>
-                  <AlertTriangle size={11} /> بازه به {fa(data.window_days)} روز کوتاه
-                  شد، چون سابقه قابل اتکای ما {fa(data.clean_days)} روز است و برای
-                  اندازه‌گیری «خروج ظرف {fa(data.requested_days)} روز» کافی نیست.
-                </p>
+                <span className="badge warn">
+                  <AlertTriangle size={11} /> {fa(data.window_days)} روز
+                </span>
               )}
               <Table head={["خودرو", "خارج‌شده", "از میان"]}>
                 {data.fastest.map((row) => (
@@ -540,12 +534,14 @@ function SupplyAndDemand({ days }: { days: number }) {
               {/* The distinction the data can actually support. Bama publishes
                   no reason for a listing disappearing, so "sold" would be an
                   assertion nothing here observed. */}
-              <p className="empty-hint">
+              <HowWeKnow>
+                <p>
                 فقط آگهی‌هایی شمرده می‌شوند که دست‌کم {fa(data.window_days)} روز پیش
                 ثبت شده‌اند، تا هر آگهی فرصت کامل این بازه را داشته باشد. «خارج‌شده»
                 یعنی از باما برداشته شده — فروش، پایان اعتبار یا انصراف فروشنده، که
                 باما تفاوتشان را اعلام نمی‌کند.
               </p>
+              </HowWeKnow>
               <Provenance envelope={data} compact />
             </>
           )}
@@ -580,18 +576,6 @@ function BestBuys() {
           const ceiling = board.window?.ceiling_pct ?? 25;
           return (
             <>
-              {/* Both thresholds are measured from the current board, so the
-                  page quotes them rather than describing a filter whose value
-                  it does not know. */}
-              <p className="stat-sub" style={{ marginTop: 0 }}>
-                آگهی‌های {fa(board.window?.window_days)} روز گذشته که دست‌کم{" "}
-                {/* One decimal: the floor is a percentile of today's board and
-                    "7.15%" offers a precision that is an artefact of which
-                    listings happen to be live this hour. */}
-                {board.window ? pct(board.window.min_discount_pct, 1) : "—"} زیر
-                میانه قیمت آگهی‌های مشابه خود هستند. خودروهایی که خودِ آگهی
-                ارزانی‌شان را توضیح می‌دهد در «نیازمند بررسی»‌اند.
-              </p>
               <div className="card-grid">
                 {rows.map((deal) => (
                   <DealCard
@@ -643,9 +627,6 @@ export function Home() {
           <h1 style={{ margin: 0, fontSize: 22, letterSpacing: "-0.01em" }}>
             نبض بازار خودرو
           </h1>
-          <p className="stat-sub" style={{ margin: 0 }}>
-            وضعیت امروز بازار، بر پایه آگهی‌های باما
-          </p>
         </div>
         <WindowPicker className="w-full sm:w-auto" defaultDays={DEFAULT_DAYS} />
       </div>
@@ -705,12 +686,12 @@ export function Home() {
                     so the two are never read as the same number. */}
                 <SeriesCaveats window={data.window} sample={data.sample} />
                 {last && (
-                  <p className="stat-sub">
+                  <HowWeKnow><p>
                     ساخته‌شده از {num(data.sample.cohort_count)} دسته
                     و {num(data.sample.ad_count)} آگهی در آخرین روزِ
                     دارای پوشش کامل. هر دسته فقط با خودش مقایسه می‌شود، تا تغییر در
                     ترکیب آگهی‌های موجود به‌اشتباه حرکت قیمت به نظر نرسد.
-                  </p>
+                  </p></HowWeKnow>
                 )}
                 {points.length ? (
                   <Suspense fallback={<p className="muted">…</p>}>

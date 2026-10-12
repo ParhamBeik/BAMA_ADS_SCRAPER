@@ -13,7 +13,7 @@
  */
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Database, ExternalLink, Heart, X } from "lucide-react";
+import { AlertTriangle, Database, ExternalLink, Heart, Info, X } from "lucide-react";
 import { Link } from "react-router-dom";
 import { ApiError, api, type Envelope, type Paginated } from "./api";
 import { useAuth } from "./auth";
@@ -151,6 +151,26 @@ export function Card({
       )}
       {children}
     </section>
+  );
+}
+
+/**
+ * The one place an explanation may live.
+ *
+ * Screens show numbers, controls and short tags; every sentence that explains
+ * how a number was made sits behind this tap, closed by default, so the page
+ * reads at a glance and the reasoning is one tap away. Native <details>: it
+ * opens with a tap or the keyboard and needs no state.
+ */
+export function HowWeKnow({ children, label = "چطور می‌دانیم؟" }: {
+  children: ReactNode;
+  label?: string;
+}) {
+  return (
+    <details className="how-we-know">
+      <summary><Info size={12} aria-hidden /> {label}</summary>
+      <div className="how-we-know-body">{children}</div>
+    </details>
   );
 }
 
@@ -826,38 +846,54 @@ export function PriceVerdict({
 }
 
 /**
- * What a reader must know before trusting a range: how many cars it came from,
- * whether it is too loose to price by, and whether the prices split in two.
+ * What a reader must know before trusting a range, as short tags — how many
+ * cars, too loose, old prices, two price groups — with the full sentences
+ * behind one "how we know" tap. `children` adds the caller's own explanation
+ * to that same tap, so a range never carries two disclosures.
  */
-export function RangeNotes({ distribution }: { distribution?: Distribution }) {
-  if (!distribution?.count) return null;
-  const { thin, wide, width_pct, clusters, count, old_price_pct, old_price_days } = distribution;
+export function RangeNotes({ distribution, children }: {
+  distribution?: Distribution;
+  children?: ReactNode;
+}) {
+  const d = distribution?.count ? distribution : undefined;
   // Old asks stay in the range — they are real prices, not adjusted guesses —
   // but a market moving ~10% a month makes their share worth saying.
-  const old = old_price_pct != null && old_price_pct >= 25;
-  if (!thin && !wide && !clusters && !old) return null;
+  const old = d?.old_price_pct != null && d.old_price_pct >= 25;
+  const tags = d ? [
+    d.thin && `تنها ${fa(d.count)} آگهی`,
+    d.wide && "بازه‌ی پهن",
+    old && `${fa(d.old_price_pct)}٪ قیمت قدیمی`,
+    d.clusters && "دو دسته قیمت",
+  ].filter(Boolean) as string[] : [];
+  if (!tags.length && !children) return null;
   return (
-    <div className="stack" style={{ gap: 4 }}>
-      {thin && (
-        <p className="badge warn">بر پایه‌ی تنها {fa(count)} آگهی هم‌گروه — با احتیاط بخوانید.</p>
+    <div>
+      {tags.length > 0 && (
+        <div className="row" style={{ gap: 4 }}>
+          {tags.map((t) => <span key={t} className="badge warn">{t}</span>)}
+        </div>
       )}
-      {wide && (
-        <p className="badge warn">
-          بازه پهن است: نیمه‌ی میانی قیمت‌ها {pct(width_pct, 0)} از میانه را می‌پوشاند.
+      <HowWeKnow>
+        <p>
+          بازه، نیمه‌ی میانی قیمت‌های درخواستی نقدی است: یک‌چهارم آگهی‌ها ارزان‌تر و
+          یک‌چهارم گران‌ترند.
         </p>
-      )}
-      {old && (
-        <p className="badge warn">
-          {fa(old_price_pct)}٪ از این قیمت‌ها بیش از {fa(old_price_days)} روز پیش ثبت شده‌اند؛ بازار
-          از آن زمان جابه‌جا شده است.
-        </p>
-      )}
-      {clusters && (
-        <p className="badge warn">
-          قیمت‌ها دو دسته‌اند: {fa(clusters.below)} آگهی تا {toman(clusters.gap_from)} و{" "}
-          {fa(clusters.above)} آگهی از {toman(clusters.gap_to)}.
-        </p>
-      )}
+        {d?.thin && <p>فقط {fa(d.count)} آگهی هم‌گروه وجود دارد؛ با احتیاط بخوانید.</p>}
+        {d?.wide && <p>نیمه‌ی میانی قیمت‌ها {pct(d.width_pct, 0)} از میانه را می‌پوشاند.</p>}
+        {old && (
+          <p>
+            {fa(d!.old_price_pct)}٪ از این قیمت‌ها بیش از {fa(d!.old_price_days)} روز پیش ثبت
+            شده‌اند و بازار از آن زمان جابه‌جا شده است.
+          </p>
+        )}
+        {d?.clusters && (
+          <p>
+            قیمت‌ها دو دسته‌اند: {fa(d.clusters.below)} آگهی تا {toman(d.clusters.gap_from)} و{" "}
+            {fa(d.clusters.above)} آگهی از {toman(d.clusters.gap_to)}.
+          </p>
+        )}
+        {children}
+      </HowWeKnow>
     </div>
   );
 }

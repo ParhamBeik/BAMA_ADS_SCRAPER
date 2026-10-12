@@ -30,7 +30,7 @@ import { Wallet } from "lucide-react";
 import { api } from "../api";
 import type { Envelope } from "../api";
 import { qs, useFilters } from "../filters";
-import { Async, Card, Fa, NumberInput, Provenance, Stat, Table } from "../ui";
+import { Async, Card, Fa, NumberInput, Provenance, Stat, Table, HowWeKnow } from "../ui";
 import { fa, km, num, parseBudget, pct, toman } from "../format";
 import { Button } from "../components/ui/button";
 
@@ -97,9 +97,7 @@ export function Budget() {
         <h1 style={{ margin: 0, fontSize: 22, letterSpacing: "-0.01em" }}>
           با بودجه‌ام چه می‌توانم بخرم؟
         </h1>
-        <p className="stat-sub" style={{ margin: 0 }}>
-          مبلغی که در نظر دارید را بنویسید تا ببینید کدام خودروها در دسترس‌اند.
-        </p>
+        
       </div>
 
       <Card title="بودجه شما">
@@ -160,11 +158,11 @@ export function Budget() {
         <Card>
           <div className="state">
             <strong>مبلغی وارد کنید.</strong>
-            <p className="empty-hint">
+            <HowWeKnow><p>
               نتیجه بر پایه آگهی‌های فعال و قیمت‌دار است — همان آگهی‌هایی که در
               بخش جست‌وجو می‌بینید. آگهی‌های اقساطی کنار گذاشته شده‌اند، چون
               عددشان پیش‌پرداخت است نه قیمت خودرو.
-            </p>
+            </p></HowWeKnow>
           </div>
         </Card>
       ) : (
@@ -245,12 +243,12 @@ export function Budget() {
                 </Table>
 
                 {/* The distinction the two count columns carry, said once. */}
-                <p className="empty-hint">
+                <HowWeKnow><p>
                   «چند درصد این دسته» یعنی بودجه شما چه سهمی از آگهی‌های آن خودرو
                   را پوشش می‌دهد — نه اینکه چقدر ارزان است. ستون «زیر بودجه»
                   آگهی‌هایی است که دقیقاً تا سقف مبلغ شما هستند؛ بقیه تا{" "}
                   {fa(data.tolerance_pct)}% بالاترند و برای همین نمایش داده شده‌اند.
-                </p>
+                </p></HowWeKnow>
                 <Provenance envelope={data} />
               </>
             )}

@@ -30,7 +30,7 @@ import { api } from "../api";
 import { useAuth, useMlEnabled } from "../auth";
 import { FilterPanel } from "@/components/FilterPanel";
 import { qs, useFilters } from "../filters";
-import { Async, BamaLink, Card, ConfidenceDots, Fa, ListingActions, NumberInput, Pager, Provenance, Table } from "../ui";
+import { Async, BamaLink, Card, ConfidenceDots, Fa, HowWeKnow, ListingActions, NumberInput, Pager, Provenance, Table } from "../ui";
 import { fa, pct, toman } from "../format";
 import { DealCard, conditionNote, type Deal, type DealBoard } from "../components/DealCard";
 import { ViewToggle, useListView } from "../components/ViewToggle";
@@ -350,15 +350,14 @@ export function Deals() {
         </div>
       </div>
 
-      {/* The thresholds are computed, so the page quotes them rather than
-          describing a filter whose value it does not know. */}
-      <p className="muted">
+      <HowWeKnow>
+        <p>
         {band === "top" && (
           <>
             خودروهایی که قیمتشان در <b>۱۴ روز گذشته</b> ثبت شده و از بیشتر
             آگهی‌های هم‌تیپ، هم‌سال و هم‌وضعیتِ ماه اخیر ارزان‌ترند، کارکردشان
             عادی است و در متن آگهی دلیلی برای ارزانی دیده نمی‌شود.
-            <span className="hide-narrow">
+            <span>
               {" "}حد ثابتی برای درصد تخفیف نیست؛ معیار، گروه آگهی‌های تازه
               است. آگهی‌هایی که یکی از این شرط‌ها را ندارند، با ذکر دلیل در زبانه
               «نیازمند بررسی»‌اند.
@@ -385,7 +384,8 @@ export function Deals() {
             بودن یا ایراد فنی. دلیل روی هر کارت نوشته شده است.
           </>
         )}
-      </p>
+        </p>
+      </HowWeKnow>
 
       <FilterPanel showSpecs={false} showListed={false} showConfidence showSearch={false} />
 
