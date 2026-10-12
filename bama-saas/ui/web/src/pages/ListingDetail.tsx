@@ -3,7 +3,7 @@ import { useMlEnabled } from "../auth";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
-import { Async, BamaLink, FLAG_LABEL, Fa, ListingActions, PriceBar, PriceVerdict, Provenance } from "../ui";
+import { Async, BamaLink, FLAG_LABEL, Fa, ListingActions, PriceBar, PriceVerdict, Provenance, RangeNotes } from "../ui";
 import { fa, faDate, num, pct, toman } from "../format";
 import type { Basis, Distribution, Verdict } from "../ui";
 
@@ -61,6 +61,8 @@ type FairPrice = {
   peer_count?: number;
   cohort_stale?: boolean;
   distribution?: Distribution;
+  /** Codes of the peers, sent only for a thin group so it can be checked. */
+  peers?: string[];
   as_of?: string;
   methodology_version?: number;
   coverage?: Record<string, unknown>;
@@ -357,11 +359,13 @@ export function ListingDetail() {
                       </td>
                     </tr>
                   )}
-                  {fp.distribution?.p10 != null && (
+                  {/* The range is the middle half of peer asks, the same
+                      P25-P75 every screen shows. */}
+                  {fp.distribution?.p25 != null && (
                     <tr>
-                      <th>بازه‌ی رایج</th>
+                      <th>بازه‌ی قیمت</th>
                       <td className="num">
-                        {toman(fp.distribution.p10)} — {toman(fp.distribution.p90)}
+                        {toman(fp.distribution.p25)} — {toman(fp.distribution.p75)}
                       </td>
                     </tr>
                   )}
@@ -382,6 +386,15 @@ export function ListingDetail() {
               </table>
               {/* Where this car sits among its peers, before the arithmetic. */}
               <PriceBar distribution={fp.distribution} asking={fp.asking} />
+              <RangeNotes distribution={fp.distribution} />
+              {fp.peers && fp.peers.length > 0 && (
+                <p className="stat-sub">
+                  آگهی‌های هم‌گروه:{" "}
+                  {fp.peers.map((c, i) => (
+                    <span key={c}>{i > 0 && " · "}<Link to={`/listing/${c}`}>{c}</Link></span>
+                  ))}
+                </p>
+              )}
               {/* Why the confidence may read lower than the peer count alone
                   suggests. Without this the badge appears to contradict the
                   number printed beside it. */}

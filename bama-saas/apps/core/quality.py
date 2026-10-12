@@ -27,7 +27,12 @@ from apps.common.rules import HARD_RULE_IDS  # noqa: F401 - public compatibility
 # written there would be erased within one fetch tick.
 FLAG_OUTLIER_HIGH = "price_outlier_high"
 FLAG_OUTLIER_LOW = "price_outlier_low"
-COHORT_FLAGS = frozenset({FLAG_OUTLIER_HIGH, FLAG_OUTLIER_LOW})
+# Suspected wrong prices, judged against peers. Kept out of every baseline and
+# range, never hidden from the listings themselves.
+FLAG_SUSPECT_INSTALLMENT = "suspect_installment_price"
+FLAG_SUSPECT_MISFILED = "suspect_misfiled"
+SUSPECT_FLAGS = (FLAG_SUSPECT_INSTALLMENT, FLAG_SUSPECT_MISFILED)
+COHORT_FLAGS = frozenset({FLAG_OUTLIER_HIGH, FLAG_OUTLIER_LOW, *SUSPECT_FLAGS})
 
 
 def verified(qs):
@@ -54,12 +59,16 @@ def verified(qs):
 
 
 def without_cohort_outliers(qs):
-    """Drop both cohort outlier sides. Only for computing a *baseline*.
+    """Drop both cohort outlier sides and the suspect prices. Only for computing
+    a *baseline* or a range.
 
     An outlier must not help define the number that judges it, but it is still a
     real listing — anything shown to a user should keep it and surface the flag.
     """
-    return qs.filter(has_high_outlier=False, has_low_outlier=False)
+    qs = qs.filter(has_high_outlier=False, has_low_outlier=False)
+    for flag in SUSPECT_FLAGS:
+        qs = qs.exclude(cohort_flags__contains=[flag])
+    return qs
 
 
 def without_high_outliers(qs):
@@ -124,6 +133,11 @@ CONDITION = (
 )
 
 _FINANCE_RE = re.compile(FINANCE)
+
+# Instalment wording that FINANCE deliberately leaves out, because "نقد و اقساط"
+# and "اقساط نداریم" are mostly boilerplate on cash prices. Only a suspect when
+# the price is also far below its peers (`pricing.flag_suspects`).
+INSTALLMENT_WORDS_RE = re.compile(r"اقساط|قسط|لیزینگ|وام")
 _CONDITION_RE = re.compile(CONDITION)
 
 

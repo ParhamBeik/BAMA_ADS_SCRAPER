@@ -122,3 +122,16 @@ export function km(value: number | null | undefined): string {
   if (value < 1000) return `${num(value)} کیلومتر`;
   return `${num(Math.round(value / 1000))} هزار کیلومتر`;
 }
+
+/** Bama's body status, grouped the way `quality.condition_band` groups it on
+ *  the server. One list: three screens used to carry their own wording. */
+export const CONDITION_BANDS = [
+  { value: "clean", label: "بدون رنگ" },
+  { value: "cosmetic", label: "لکه / خط و خش" },
+  { value: "painted", label: "رنگ‌شده" },
+  { value: "structural", label: "تعویض / تصادفی" },
+] as const;
+
+export function conditionLabel(band: unknown): string {
+  return CONDITION_BANDS.find((c) => c.value === band)?.label ?? String(band ?? "");
+}

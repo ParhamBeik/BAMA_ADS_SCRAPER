@@ -24,7 +24,7 @@ import { Check, ChevronDown, ChevronsUpDown, Search, SlidersHorizontal, X } from
 import { api, type Variant } from "@/api";
 import { useFilters } from "@/filters";
 import { Fa, NumberInput } from "@/ui";
-import { num, toman } from "@/format";
+import { CONDITION_BANDS, conditionLabel, num, toman } from "@/format";
 import { ModelCombobox, normalizePersianInput, useModelLabel } from "@/components/ModelCombobox";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -40,12 +40,6 @@ const TRANSMISSIONS = ["اتوماتیک", "دنده ای"];
 const FUELS = ["بنزینی", "هیبریدی", "برقی", "دوگانه سوز", "پلاگین هیبرید", "بردافزا", "هیبرید ملایم", "دیزلی"];
 const BODY_TYPES = ["سدان", "کراس اور", "هاچبک", "وانت", "شاسی بلند‌", "ون", "کوپه", "کروک"];
 
-const CONDITIONS = [
-  { value: "clean", label: "بدون رنگ" },
-  { value: "cosmetic", label: "لکه / خط و خش" },
-  { value: "painted", label: "رنگ‌شده" },
-  { value: "structural", label: "تعویض / تصادفی" },
-];
 
 const CONFIDENCES = [
   { value: "high", label: "زیاد (40 آگهی مشابه و بیشتر)" },
@@ -463,7 +457,7 @@ export function FilterPanel({
               label="وضعیت بدنه" anyLabel="همه"
               value={filters.get("condition")}
               onChange={(v) => filters.set({ condition: v, page: null })}
-              options={CONDITIONS}
+              options={[...CONDITION_BANDS]}
             />
           </Group>
         )}
@@ -543,7 +537,7 @@ function chipLabel(key: string, value: string, modelName?: string): string {
     case "mileage_min": return `کارکرد از ${num(Number(value))}`;
     case "mileage_max": return `کارکرد زیر ${num(Number(value))}`;
     case "condition":
-      return `بدنه: ${CONDITIONS.find((c) => c.value === value)?.label ?? value}`;
+      return `بدنه: ${conditionLabel(value)}`;
     case "transmission": return `گیربکس: ${value}`;
     case "fuel": return `سوخت: ${value}`;
     case "body_type": return `بدنه: ${value}`;

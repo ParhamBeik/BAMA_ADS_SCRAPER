@@ -1268,17 +1268,17 @@ def test_pruned_counts_ads_not_cascaded_rows(known_catalog, make_payload):
 
 
 @pytest.mark.django_db
-def test_a_thin_cohort_widens_the_comparison_instead_of_refusing(catalog):
-    """A quarter of live listings sit in a cohort under MIN_PEERS and used to
-    get nothing at all. The comparison widens to the model year, then the model,
-    and says which one it used."""
+def test_a_thin_group_gets_an_honest_range_instead_of_other_years(catalog):
+    """Peers are like for like. A thin trim+year group is not priced against the
+    model's other years; it gets a range from the few real peers, with the ads
+    listed so the reader can check it, and no fair value or verdict."""
     from apps.core import pricing
 
-    # Two cars of this exact variant+year — far short of MIN_PEERS — but plenty
-    # of the same model in other years.
     thin = _ad(catalog, "thin0001", NOW, price=900_000_000, mileage=100_000,
                year_jalali=1399)
-    _ad(catalog, "thin0002", NOW, price=910_000_000, mileage=100_000, year_jalali=1399)
+    for i in range(2, 5):
+        _ad(catalog, f"thin{i:04d}", NOW, price=880_000_000 + i * 10_000_000,
+            mileage=100_000, year_jalali=1399)
     for i in range(10):
         _ad(catalog, f"other{i:03d}", NOW, price=1_000_000_000, mileage=100_000,
             year_jalali=1400)
@@ -1286,26 +1286,12 @@ def test_a_thin_cohort_widens_the_comparison_instead_of_refusing(catalog):
     result = pricing.fair_price(thin.code)
 
     assert result["available"] is True
-    assert result["basis"] == "model"
-    assert result["peer_count"] >= pricing.MIN_PEERS
-
-
-@pytest.mark.django_db
-def test_a_widened_comparison_cannot_claim_high_confidence(catalog):
-    """Thirty cars of one model across six years is not strong evidence about a
-    1399 car. Headcount alone would happily call it high."""
-    from apps.core import pricing
-
-    thin = _ad(catalog, "thin0001", NOW, price=900_000_000, mileage=100_000,
-               year_jalali=1399, seen_recently=True)
-    for i in range(45):
-        _ad(catalog, f"other{i:03d}", NOW, price=1_000_000_000, mileage=100_000,
-            year_jalali=1400, seen_recently=True)
-
-    result = pricing.fair_price(thin.code)
-
-    assert result["basis"] == "model"
-    assert result["confidence"] == "low"
+    assert result["reason"] == "few_peers"
+    assert result["fair_value"] is None and result["verdict"] == "unknown"
+    assert result["peer_count"] == 4
+    assert result["distribution"]["thin"] is True
+    assert result["distribution"]["max"] < 1_000_000_000
+    assert sorted(result["peers"]) == ["thin0001", "thin0002", "thin0003", "thin0004"]
 
 
 @pytest.mark.django_db
@@ -1410,3 +1396,38 @@ def test_an_unchanged_resighting_writes_no_observation(make_payload):
     assert ad.last_seen_at == NOW + timedelta(minutes=30)
     sight(900_000_000, 60)
     assert AdObservation.objects.filter(ad=ad).count() == 2
+
+
+def test_one_range_flags_wide_and_two_clustered_groups():
+    from apps.core.pricing import peer_distribution
+
+    tight = peer_distribution([100, 101, 102, 103, 104, 105, 106, 107])
+    assert (tight["p25"], tight["p75"], tight["wide"], tight["clusters"]) == (101, 105, False, None)
+
+    lumps = peer_distribution([100] * 6 + [140] * 6)
+    assert lumps["wide"] is True
+    assert lumps["clusters"] == {"gap_from": 100, "gap_to": 140, "below": 6, "above": 6}
+
+    assert peer_distribution([100, 200]) == {}
+    assert peer_distribution([100, 110, 120])["thin"] is True
+
+
+@pytest.mark.django_db
+def test_a_cheap_instalment_ad_and_a_misfiled_ad_stay_out_of_the_range(catalog):
+    from apps.core import pricing
+    from apps.core.quality import FLAG_SUSPECT_INSTALLMENT, FLAG_SUSPECT_MISFILED
+
+    for i in range(10):
+        _ad(catalog, f"y99c{i:04d}", NOW, year_jalali=1399, price=1_000_000_000 + i)
+        _ad(catalog, f"y00c{i:04d}", NOW, year_jalali=1400, price=1_300_000_000 + i)
+    down = _ad(catalog, "downpay1", NOW, year_jalali=1399, price=500_000_000)
+    Ad.objects.filter(code=down.code).update(description="نقد و اقساط تا ۵ سال")
+    misfiled = _ad(catalog, "misfile1", NOW, year_jalali=1399, price=1_300_000_005)
+
+    result = pricing.flag_suspects()
+
+    flags = dict(Ad.objects.values_list("code", "cohort_flags"))
+    assert FLAG_SUSPECT_INSTALLMENT in flags[down.code]
+    assert FLAG_SUSPECT_MISFILED in flags[misfiled.code]
+    assert result["installment"] == 1 and result["misfiled"] == 1
+    assert pricing.fair_price("y99c0000")["peer_count"] == 10

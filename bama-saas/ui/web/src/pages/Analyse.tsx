@@ -24,7 +24,7 @@ import { api } from "../api";
 import type { Envelope } from "../api";
 import { qs, useFilters } from "../filters";
 import { Async, Card, Fa, Provenance, SeriesCaveats, Stat, Table } from "../ui";
-import { fa, num, pct, toman } from "../format";
+import { CONDITION_BANDS, fa, num, pct, toman } from "../format";
 import { ScopePicker, useScopeLabel } from "../components/ScopePicker";
 import { WindowPicker } from "../components/WindowPicker";
 import { useModelLabel } from "../components/ModelCombobox";
@@ -76,12 +76,6 @@ interface Distribution extends Partial<Envelope> {
   };
 }
 
-const CONDITION_CHOICES = [
-  { value: "clean", label: "بدون رنگ" },
-  { value: "cosmetic", label: "لکه / خط و خش" },
-  { value: "painted", label: "رنگ‌شده" },
-  { value: "structural", label: "تعویض / تصادفی" },
-];
 
 /** The ladder `pricing.MILEAGE_BUCKETS` is calibrated on. The API refuses
  *  anything off it, so these values must stay in step with that tuple. */
@@ -223,7 +217,7 @@ function ConditionControls() {
     <div className="stack" style={{ gap: 8, marginBottom: 12 }}>
       <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
         <span className="stat-sub" style={{ minWidth: 76 }}>وضعیت بدنه</span>
-        {CONDITION_CHOICES.map((c) => (
+        {CONDITION_BANDS.map((c) => (
           <button
             key={c.value}
             type="button"

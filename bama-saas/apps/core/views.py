@@ -225,8 +225,8 @@ def model_explore(request, model_pk: int):
                 and numeric["mileage_min"] > numeric["mileage_max"]):
             raise ValueError("mileage_min must not exceed mileage_max")
         condition = request.query_params.get("condition") or None
-        if condition and len(condition) > 120:
-            raise ValueError("condition is too long")
+        if condition and condition not in CONDITION_BANDS:
+            raise ValueError(f"condition must be one of {', '.join(CONDITION_BANDS)}")
     except ValueError as exc:
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
     return Response(explorer.model_exploration(

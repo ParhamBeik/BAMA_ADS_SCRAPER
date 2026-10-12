@@ -39,7 +39,6 @@ from apps.core.models import (
 )
 from apps.core.quality import (
     condition_band_q,
-    exclude_unclear_price,
     verified,
     verified_by_ad,
     without_cohort_outliers,
@@ -1253,10 +1252,11 @@ def price_distribution(
     reader is entitled to know whether they are looking at cars or at an
     estimate of cars.
     """
-    qs = without_cohort_outliers(verified(Ad.objects)).filter(
-        status=Ad.Status.ACTIVE, current_price__gt=0,
-    )
-    qs = exclude_unclear_price(qs)
+    # The population every range is built from (`pricing.scorable_rows`, minus
+    # extremes and suspect prices). It used to be a private copy that skipped
+    # the 10M floor and the dead-listing checks, so Analyse disagreed with the
+    # listing page about the same cars.
+    qs = without_cohort_outliers(pricing.scorable_rows())
     if brand:
         qs = qs.filter(brand__slug=brand)
     if model_id:
