@@ -20,6 +20,7 @@
  */
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, CircleDashed, Info, XCircle } from "lucide-react";
+import { useMlEnabled } from "@/auth";
 import { api } from "@/api";
 import { Async, Card, Fa, Provenance } from "@/ui";
 import { fa, faDate, num, pct } from "@/format";
@@ -403,8 +404,10 @@ function ModelSection({ card }: { card: ModelCard }) {
 }
 
 export function Methodology() {
+  const mlEnabled = useMlEnabled();
   const models = useQuery({
     queryKey: ["ml-models"],
+    enabled: mlEnabled,
     queryFn: ({ signal }) => api.get<ModelsResponse>("/api/ml/models/", signal),
   });
 
@@ -413,67 +416,75 @@ export function Methodology() {
       <Card title="روش کار">
         <div className="stack">
           <p>
-            هر عددی روی این سایت از یکی از دو مسیر می‌آید. مسیر اول آماری است:
+            {mlEnabled
+              ? "هر عددی روی این سایت از یکی از دو مسیر می‌آید. مسیر اول آماری است:"
+              : "هر عددی روی این سایت از یک مسیر آماری می‌آید:"}{" "}
             میانه‌ی قیمت آگهی‌های هم‌گروه، جایی که «هم‌گروه» یعنی همان مدل، همان
             تیپ و همان سال ساخت. این مسیر مبنای درصد تخفیفی است که روی کارت‌ها
             می‌بینید و عمداً چیز پیچیده‌ای نیست: می‌شود با چشم بررسی‌اش کرد.
           </p>
-          <p>
-            مسیر دوم مدل‌های یادگیرنده‌اند و <b>جای مسیر اول را نمی‌گیرند</b> —
-            کنارش می‌نشینند. دلیلش ساده است: کلید هم‌گروهی چیزی درباره‌ی کارکرد،
-            وضعیت بدنه، شهر یا نوع فروشنده نمی‌داند، و این ستون‌ها روی قیمت اثر
-            دارند. مدل‌ها این‌ها را می‌بینند، اما هر خروجی‌شان همراه با تفکیک
-            سهم هر ویژگی ارائه می‌شود تا بتوان دو روایت مستقل از یک خودرو را
-            کنار هم گذاشت.
-          </p>
-          <p className="muted">
-            <Info size={13} /> هیچ مدلی تنها به این دلیل که تازه‌تر است فعال
-            نمی‌شود. هر نسخه روی داده‌ای سنجیده می‌شود که در آموزش ندیده — و
-            بریدن داده بر اساس <b>زمان</b> است نه تصادفی، چون تقسیم تصادفی به
-            مدل اجازه می‌دهد آینده را ببیند. سپس باید هم از نسخه‌ی فعلی بهتر
-            باشد و هم از روش آماری. اگر نشد، در سایه می‌ماند و همین‌جا نوشته
-            می‌شود که چرا.
-          </p>
+          {mlEnabled && (
+            <>
+              <p>
+                مسیر دوم مدل‌های یادگیرنده‌اند و <b>جای مسیر اول را نمی‌گیرند</b> —
+                کنارش می‌نشینند. دلیلش ساده است: کلید هم‌گروهی چیزی درباره‌ی کارکرد،
+                وضعیت بدنه، شهر یا نوع فروشنده نمی‌داند، و این ستون‌ها روی قیمت اثر
+                دارند. مدل‌ها این‌ها را می‌بینند، اما هر خروجی‌شان همراه با تفکیک
+                سهم هر ویژگی ارائه می‌شود تا بتوان دو روایت مستقل از یک خودرو را
+                کنار هم گذاشت.
+              </p>
+              <p className="muted">
+                <Info size={13} /> هیچ مدلی تنها به این دلیل که تازه‌تر است فعال
+                نمی‌شود. هر نسخه روی داده‌ای سنجیده می‌شود که در آموزش ندیده — و
+                بریدن داده بر اساس <b>زمان</b> است نه تصادفی، چون تقسیم تصادفی به
+                مدل اجازه می‌دهد آینده را ببیند. سپس باید هم از نسخه‌ی فعلی بهتر
+                باشد و هم از روش آماری. اگر نشد، در سایه می‌ماند و همین‌جا نوشته
+                می‌شود که چرا.
+              </p>
+            </>
+          )}
         </div>
       </Card>
 
-      <Async
-        query={models}
-        empty="هنوز هیچ مدلی آموزش ندیده است."
-        shape="table"
-      >
-        {(data) => (
-          <div className="stack">
-            {typeof data.scored_ads === "number" && (
-              <p className="muted">
-                در حال حاضر <b>{fa(data.scored_ads)}</b> آگهی با مدل‌های فعال
-                امتیازدهی شده‌اند.
-              </p>
-            )}
-            {/* Say what is not shown. The page keeps the live version of each
-                model plus its few most recent challengers; without this line a
-                reader has no way to tell that the list is a window rather than
-                the whole training history. */}
-            {typeof data.shown === "number"
-              && typeof data.trained_total === "number"
-              && data.trained_total > data.shown && (
-              <p className="muted">
-                <Info size={13} /> از مجموع <b>{fa(data.trained_total)}</b> نسخه‌ی
-                آموزش‌دیده، <b>{fa(data.shown)}</b> نسخه نمایش داده می‌شود: نسخه‌ی
-                فعال هر مدل، به‌همراه{" "}
-                {typeof data.history_per_model === "number"
-                  ? <>{fa(data.history_per_model)} تلاش اخیرِ</>
-                  : <>چند تلاش اخیرِ</>}{" "}
-                آن.
-              </p>
-            )}
-            {data.models.map((card) => (
-              <ModelSection key={`${card.name}-${card.version}`} card={card} />
-            ))}
-            <Provenance envelope={data} />
-          </div>
-        )}
-      </Async>
+      {mlEnabled && (
+        <Async
+          query={models}
+          empty="هنوز هیچ مدلی آموزش ندیده است."
+          shape="table"
+        >
+          {(data) => (
+            <div className="stack">
+              {typeof data.scored_ads === "number" && (
+                <p className="muted">
+                  در حال حاضر <b>{fa(data.scored_ads)}</b> آگهی با مدل‌های فعال
+                  امتیازدهی شده‌اند.
+                </p>
+              )}
+              {/* Say what is not shown. The page keeps the live version of each
+                  model plus its few most recent challengers; without this line a
+                  reader has no way to tell that the list is a window rather than
+                  the whole training history. */}
+              {typeof data.shown === "number"
+                && typeof data.trained_total === "number"
+                && data.trained_total > data.shown && (
+                <p className="muted">
+                  <Info size={13} /> از مجموع <b>{fa(data.trained_total)}</b> نسخه‌ی
+                  آموزش‌دیده، <b>{fa(data.shown)}</b> نسخه نمایش داده می‌شود: نسخه‌ی
+                  فعال هر مدل، به‌همراه{" "}
+                  {typeof data.history_per_model === "number"
+                    ? <>{fa(data.history_per_model)} تلاش اخیرِ</>
+                    : <>چند تلاش اخیرِ</>}{" "}
+                  آن.
+                </p>
+              )}
+              {data.models.map((card) => (
+                <ModelSection key={`${card.name}-${card.version}`} card={card} />
+              ))}
+              <Provenance envelope={data} />
+            </div>
+          )}
+        </Async>
+      )}
     </div>
   );
 }

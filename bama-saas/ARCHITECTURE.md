@@ -44,7 +44,9 @@ board.
 - `redis`: bounded LRU cache; never authoritative.
 - `django`: migrations, static collection, and Gunicorn API.
 - `worker`: hot, coverage, warm, and maintenance cadences.
-- `ml`: daily model training and scoring.
+- `ml`: daily model training and scoring. **Paused** unless `ML_ENABLED=1`
+  (compose profile `ml`); while paused, ML steps are skipped, ML API fields
+  are absent and the UI hides every ML surface.
 - `frontend`: production static bundle behind nginx.
 
 ## Pipeline rules

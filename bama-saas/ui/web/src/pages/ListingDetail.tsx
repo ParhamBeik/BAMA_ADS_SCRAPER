@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useMlEnabled } from "../auth";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
@@ -180,6 +181,7 @@ function ListingState({
 }
 
 export function ListingDetail() {
+  const mlEnabled = useMlEnabled();
   const { code = "" } = useParams();
   const ad = useQuery({
     queryKey: ["ad", code],
@@ -407,7 +409,7 @@ export function ListingDetail() {
       {/* The learned estimate, deliberately *below* the statistical one and
           never in place of it. Two independent accounts of the same car, and
           the reader gets to see where they disagree. */}
-      <ModelEstimate code={code} />
+      {mlEnabled && <ModelEstimate code={code} />}
 
       <div className="card">
         <h2>تاریخچه قیمت</h2>

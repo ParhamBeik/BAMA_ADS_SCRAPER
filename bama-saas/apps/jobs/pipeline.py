@@ -28,6 +28,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
+from django.conf import settings
 from django.utils import timezone
 
 from apps.core.locks import TRAIN_LEASE, lease
@@ -119,6 +120,10 @@ CADENCES = {
 # The one exception is an *incremental* deal-score pass, which reads the models
 # the latest fetch touched; that is handled in ``run`` rather than declared here,
 # because a full rebuild has no such dependency.
+# Skipped, not removed, while the learned layer is paused: the cadences keep
+# their order rule and the JobRun row says why nothing was scored.
+ML_STEPS = frozenset({"ml_train", "ml_score"})
+
 DEPENDS_ON = {
     # On a failed snapshot the index would extend a chained series using
     # yesterday's inventory and report the gap as a real market move.
@@ -268,18 +273,21 @@ def run_step(name: str, *, triggered_by: str = JobRun.Trigger.SCHEDULER, **opts)
                           healthy=False)
 
 
-def record_skipped(name: str, reason: str) -> StepResult:
+def record_skipped(name: str, reason: str, *, deliberate: bool = False) -> StepResult:
     """Persist the fact that a step did not run because a prerequisite failed.
 
     A skipped step and a successful one look identical when only failures are
     recorded, which is exactly how stale analytics get mistaken for fresh ones.
+    A ``deliberate`` skip (a paused feature) is still recorded but is not a
+    failure: it neither gates the run's ``ok`` nor reads as unhealthy.
     """
     now = timezone.now()
     JobRun.objects.create(name=name, status=JobRun.Status.SKIPPED, started_at=now,
                           finished_at=now, duration_s=0.0, detail=reason)
-    logger.warning("step=%s SKIPPED (%s)", name, reason)
-    return StepResult(name, False, f"skipped: {reason}", 0.0, skipped=True,
-                      healthy=False)
+    logger.log(logging.INFO if deliberate else logging.WARNING,
+               "step=%s SKIPPED (%s)", name, reason)
+    return StepResult(name, deliberate, f"skipped: {reason}", 0.0, skipped=True,
+                      healthy=deliberate)
 
 
 def run(*, cadence: str | None = None, steps=None, skip_fetch: bool = False,
@@ -327,7 +335,9 @@ def run(*, cadence: str | None = None, steps=None, skip_fetch: bool = False,
         if blocker is None and name == "deal_scores" and step_opts["incremental"] \
                 and "fetch" in failed:
             blocker = "fetch"
-        if blocker:
+        if name in ML_STEPS and not settings.ML_ENABLED:
+            result = record_skipped(name, "ml paused (ML_ENABLED is not 1)", deliberate=True)
+        elif blocker:
             result = record_skipped(name, f"prerequisite {blocker!r} failed")
         elif name == "ml_train":
             # While the models are being fitted, the worker's incremental

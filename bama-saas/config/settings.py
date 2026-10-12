@@ -313,6 +313,12 @@ BAMA_EPISODE_CLEAN_START = os.environ.get("BAMA_EPISODE_CLEAN_START", "2026-08-1
 # is a web worker that can change what every reader is told without a deploy.
 ML_ARTIFACT_DIR = Path(os.environ.get("ML_ARTIFACT_DIR", BASE_DIR / "data" / "ml"))
 
+# The learned layer is paused unless this is exactly "1": no training, no
+# scoring, no ML fields in API responses, and the UI hides every ML surface.
+# Off by default so an absent or empty variable can never switch it on. The
+# code, artifacts and stored predictions are kept for when it is revisited.
+ML_ENABLED = os.environ.get("ML_ENABLED") == "1"
+
 # Telegram bot token for the deal notifier. The chat id lives in NotifierSettings
 # (editable from the deal board); the token is a secret and stays in the env.
 # Empty disables sending — the notifier logs and moves on rather than failing.

@@ -173,6 +173,10 @@ def review_queue_view(request):
     evidence in front of them. Ordered by the classifier's confidence, so the
     clearest cases are the ones a human sees first.
     """
+    if not registry.ML_AVAILABLE:
+        return envelope({"available": False, "reason": "ml_unavailable",
+                         "detail": registry.ML_UNAVAILABLE_REASON, "count": 0,
+                         "results": []})
     # Already-settled cases drop out. A queue that re-presents a case somebody
     # decided last week is a queue people stop opening.
     settled = ReviewDecision.objects.filter(

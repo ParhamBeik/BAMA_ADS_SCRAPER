@@ -606,7 +606,7 @@ def _ml_row(prediction) -> dict | None:
     decomposition is six entries per car and the board renders 50 at a time, so
     it is fetched on the detail endpoint where it is actually drawn.
     """
-    if prediction is None or prediction.price_p50 is None:
+    if not settings.ML_ENABLED or prediction is None or prediction.price_p50 is None:
         return None
     return {
         "price_p10": prediction.price_p10,
@@ -707,6 +707,9 @@ def deal_scores(request):
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
     band = params.get("band") or "top"
+    if band == "ml" and not settings.ML_ENABLED:
+        return Response({"detail": "The ml band is paused (ML_ENABLED is not 1)."},
+                        status=status.HTTP_404_NOT_FOUND)
     if band not in BANDS:
         return Response({"detail": f"band must be one of {', '.join(BANDS)}"},
                         status=status.HTTP_400_BAD_REQUEST)

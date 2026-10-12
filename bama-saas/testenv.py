@@ -19,3 +19,5 @@ import os
 
 os.environ.setdefault("DJANGO_DEBUG", "1")
 os.environ.setdefault("API_PUBLIC_READS", "1")
+# The ML suite exercises the learned layer; production keeps it paused.
+os.environ.setdefault("ML_ENABLED", "1")

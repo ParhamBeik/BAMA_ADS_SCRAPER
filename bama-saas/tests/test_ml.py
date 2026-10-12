@@ -727,6 +727,16 @@ def test_a_row_scored_without_the_price_model_reports_no_prediction(catalog):
     assert prediction_for("a1") is None
 
 
+def test_a_stored_prediction_is_not_served_while_ml_is_paused(catalog, monkeypatch):
+    from apps.ml import registry
+    from apps.ml.inference import prediction_for
+
+    AdPrediction.objects.create(ad=_ad(catalog, "a1"), price_p50=1_000_000_000)
+    assert prediction_for("a1") is not None
+    monkeypatch.setattr(registry, "ML_AVAILABLE", False)
+    assert prediction_for("a1") is None
+
+
 # ===========================================================================
 # One real training run, end to end
 # ===========================================================================

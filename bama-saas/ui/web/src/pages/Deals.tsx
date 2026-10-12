@@ -30,7 +30,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { AlertTriangle, Bell } from "lucide-react";
 import { api } from "../api";
-import { useAuth } from "../auth";
+import { useAuth, useMlEnabled } from "../auth";
 import { FilterPanel } from "@/components/FilterPanel";
 import { qs, useFilters } from "../filters";
 import { Async, BamaLink, Card, ConfidenceDots, Fa, ListingActions, NumberInput, Pager, Provenance, Table } from "../ui";
@@ -302,8 +302,9 @@ const ML_TAB_NOTE =
 export function Deals() {
   const filters = useFilters();
   const page = filters.getInt("page") ?? 1;
+  const tabs = useMlEnabled() ? TABS : TABS.filter((t) => t.id !== "ml");
   const raw = filters.get("band");
-  const band = TABS.some((t) => t.id === raw) ? raw! : "top";
+  const band = tabs.some((t) => t.id === raw) ? raw! : "top";
   const view = useListView();
 
   const params = {
@@ -342,7 +343,7 @@ export function Deals() {
           }
         >
           <TabsList aria-label="دسته‌بندی آگهی‌ها">
-            {TABS.map((t) => (
+            {tabs.map((t) => (
               <TabsTrigger key={t.id} value={t.id}>{t.label}</TabsTrigger>
             ))}
           </TabsList>
