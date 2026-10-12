@@ -20,7 +20,7 @@ import { Link } from "react-router-dom";
 import { ArrowLeft, ArrowUpDown, X } from "lucide-react";
 import { api } from "../api";
 import { qs, useFilters } from "../filters";
-import { conditionLabel, km, num, toman } from "../format";
+import { conditionLabel, km, num, toman, tomanRange } from "../format";
 import { Async, Card, Fa, HowWeKnow, ListingActions, RangeNotes, Thumb } from "../ui";
 import type { Distribution } from "../ui";
 import { ModelCombobox, type ModelRow } from "../components/ModelCombobox";
@@ -58,27 +58,23 @@ const REFINE_KEYS = ["variant", "year", "city", "condition", "mileage_min", "mil
 function PriceSummary({ title, summary, emphasis = false, children }: {
   title: string; summary: Summary; emphasis?: boolean; children?: ReactNode;
 }) {
+  const r = summary.asking_range;
   return (
-    <div className="stack">
-      <h2 className={emphasis ? "text-lg" : "text-base"}><Fa>{title}</Fa></h2>
-      <p className="muted">{num(summary.count)} آگهی</p>
-      {summary.asking_range ? (
+    <div className="price-answer">
+      <div className="row between">
+        <h2 className={emphasis ? "text-lg" : "text-base"}><Fa>{title}</Fa></h2>
+        <span className="muted">{num(summary.count)} آگهی</span>
+      </div>
+      {r ? (
         <>
-          <p className="text-xl font-bold">
-            <span className="font-mono tabular-nums">{toman(summary.asking_range.p25)}</span>
-            {" تا "}
-            <span className="font-mono tabular-nums">{toman(summary.asking_range.p75)}</span>
-            {" تومان"}
+          <p className={emphasis ? "price-range big" : "price-range"}>
+            <bdi>{tomanRange(r.p25, r.p75)}</bdi> تومان
           </p>
           <p className="stat-sub">
-            میانه <b className="font-mono">{toman(summary.asking_range.median)}</b>
-            {" · "}بازه‌ی 80% آگهی‌ها{" "}
-            <b className="font-mono">{toman(summary.asking_range.p10)}</b> تا{" "}
-            <b className="font-mono">{toman(summary.asking_range.p90)}</b>
+            میانه <bdi>{toman(r.median)}</bdi>{" · "}80% آگهی‌ها <bdi>{tomanRange(r.p10, r.p90)}</bdi>
           </p>
           {summary.strict === false && <span className="badge">بازه‌ی ترکیبی</span>}
-          <RangeNotes distribution={{ ...summary.asking_range, count: summary.count,
-            thin: summary.thin } as Distribution}>
+          <RangeNotes distribution={{ ...r, count: summary.count, thin: summary.thin } as Distribution}>
             {summary.strict === false && (
               <p>
                 این بازه خودروهای ناهمسان را کنار هم گذاشته است. برای بازه‌ی دقیق، تیپ، سال
@@ -209,8 +205,28 @@ export function ModelExplorer() {
               <p>قیمت خرید واقعی در دسترس نیست؛ داده‌ی تأییدشده از معامله‌ها نداریم.</p>
             </>
           );
+          const label = (facets: Facet[], value?: string) =>
+            facets.find((f) => String(f.value) === value)?.label;
+          const selectionTitle = [
+            `${data.model.brand} ${data.model.name}`,
+            label(data.facets.variants, params.variant),
+            params.year,
+            params.condition && conditionLabel(params.condition),
+            label(data.facets.cities, params.city),
+          ].filter(Boolean).join(" · ");
           return (
             <>
+              {/* The answer first: the selection's range when there is one,
+                  otherwise the whole model's. Refining sits under it, and the
+                  whole-model range drops to a smaller card once refined. */}
+              <Card title={refined ? "قیمت انتخاب شما" : "قیمت در بازار"}>
+                <PriceSummary
+                  title={refined ? selectionTitle : `${data.model.brand} ${data.model.name}`}
+                  summary={refined ? data.selected : data.national} emphasis>
+                  {evidence}
+                </PriceSummary>
+              </Card>
+
               <Card
                 title="دقیق‌تر کنید"
                 action={refined
@@ -237,24 +253,12 @@ export function ModelExplorer() {
                 </div>
               </Card>
 
-              {/* "Your selection" beside "the whole market" only once there is a
-                  selection. Before that the two cards printed identical numbers
-                  side by side, which read as a bug. */}
-              <div className={refined ? "grid cols-2" : "stack"}>
-                <Card title="بازار سراسری">
+              {refined && (
+                <Card title="کل این مدل">
                   <PriceSummary title={`${data.model.brand} ${data.model.name}`}
-                                summary={data.national} emphasis={!refined}>
-                    {!refined && evidence}
-                  </PriceSummary>
+                                summary={data.national} />
                 </Card>
-                {refined && (
-                  <Card title="انتخاب شما">
-                    <PriceSummary title="آگهی‌های دقیق‌تر" summary={data.selected} emphasis>
-                      {evidence}
-                    </PriceSummary>
-                  </Card>
-                )}
-              </div>
+              )}
 
               <Card
                 title={`آگهی‌های پشتیبان (${num(data.ads.length)} از ${num(data.selected.count)})`}

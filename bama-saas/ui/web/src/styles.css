@@ -81,8 +81,12 @@
 @theme {
   --font-sans: "Vazirmatn Variable", "Vazirmatn", Tahoma, ui-sans-serif, system-ui, sans-serif;
   /* The ledger face: every audited number sets in this, everywhere, so a
-     number that can be checked against its components looks like one. */
-  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, Menlo, monospace;
+     number that can be checked against its components looks like one.
+     JetBrains Mono has no Persian glyphs, so Vazirmatn comes next: "1.13
+     میلیارد" keeps mono digits and draws the word in the interface face
+     instead of a letter-spaced system monospace. */
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", "Vazirmatn Variable", "Vazirmatn",
+    ui-monospace, Menlo, monospace;
 }
 
 :root {
@@ -332,6 +336,10 @@ select, input { max-width: 100%; }
 
 .stat { font-family: var(--font-mono); font-size: 25px; font-weight: 600; letter-spacing: -0.01em; }
 .stat-sub { color: var(--muted); font-size: 12px; }
+.price-answer { display: grid; gap: 6px; }
+.price-answer h2 { margin: 0; }
+.price-range { margin: 0; font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.price-range.big { font-size: 24px; }
 .how-we-know { margin-top: 8px; font-size: 12px; color: var(--muted); }
 .how-we-know > summary {
   display: inline-flex; align-items: center; gap: 4px; cursor: pointer;
@@ -647,7 +655,7 @@ code {
 .listing-meta { font-size: 13px; }
 .listing-meta strong { font-size: 13.5px; line-height: 1.35; }
 .listing-meta .row { gap: 0.4rem; font-size: 12px; color: var(--muted); }
-.deal-price { font-family: var(--font-mono); font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.deal-price { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .deal-median { color: var(--muted); text-decoration: line-through; font-size: 12.5px; }
 
 /* Sample size as three dots. A "medium" badge needs reading; ●●○ is grasped at
