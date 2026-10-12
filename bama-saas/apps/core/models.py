@@ -885,9 +885,9 @@ class DealScoreCache(models.Model):
     discount_pct = models.FloatField(null=True, blank=True)
     peer_median = models.BigIntegerField(null=True, blank=True)
     components = models.JSONField(default=dict, blank=True)
-    # The listing itself accounts for its discount — a declared repaint or panel
-    # replacement (`pricing.REVIEW_CONDITION_BANDS`). It rides in `components`
-    # too, but the board filters on it three times per request, and a JSON key
+    # The listing is probably filed under the wrong trim or year
+    # (`quality.FLAG_SUSPECT_MISFILED`), so its discount is not comparable. It
+    # rides in `components` too, but the board filters on it three times per request, and a JSON key
     # lookup also has the wrong semantics for a row that predates the key:
     # `exclude(components__x__in=[...])` drops rows where `x` is missing,
     # because SQL's NOT NULL is not TRUE.

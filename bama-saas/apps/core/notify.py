@@ -89,6 +89,10 @@ def matching_deals(
     qs = (
         verified_by_ad(DealScoreCache.objects.select_related("ad", "ad__ml"))
         .filter(discount_pct__gte=min_discount_pct)
+        # Only what the board calls a deal: an alert is the most acted-upon
+        # thing this app emits, and a stale price or a seller's own caveat is
+        # not worth interrupting anyone for.
+        .filter(components__deal_status="deal")
     )
     # Gated here as well as at build time: the cache is rebuilt on a schedule,
     # and ordering by -discount_pct puts whatever slipped through straight into

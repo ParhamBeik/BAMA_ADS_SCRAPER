@@ -14,16 +14,13 @@
  * and the discount only decides order *within* a group. Without the group
  * headings this reads as a broken sort, which is why they are not decoration.
  *
- * **Both thresholds are measured, not chosen.** How far back the board looks
- * and how good a deal has to be to appear are computed per rebuild from the
- * batch actually on the board (`pricing.deal_window`), so a quiet day widens
- * the window instead of showing three cars.
- *
- * **Above 25% goes to review, not to the front page.** The peer group is
- * (model, trim, year) and knows nothing about accident damage, free-zone plates
- * or pre-sales, so past that point the gap is an unmodelled attribute far more
- * often than a bargain. Nothing is hidden — it is moved to a tab that says what
- * it is.
+ * **A deal is a verdict, not a percentage.** `pricing.assess_deals` calls a
+ * car a deal when its price was set in the last two weeks, it is cheaper than
+ * most of 15+ same-trim, same-year, same-condition peers priced in the last
+ * month, its mileage is typical, and nothing in the ad explains the gap. Any of
+ * those failing sends it to review with the reason named on the card. Measured
+ * 2026-10-12: most deep "deals" were prices set weeks ago in a market rising
+ * ~10% a month.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
@@ -358,18 +355,13 @@ export function Deals() {
       <p className="muted">
         {band === "top" && (
           <>
-            آگهی‌هایی که در <b>{fa(w?.window_days)} روز گذشته</b> ثبت یا
-            به‌روزرسانی شده‌اند و دست‌کم{" "}
-            {/* One decimal. The floor is a percentile of today's board, and
-                printing it as "7.15%" offered the reader a precision that is
-                an artefact of which listings happen to be live this hour. */}
-            <b>{w ? pct(w.min_discount_pct, 1) : "—"}</b> زیر میانه قیمت
-            آگهی‌های مشابه خود هستند.
+            خودروهایی که قیمتشان در <b>۱۴ روز گذشته</b> ثبت شده و از بیشتر
+            آگهی‌های هم‌تیپ، هم‌سال و هم‌وضعیتِ ماه اخیر ارزان‌ترند، کارکردشان
+            عادی است و در متن آگهی دلیلی برای ارزانی دیده نمی‌شود.
             <span className="hide-narrow">
-              {" "}هر دو حد از همین آگهی‌های امروز محاسبه
-              می‌شوند، نه از عددی ثابت. تازه‌ترین آگهی‌ها اول می‌آیند، چون قیمتشان
-              به بازار امروز نزدیک‌تر است. خودروهایی که خودِ آگهی ارزانی‌شان را
-              توضیح می‌دهد — رنگ‌شدگی یا تعویض قطعه — در زبانه «نیازمند بررسی»‌اند.
+              {" "}حد ثابتی برای درصد تخفیف نیست؛ معیار، گروه آگهی‌های تازه
+              است. آگهی‌هایی که یکی از این شرط‌ها را ندارند، با ذکر دلیل در زبانه
+              «نیازمند بررسی»‌اند.
             </span>
           </>
         )}
@@ -386,13 +378,11 @@ export function Deals() {
         {band === "ml" && <>{ML_TAB_NOTE}</>}
         {band === "review" && (
           <>
-            دو دسته آگهی که ارزانی‌شان دلیلی دارد بیرون از این محاسبه. نخست
-            تخفیف بیش از <b>{w ? pct(w.ceiling_pct, 0) : "—"}</b>: آگهی‌های
-            مشابه فقط بر پایه «مدل، تیپ و سال» انتخاب می‌شوند و چیزی درباره
-            تصادف، پلاک منطقه آزاد یا پیش‌فروش نمی‌دانند. دوم خودروهایی که
-            فروشنده خودش وضعیت بدنه‌شان را رنگ‌شده یا تعویض‌شده اعلام کرده —
-            آن اختلاف قیمت، بهای همان رنگ است نه یک فرصت. چیزی پنهان نشده،
-            اما پیش از تماس خودتان بررسی کنید.
+            آگهی‌هایی که ارزان‌اند، اما دلیلی برای ارزانی‌شان دیده می‌شود:
+            قیمتی که هفته‌ها پیش ثبت شده (بازار از آن زمان گران‌تر شده)،
+            کارکرد غیرعادی، فاصله‌ای بسیار بیشتر از پراکندگی عادی گروه،
+            احتمال ثبت در مدل یا سال اشتباه، یا نکته‌ای در متن آگهی مثل وکالتی
+            بودن یا ایراد فنی. دلیل روی هر کارت نوشته شده است.
           </>
         )}
       </p>

@@ -9,10 +9,17 @@ from django.utils import timezone
 
 from apps.core.coverage import coverage_state
 from apps.core.models import Model
-from apps.core.pricing import MILEAGE_BUCKETS, MIN_PEERS, peer_distribution, scorable_rows
+from apps.core.pricing import (
+    MILEAGE_BUCKETS,
+    MIN_PEERS,
+    peer_distribution,
+    price_set_rows,
+    scorable_rows,
+)
 from apps.core.quality import condition_band, without_cohort_outliers
 
-RANGE_KEYS = ("p10", "p25", "median", "p75", "p90", "width_pct", "wide", "clusters")
+RANGE_KEYS = ("p10", "p25", "median", "p75", "p90", "width_pct", "wide", "clusters",
+              "old_price_pct", "old_price_days")
 
 
 def _bucket(km: int | None) -> str:
@@ -24,7 +31,7 @@ def _bucket(km: int | None) -> str:
 
 def _summary(rows: list[dict]) -> dict:
     prices = [row["current_price"] for row in rows]
-    dist = peer_distribution(prices)
+    dist = peer_distribution(prices, set_at=[row["price_set_at"] for row in rows])
     return {
         "count": len(rows),
         "thin": len(prices) < MIN_PEERS,
@@ -52,10 +59,10 @@ def model_exploration(model_id: int, *, variant_id: int | None = None,
     model = Model.objects.select_related("brand").get(pk=model_id)
     # The same population every range is built from: extremes and suspect
     # prices (down payments, likely mis-filed ads) stay out.
-    base = without_cohort_outliers(scorable_rows()).filter(model_id=model_id)
+    base = price_set_rows(without_cohort_outliers(scorable_rows())).filter(model_id=model_id)
     fields = ("code", "title", "current_price", "variant_id", "variant__name_fa",
               "year_jalali", "mileage", "body_status", "city_id", "city__name_fa",
-              "publish_at", "last_seen_at")
+              "publish_at", "last_seen_at", "price_set_at")
     national = list(base.values(*fields))
     for row in national:
         row["mileage_bucket"] = _bucket(row["mileage"])

@@ -1182,7 +1182,8 @@ def test_a_deal_row_carries_no_ml_block_when_the_ad_was_never_scored(catalog, st
 
     ad = _ad(catalog, "a1")
     DealScoreCache.objects.create(ad=ad, score=10.0, discount_pct=10.0,
-                                  peer_median=1_100_000_000, components={})
+                                  peer_median=1_100_000_000,
+                                  components={"deal_status": "deal"})
     body = staff_client.get("/api/analytics/deal-scores/?band=all").json()
     assert body["results"][0]["ml"] is None
 

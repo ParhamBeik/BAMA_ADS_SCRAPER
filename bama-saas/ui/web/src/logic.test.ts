@@ -9,9 +9,10 @@
  * Telegram notifier that quotes the same price.
  */
 import { describe, expect, it } from "vitest";
+import { verdictNote } from "./components/DealCard";
 import { scopeKey } from "./components/FollowButton";
 import { qs } from "./filters";
-import { modelYear, parseBudget, pct, toman } from "./format";
+import { fa, modelYear, parseBudget, pct, toman } from "./format";
 
 it("parses Persian and Arabic-Indic budget input without dropping its digits", () => {
   expect(parseBudget("۱٬۲۰۰٬۰۰۰٬۰۰۰")).toBe(1_200_000_000);
@@ -137,5 +138,19 @@ describe("modelYear", () => {
     expect(modelYear(1402)).toBe("1402 · 2023");
     expect(modelYear(1402, "gregorian")).toBe("2023 · 1402");
     expect(modelYear(null)).toBe("—");
+  });
+});
+
+describe("verdictNote", () => {
+  it("names the reasons a cheap car went to review", () => {
+    expect(verdictNote({ deal_status: "check", deal_reasons: ["stale_price"], price_age_days: 40 }))
+      .toBe(`قیمت قدیمی · قیمتِ ${fa(40)} روز پیش`);
+  });
+  it("states the comparison behind a deal", () => {
+    expect(verdictNote({ deal_status: "deal", cheaper_than_pct: 90, fresh_peers: 20, price_age_days: 0 }))
+      .toBe(`ارزان‌تر از ${fa(90)}٪ از ${fa(20)} آگهی تازه · قیمت امروز`);
+  });
+  it("says nothing when no peer group could judge", () => {
+    expect(verdictNote({ deal_status: null })).toBeNull();
   });
 });

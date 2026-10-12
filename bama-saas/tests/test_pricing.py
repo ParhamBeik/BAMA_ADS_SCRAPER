@@ -35,6 +35,7 @@ from apps.core.quality import (
     condition_band,
     condition_discounted,
     price_basis_unclear,
+    red_flags,
 )
 
 NOW = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
@@ -348,9 +349,7 @@ def test_a_repainted_car_carries_the_band_that_keeps_it_off_the_board(cohort):
     painted = DealScoreCache.objects.get(ad_id="paint00")
     clean = DealScoreCache.objects.get(ad_id="cleancp1")
     assert painted.components["condition_band"] == "painted"
-    assert painted.components["condition_band"] in FP.REVIEW_CONDITION_BANDS
     assert clean.components["condition_band"] == "clean"
-    assert clean.components["condition_band"] not in FP.REVIEW_CONDITION_BANDS
     # Peers share the band: the repainted car is judged against repainted cars,
     # which all ask 1.7B, so it is no bargain however the clean cohort prices.
     assert painted.peer_median == 1_700_000_000
@@ -432,7 +431,7 @@ def scored(db, cohort):
             DealScoreCache.objects.create(
                 ad=ad, score=discount, discount_pct=discount,
                 peer_median=2_000_000_000,
-                components={"peer_count": 11, "confidence": "low"},
+                components={"deal_status": "deal", "peer_count": 11, "confidence": "low"},
             )
     return make
 
@@ -841,7 +840,7 @@ def make_scored(notifier_catalog, code, *, discount=30.0, peers=20, price=1_000_
     )
     return DealScoreCache.objects.create(
         ad=ad, score=discount, discount_pct=discount, peer_median=price * 2,
-        components={
+        components={"deal_status": "deal",
             "peer_count": peers, "confidence": "high",
             "fair_value": price * 2, "price": price,
             "condition_band": band, "condition_band_median": band_median,
@@ -1120,3 +1119,79 @@ def test_message_states_the_price_in_the_right_magnitude(notifier_catalog, cfg, 
     (text,) = _no_real_telegram
     assert "2.20B toman" in text
     assert "220M" not in text
+
+
+# --- what counts as a deal ---------------------------------------------------
+
+def _row(code, price, *, age=1, km=50_000, flags=()):
+    return {"code": code, "model_id": 1, "variant_id": 1, "year_jalali": 1402,
+            "condition_band": CLEAN, "current_price": price, "mileage": km,
+            "price_set_at": NOW - timedelta(days=age), "cohort_flags": list(flags)}
+
+
+def _market(n=20):
+    # A tight group: 1.00B to 1.19B, typical mileage 40-60k km.
+    return [_row(f"p{i}", 1_000_000_000 + i * 10_000_000, km=40_000 + i * 1_000)
+            for i in range(n)]
+
+
+@pytest.mark.django_db
+def test_a_fresh_typical_car_below_most_peers_is_a_deal():
+    v = FP.assess_deals([*_market(), _row("x", 990_000_000)], now=NOW)["x"]
+    assert v["deal_status"] == "deal" and v["deal_reasons"] == []
+    assert v["cheaper_than_pct"] == 100
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("row, reason", [
+    (_row("x", 990_000_000, age=40), "stale_price"),
+    (_row("x", 990_000_000, km=250_000), "atypical_mileage"),
+    (_row("x", 600_000_000), "beyond_spread"),
+    (_row("x", 990_000_000, flags=["suspect_misfiled"]), "suspect_misfiled"),
+])
+def test_an_explained_gap_goes_to_check_with_its_reason(row, reason):
+    v = FP.assess_deals([*_market(), row], now=NOW)["x"]
+    assert v["deal_status"] == "check" and reason in v["deal_reasons"]
+
+
+@pytest.mark.django_db
+def test_stale_peers_are_not_the_yardstick():
+    # Old asks are left out of the group, which leaves it too small to judge.
+    peers = [{**r, "price_set_at": NOW - timedelta(days=60)} for r in _market()]
+    assert FP.assess_deals([*peers, _row("x", 990_000_000)], now=NOW) == {}
+
+
+@pytest.mark.django_db
+def test_cars_at_or_above_p25_are_not_judged():
+    assert "p10" not in FP.assess_deals(_market(), now=NOW)
+
+
+@pytest.mark.parametrize("text", [
+    "فروش با وکالت", "سند ندارد", "پلاک منطقه آزاد", "موتور خراب", "ماشین تصادفی است",
+    "گیربکس تعویض شده",
+])
+def test_red_flags_catch_what_explains_a_low_price(text):
+    assert red_flags(title="", description=text, body_status="بدون رنگ")
+
+
+@pytest.mark.parametrize("text", [
+    "بدون تصادف", "بی ایراد و سالم", "هیچگونه تعمیری نداشته", "رنگ سفید، فنی سالم",
+    "تعمیر نداره", "بدون رنگ و بدون تصادف", "بدون رنگ و تصادف", "هشدار تصادف و دوربین ۳۶۰",
+    "فنی به شرط کارشناسی", "بدون کوچکترین ضربه و تصادف", "بدون لیسه و صافکاری",
+    "تعویض روغن گیربکس", "چپی و تصادفی نیست", "خدمات تعویض پلاک",
+])
+def test_red_flags_ignore_denials_and_colour(text):
+    assert not red_flags(title="", description=text, body_status="بدون رنگ")
+
+
+def test_prose_paint_on_a_no_paint_ad_is_a_red_flag():
+    assert red_flags(description="یک لکه رنگ دارد", body_status="بدون رنگ")
+    assert not red_flags(description="یک لکه رنگ دارد", body_status="یک لکه رنگ")
+
+
+def test_the_range_says_how_many_of_its_asks_are_old():
+    now = djtz.now()
+    dist = FP.peer_distribution([100, 110, 120, 130],
+                                set_at=[now, now, now - timedelta(days=45), None])
+    assert dist["old_price_pct"] == 33
+    assert FP.peer_distribution([100, 110, 120])["old_price_pct"] is None

@@ -138,6 +138,51 @@ _FINANCE_RE = re.compile(FINANCE)
 # and "اقساط نداریم" are mostly boilerplate on cash prices. Only a suspect when
 # the price is also far below its peers (`pricing.flag_suspects`).
 INSTALLMENT_WORDS_RE = re.compile(r"اقساط|قسط|لیزینگ|وام")
+
+# Things a seller says that explain a low price without making it a bargain:
+# paperwork the buyer inherits, a conditional sale, a deposit, or a mechanical
+# problem. Measured 2026-10-12 on the deal board: present on 5-6% of deals at
+# every discount level, so they are noise to remove, not the cause of the deep
+# "deals" (that was stale prices; see `pricing.DEAL_PRICE_FRESH_DAYS`).
+RED_FLAGS = (
+    r"وکالت|بدون.?سند|سند.?(ندارد|نداره)|منطقه.?آزاد|مناطق.?آزاد"
+    r"|پلاک.?(منطقه|موقت)|شماره.?گذاری.?نشده"
+    r"|تملیکی|مزایده|توقیف|حواله|پیش.?پرداخت|پیش.?فروش|ثبت.?نام"
+    r"|اسقاط|اوراق|خرج.?(داره|دارد)"
+)
+_RED_FLAGS_RE = re.compile(RED_FLAGS)
+# Damage only where the ad states it as a fact. Bare "تصادف", "ایراد", "تعمیر"
+# and "صافکاری" are left out: sampled on the 2026-10-12 board, nearly every use
+# was a denial ("بدون کوچکترین ایراد", "بدون ضربه یا تصادف"), a feature
+# ("رادار تصادف") or routine service, which no pattern separates reliably.
+_DAMAGE = (
+    r"(موتور.?(باز|خراب|تعویض)|گیربکس.?(خراب|تعویض)|نیاز.?به.?تعمیر|تعمیر.?اساسی.?شده"
+    r"|تصادفی|موتور.?سوخته|آب.?خورده|سیل.?زده|شاسی.?(تعویض|خورده|جوش))"
+)
+_DAMAGE_RE = re.compile(_DAMAGE)
+_NEGATED_DAMAGE_RE = re.compile(
+    r"(بدون|بی|عدم|هیچ|فاقد|غیر)[\s\u200c]*(گونه[\s\u200c]*)?"
+    + r"(\S+[\s\u200c]*و[\s\u200c]*)?" + _DAMAGE
+    + r"|" + _DAMAGE + r"[\s\u200c]*(ندارد|نداره|نداشته|نشده|نخورده|نیست|نمی.?باشد)"
+)
+# Paintwork named in prose on an ad whose structured field says "no paint".
+# Not bare "رنگ": that is also the word for colour ("رنگ سفید").
+_PROSE_DAMAGE_RE = re.compile(
+    r"(?<!بدون )(?<!بی )(رنگ.?شده|رنگ.?(دارد|داره)|دور.?رنگ|تک.?لکه|\d.?لکه)"
+)
+# Bama text mixes Arabic and Persian letters ("تعويض" vs "تعویض").
+_ARABIC_TO_PERSIAN = str.maketrans("يكىة", "یکیه")
+
+
+def red_flags(*, title: str = "", description: str = "", body_status: str = "") -> bool:
+    """True when the ad's own words explain a low price."""
+    text = f"{title or ''}\n{description or ''}".translate(_ARABIC_TO_PERSIAN)
+    if _RED_FLAGS_RE.search(text) or _DAMAGE_RE.search(_NEGATED_DAMAGE_RE.sub(" ", text)):
+        return True
+    prose = (description or "").translate(_ARABIC_TO_PERSIAN)
+    return condition_band(body_status) == CLEAN and bool(_PROSE_DAMAGE_RE.search(prose))
+
+
 _CONDITION_RE = re.compile(CONDITION)
 
 

@@ -30,7 +30,7 @@ import {
 } from "../components/ui/select";
 
 type Range = Pick<Distribution, "p10" | "p25" | "median" | "p75" | "p90" | "width_pct"
-  | "wide" | "clusters">;
+  | "wide" | "clusters" | "old_price_pct" | "old_price_days">;
 type Summary = { count: number; thin: boolean; asking_range: Range | null;
   observed_min: number | null; observed_max: number | null;
   /** True once trim, year and condition are all pinned: the range is peers. */

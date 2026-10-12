@@ -634,9 +634,7 @@ def probe_sold() -> dict:
     window = deal_window(now=now)
     qs = (
         DealScoreCache.objects.filter(
-            discount_pct__gt=0,
-            discount_pct__lte=window["ceiling_pct"],
-            discount_pct__gte=window["min_discount_pct"],
+            components__deal_status="deal",
             ad__status=Ad.Status.ACTIVE,
             ad__publish_at__gte=now - timedelta(days=window["window_days"]),
         )
