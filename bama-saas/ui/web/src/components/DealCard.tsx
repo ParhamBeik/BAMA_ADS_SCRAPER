@@ -250,8 +250,10 @@ export function DealCard({ deal, suspect }: { deal: Deal; suspect: boolean }) {
             </span>
           </div>
         )}
+        {/* Not a deal-extra row: on a phone those are hidden, and the reason is
+            what the review tab exists to show. */}
         {verdictNote(deal) && (
-          <div className="row deal-extra">
+          <div className="row stat-sub">
             <span className="stat-sub">
               {deal.deal_status === "check" ? <AlertTriangle size={11} /> : <BadgeCheck size={11} />}{" "}
               {verdictNote(deal)}

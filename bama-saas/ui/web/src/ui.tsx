@@ -223,14 +223,12 @@ export function Provenance({
           cheerful listing count. */}
       {coverage.source_blocked && (
         <span className="badge warn">
-          <AlertTriangle size={11} /> باما در حال حاضر پاسخ نمی‌دهد — این اعداد
-          به‌روز نمی‌شوند
+          <AlertTriangle size={11} /> باما پاسخ نمی‌دهد
         </span>
       )}
       {coverage.removal_detection_paused && (
         <span className="badge warn">
-          <AlertTriangle size={11} /> تشخیص حذف آگهی متوقف است — ممکن است آگهی
-          فروخته‌شده هنوز فعال نشان داده شود
+          <AlertTriangle size={11} /> تشخیص حذف متوقف
         </span>
       )}
       <Database size={13} />
@@ -241,8 +239,7 @@ export function Provenance({
         </span>
       ) : (
         <span className="warn">
-          هیچ بررسی کاملی ثبت نشده — این اعداد ممکن است تنها بخشی از بازار را
-          پوشش دهند
+          پوشش ناقص
         </span>
       )}
       {coverage.stale && (
@@ -252,6 +249,19 @@ export function Provenance({
       )}
       {as_of && <span>· تا {new Date(as_of).toLocaleString("fa-IR-u-nu-latn")}</span>}
       {methodology_version != null && <MethodologyLink version={methodology_version} />}
+      {/* The consequences behind the tags, reachable by tap and keyboard. */}
+      {(coverage.source_blocked || coverage.removal_detection_paused
+        || !coverage.complete_sweep) && (
+        <HowWeKnow label="یعنی چه؟">
+          {coverage.source_blocked && <p>این اعداد تا وصل شدن دوباره به باما به‌روز نمی‌شوند.</p>}
+          {coverage.removal_detection_paused && (
+            <p>ممکن است آگهی فروخته‌شده هنوز فعال نشان داده شود.</p>
+          )}
+          {!coverage.complete_sweep && (
+            <p>هیچ بررسی کاملی ثبت نشده؛ این اعداد ممکن است تنها بخشی از بازار را پوشش دهند.</p>
+          )}
+        </HowWeKnow>
+      )}
     </div>
   );
 }
@@ -305,25 +315,30 @@ export function SeriesCaveats({
   window, sample,
 }: { window: IndexWindow; sample?: IndexSample }) {
   const notes: string[] = [];
+  const tags: string[] = [];
   if (window.clamped) {
+    tags.push(`فقط ${fa(window.days)} روز سابقه`);
     notes.push(
       `سابقه شاخص فقط ${fa(window.days)} روز است، نه ${fa(window.requested_days)} روز — ` +
       "بازه‌های بلندتر همین عدد را برمی‌گردانند.",
     );
   }
   if (sample?.low_coverage_days) {
+    tags.push(`${fa(sample.low_coverage_days)} روز کم‌پوشش`);
     notes.push(
       `${fa(sample.low_coverage_days)} روز از این بازه کم‌پوشش بوده و در محاسبه تغییر ` +
       "قیمت شرکت داده نشده است.",
     );
   }
   if (sample && sample.max_gap_days > 1) {
+    tags.push(`فاصله‌ی ${fa(sample.max_gap_days)} روزه`);
     notes.push(
       `بزرگ‌ترین فاصله میان دو روز پیاپی این نمودار ${fa(sample.max_gap_days)} روز است؛ ` +
       "حرکت آن گام، حاصل چند روز است نه یک روز.",
     );
   }
   if (sample?.thin) {
+    tags.push("نمونه کم");
     notes.push(
       `این شاخص روی ${fa(sample.cohort_count)} دسته ساخته شده — کمتر از ` +
       `${fa(sample.min_cohorts)} دسته‌ای که برای یک عدد قابل اتکا لازم است.`,
@@ -331,9 +346,14 @@ export function SeriesCaveats({
   }
   if (!notes.length) return null;
   return (
-    <p className="badge warn" style={{ display: "block", lineHeight: 1.7 }}>
-      <AlertTriangle size={11} /> {notes.join(" ")}
-    </p>
+    <div>
+      <div className="row" style={{ gap: 4 }}>
+        {tags.map((t) => (
+          <span key={t} className="badge warn"><AlertTriangle size={11} /> {t}</span>
+        ))}
+      </div>
+      <HowWeKnow label="چرا؟">{notes.map((n) => <p key={n}>{n}</p>)}</HowWeKnow>
+    </div>
   );
 }
 
@@ -803,7 +823,7 @@ const VERDICT_WORD: Record<Verdict, string> = {
 
 /** Who the peers were, printed with every valuation. */
 const BASIS_NOTE: Record<Basis, (n: number) => string> = {
-  exact: (n) => `بر پایه ${fa(n)} آگهی با همان مدل، تیپ، سال ساخت و وضعیت بدنه.`,
+  exact: (n) => `${fa(n)} آگهی هم‌گروه`,
   none: () => "",
 };
 /**

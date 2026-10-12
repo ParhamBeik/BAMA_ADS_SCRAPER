@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 import { verdictNote } from "./components/DealCard";
 import { scopeKey } from "./components/FollowButton";
 import { qs } from "./filters";
-import { fa, modelYear, parseBudget, pct, toman } from "./format";
+import { fa, modelYear, parseBudget, pct, toman, tomanRange } from "./format";
 
 it("parses Persian and Arabic-Indic budget input without dropping its digits", () => {
   expect(parseBudget("۱٬۲۰۰٬۰۰۰٬۰۰۰")).toBe(1_200_000_000);
@@ -152,5 +152,14 @@ describe("verdictNote", () => {
   });
   it("says nothing when no peer group could judge", () => {
     expect(verdictNote({ deal_status: null })).toBeNull();
+  });
+});
+
+describe("tomanRange", () => {
+  it("says the shared unit once", () => {
+    expect(tomanRange(1_130_000_000, 1_370_000_000)).toBe("1.13 – 1.37 میلیارد");
+  });
+  it("keeps both units when they differ", () => {
+    expect(tomanRange(950_000_000, 1_100_000_000)).toBe("950 میلیون – 1.1 میلیارد");
   });
 });

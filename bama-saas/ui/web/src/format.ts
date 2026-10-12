@@ -34,6 +34,14 @@ export function toman(value: number | null | undefined): string {
   return num(value);
 }
 
+/** "1.13 – 1.37 میلیارد": one unit word for a range whose ends share it. */
+export function tomanRange(lo: number | null | undefined, hi: number | null | undefined): string {
+  if (lo == null || hi == null) return "—";
+  const [a, b] = [toman(lo), toman(hi)];
+  const unit = (t: string) => t.split(" ")[1];
+  return unit(a) && unit(a) === unit(b) ? `${a.split(" ")[0]} – ${b}` : `${a} – ${b}`;
+}
+
 export function pct(value: number | null | undefined, digits = 1): string {
   return value == null ? "—" : `${value.toFixed(digits)}%`;
 }

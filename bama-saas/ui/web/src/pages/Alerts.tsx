@@ -342,11 +342,6 @@ export function Alerts() {
 
   return (
     <div className="stack">
-      <div>
-        <h1 style={{ margin: 0, fontSize: 22, letterSpacing: "-0.01em" }}>اعلان‌ها</h1>
-        
-      </div>
-
       <Card title="آگهی‌های رسیده">
         <Async query={feed} shape="cards" empty="هنوز اعلانی نرسیده است.">
           {(data) =>

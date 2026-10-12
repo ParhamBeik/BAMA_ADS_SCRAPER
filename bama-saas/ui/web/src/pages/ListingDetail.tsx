@@ -6,6 +6,7 @@ import { api } from "../api";
 import { Async, BamaLink, FLAG_LABEL, Fa, ListingActions, PriceBar, PriceVerdict, Provenance, RangeNotes, HowWeKnow } from "../ui";
 import { bothDates, fa, faDate, modelYear, num, pct, toman } from "../format";
 import type { Basis, Distribution, Verdict } from "../ui";
+import { verdictNote, type Deal } from "../components/DealCard";
 
 type Ad = {
   code: string;
@@ -333,84 +334,35 @@ export function ListingDetail() {
                 peerCount={fp.peer_count}
                 confidence={fp.confidence}
               />
-              <table className="table mini-table">
-                <tbody>
-                  <tr>
-                    <th>این آگهی</th>
-                    <td className="num">{toman(fp.asking)}</td>
-                  </tr>
-                  <tr>
-                    <th>قیمت منصفانه</th>
-                    <td className="num">
-                      {fp.fair_value != null ? toman(fp.fair_value) : "—"}
-                    </td>
-                  </tr>
-                  {fp.distribution?.median != null && (
-                    <tr>
-                      <th>میانه‌ی گروه</th>
-                      <td className="num">{toman(fp.distribution.median)}</td>
-                    </tr>
-                  )}
-                  {/* Mode beside median: in a market that quotes round numbers
-                      "what people actually ask" and "the middle" differ, and
-                      both are worth showing. */}
-                  {fp.distribution?.mode?.value != null && (
-                    <tr>
-                      <th>پرتکرارترین قیمت</th>
-                      <td className="num">
-                        {toman(fp.distribution.mode.value)}
-                        {/* font-sans: the cell is mono, which has no Persian glyphs. */}
-                        <span className="muted font-sans" dir="rtl">
-                          {" "}({fa(fp.distribution.mode.count)} آگهی)
-                        </span>
-                      </td>
-                    </tr>
-                  )}
-                  {/* The range is the middle half of peer asks, the same
-                      P25-P75 every screen shows. */}
-                  {fp.distribution?.p25 != null && (
-                    <tr>
-                      <th>بازه‌ی قیمت</th>
-                      <td className="num">
-                        {toman(fp.distribution.p25)} — {toman(fp.distribution.p75)}
-                      </td>
-                    </tr>
-                  )}
-                  {fp.position_pct != null && (
-                    <tr>
-                      <th>جایگاه در گروه</th>
-                      {/* Not `.num`: that class sets the mono face, which has
-                          no Persian glyphs and broke every letter join in
-                          this sentence. Only the figure is tabular. */}
-                      <td>
-                        گران‌تر از{" "}
-                        <span className="font-mono tabular-nums">{pct(fp.position_pct, 0)}</span>
-                        {" "}آگهی‌های مشابه
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-              {/* Where this car sits among its peers, before the arithmetic. */}
+              {/* Where this car sits among its peers: the bar's legend already
+                  carries this ad, the median and the middle half, so they are
+                  not repeated in a table. The rest is behind the tap. */}
               <PriceBar distribution={fp.distribution} asking={fp.asking} />
-              <RangeNotes distribution={fp.distribution} />
-              {fp.peers && fp.peers.length > 0 && (
-                <p className="stat-sub">
-                  آگهی‌های هم‌گروه:{" "}
-                  {fp.peers.map((c, i) => (
-                    <span key={c}>{i > 0 && " · "}<Link to={`/listing/${c}`}>{c}</Link></span>
-                  ))}
-                </p>
-              )}
-              {/* Why the confidence may read lower than the peer count alone
-                  suggests. Without this the badge appears to contradict the
-                  number printed beside it. */}
-              {fp.cohort_stale && (
-                <p className="badge warn">
-                  آگهی‌های مشابه این خودرو مدتی است دوباره دیده نشده‌اند، پس این
-                  برآورد با احتیاط بیشتری خوانده شود.
-                </p>
-              )}
+              {fp.cohort_stale && <span className="badge warn">مشابه‌ها قدیمی</span>}
+              <RangeNotes distribution={fp.distribution}>
+                {fp.position_pct != null && (
+                  <p>گران‌تر از {pct(fp.position_pct, 0)} آگهی‌های مشابه.</p>
+                )}
+                {fp.fair_value != null && (
+                  <p>قیمت منصفانه با در نظر گرفتن کارکرد: {toman(fp.fair_value)}.</p>
+                )}
+                {fp.distribution?.mode?.value != null && (
+                  <p>
+                    پرتکرارترین قیمت: {toman(fp.distribution.mode.value)} ({fa(fp.distribution.mode.count)} آگهی).
+                  </p>
+                )}
+                {fp.cohort_stale && (
+                  <p>آگهی‌های مشابه این خودرو مدتی است دوباره دیده نشده‌اند.</p>
+                )}
+                {fp.peers && fp.peers.length > 0 && (
+                  <p>
+                    آگهی‌های هم‌گروه:{" "}
+                    {fp.peers.map((c, i) => (
+                      <span key={c}>{i > 0 && " · "}<Link to={`/listing/${c}`}>{c}</Link></span>
+                    ))}
+                  </p>
+                )}
+              </RangeNotes>
               {fp.as_of && <Provenance envelope={fp as never} />}
             </>
           )}
@@ -461,7 +413,8 @@ export function ListingDetail() {
   );
 }
 
-interface DealRow {
+interface DealRow extends Pick<Deal, "deal_status" | "deal_reasons" | "cheaper_than_pct"
+  | "fresh_peers" | "price_age_days"> {
   discount_pct: number | null;
   peer_median: number | null;
   peer_count: number | null;
@@ -488,40 +441,29 @@ function DealVerdict({ code }: { code: string }) {
   // priced *above* its peers), and the board filters on the sign at query
   // time. This card used to assume every row it received was on the board, so
   // a car 4.6% over the median was captioned "priced below its peers".
-  const below = d.discount_pct != null && d.discount_pct > 0;
-  // Zero is "at the median" and null is "no figure"; neither is "above".
-  const above = d.discount_pct != null && d.discount_pct < 0;
-  const gap = d.discount_pct != null ? Math.abs(d.discount_pct) : null;
+  // The valuation card above already prints the gap and the peer median, so
+  // this card says only what the deal board decided and why.
+  const note = verdictNote(d);
   return (
     <div className="card">
-      <h2>{below ? "در فهرست معامله‌ها" : "مقایسه با میانه مشابه‌ها"}</h2>
-      <HowWeKnow><p>
-        {below
-          ? "این آگهی زیر میانه قیمت آگهی‌های مشابه خودش قیمت خورده و روی تابلوی معامله‌ها می‌آید."
-          : above
-            ? "این آگهی بالاتر از میانه قیمت آگهی‌های مشابه قیمت خورده است، پس روی تابلوی معامله‌ها نیست."
-            : "این آگهی زیر میانه قیمت آگهی‌های مشابه نیست، پس روی تابلوی معامله‌ها نیست."}
-      </p></HowWeKnow>
-      <ul className="spec-list">
-        <li>
-          {below ? "ارزان‌تر از میانه: " : above ? "گران‌تر از میانه: " : "فاصله از میانه: "}
-          <span className={below ? "up" : "down"}>
-            {gap != null ? pct(gap) : "—"}
-          </span>
-        </li>
-        <li>میانه قیمت مشابه‌ها: {toman(d.peer_median)}</li>
-        <li>
-          تعداد آگهی مشابه: {d.peer_count ?? "—"}
-          {d.components?.cohort_stale && " (مدتی است دوباره دیده نشده‌اند)"}
-        </li>
-        {d.liquidity && (
-          <li>
-            {Math.round(d.liquidity.left_pct)}% از این مدل ظرف{" "}
-            {d.liquidity.window_days} روز از باما برداشته می‌شوند — از{" "}
-            {d.liquidity.n} آگهی
-          </li>
-        )}
-      </ul>
+      <h2>تابلوی معامله‌ها</h2>
+      <p>
+        {d.deal_status === "deal" ? <span className="badge ok">معامله‌ی خوب</span>
+          : d.deal_status === "check" ? <span className="badge warn">نیازمند بررسی</span>
+          : <span className="badge">در تابلو نیست</span>}
+      </p>
+      {note && <p className="stat-sub">{note}</p>}
+      {d.liquidity && (
+        <p className="stat-sub">
+          {Math.round(d.liquidity.left_pct)}% از این مدل ظرف {d.liquidity.window_days} روز برداشته می‌شوند
+        </p>
+      )}
+      <HowWeKnow>
+        <p>
+          معامله‌ی خوب یعنی قیمتی که در ۱۴ روز اخیر ثبت شده، از بیشتر آگهی‌های هم‌گروهِ ماه
+          اخیر ارزان‌تر است، کارکرد عادی دارد و در متن آگهی دلیلی برای ارزانی دیده نمی‌شود.
+        </p>
+      </HowWeKnow>
       <Link className="btn" to="/cars?deals=1">همه معامله‌ها</Link>
     </div>
   );
