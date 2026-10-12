@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import math
 import statistics
+from bisect import bisect_right
 from collections import Counter, defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -40,7 +41,7 @@ from django.utils import timezone
 
 from apps.common.verify import MAX_PLAUSIBLE_MILEAGE, MIN_PLAUSIBLE_PRICE
 from apps.core.locks import DEAL_SCORES_REBUILD, rebuild_lock
-from apps.core.models import Ad, DealScoreCache, PriceObservation
+from apps.core.models import Ad, DealScoreCache, MarketIndex, PriceObservation
 from apps.core.quality import (
     COHORT_FLAGS,
     CONDITION_BANDS,
@@ -51,6 +52,7 @@ from apps.core.quality import (
     INSTALLMENT_WORDS_RE,
     condition_band,
     exclude_unclear_price,
+    peer_band,
     red_flags,
     verified,
     verified_by_ad,
@@ -510,7 +512,7 @@ def strict_peers(*, model_id: int, variant_id, year_jalali, band) -> list[tuple]
                          "body_status"))
     return [(price, mileage, band, seen, set_at, code)
             for price, mileage, seen, set_at, code, status in rows
-            if condition_band(status) == band]
+            if peer_band(status, mileage) == band]
 
 
 # Sellers quote round numbers, so the most *common* asking price is a real
@@ -568,7 +570,7 @@ def fair_price(code: str) -> dict:
     if not ad.model_id or not ad.current_price:
         return {"code": code, "available": False, "reason": "missing_model_or_price"}
 
-    band = condition_band(ad.body_status)
+    band = peer_band(ad.body_status, ad.mileage)
     peers = strict_peers(model_id=ad.model_id, variant_id=ad.variant_id,
                          year_jalali=ad.year_jalali, band=band)
     basis = "exact" if peers else "none"
@@ -868,7 +870,7 @@ def flag_suspects(*, model_id: int | None = None) -> dict:
 
     cohorts: dict = defaultdict(list)
     for r in rows:
-        r["band"] = condition_band(r["body_status"])
+        r["band"] = peer_band(r["body_status"], r["mileage"])
         cohorts[(r["model_id"], r["variant_id"], r["year_jalali"])].append(r["current_price"])
     medians = {k: median(v) for k, v in cohorts.items() if len(v) >= MIN_PEERS}
 
@@ -1001,13 +1003,35 @@ def inherit_repost_price_dates(rows: list[dict]) -> None:
         r["price_set_at"] = r.pop("_oldest")
 
 
-def assess_deals(rows: list[dict], *, now) -> dict[str, dict]:
+def market_ratio():
+    """``date -> index today / index then`` from the market index, or None.
+
+    Used only to decide whether an old price is still cheap today, never to
+    rewrite a price anyone sees.
+    """
+    series = sorted(MarketIndex.objects.filter(scope=MarketIndex.Scope.MARKET)
+                    .values_list("date", "index_value"))
+    if not series:
+        return None
+    dates = [d for d, _ in series]
+    latest = series[-1][1]
+
+    def ratio(day):
+        i = max(bisect_right(dates, day) - 1, 0)
+        return latest / series[i][1] if series[i][1] else 1.0
+    return ratio
+
+
+def assess_deals(rows: list[dict], *, now, market=None) -> dict[str, dict]:
     """Deal verdicts for rows carrying ``price_set_at`` and ``condition_band``.
 
     Only cars priced below the P25 of their fresh, tight peer group are judged.
     ``deal`` when nothing explains the gap; ``check`` with the reasons when
-    something does. Absent from the result: not cheaper than most peers, or no
-    peer group solid enough to say.
+    something does. Absent from the result: not cheaper than most peers, no
+    peer group solid enough to say, or cheapness already explained — mileage
+    above the group's typical range, or an old price that the market's move
+    since (``market``, see `market_ratio`) lifts back to P25 or above. Measured
+    2026-10-12 those two were 800 and 1,410 of a 2,254-car review pile.
     """
     def age(r):
         return (now - r["price_set_at"]).days if r.get("price_set_at") else None
@@ -1035,14 +1059,20 @@ def assess_deals(rows: list[dict], *, now) -> dict[str, dict]:
             price = r["current_price"]
             if price >= p25:
                 continue
+            z = (mid - price) / spread
             reasons = []
             if (a := age(r)) is None or a > DEAL_PRICE_FRESH_DAYS:
+                if (market and r.get("price_set_at")
+                        and price * market(r["price_set_at"].date()) >= p25):
+                    continue  # cheap only against prices set since
                 reasons.append("stale_price")
+            if km_band is not None and r["mileage"] is not None and r["mileage"] > km_band[1] \
+                    and z <= DEAL_MAX_SPREADS:
+                continue  # high mileage explains it
             km_ok = km_band is not None and r["mileage"] is not None \
                 and km_band[0] <= r["mileage"] <= km_band[1]
             if not km_ok:
                 reasons.append("atypical_mileage")
-            z = (mid - price) / spread
             if z > DEAL_MAX_SPREADS:
                 reasons.append("beyond_spread")
             if FLAG_SUSPECT_MISFILED in (r["cohort_flags"] or []):
@@ -1196,7 +1226,7 @@ def _turnover_rates() -> dict[int, dict]:
 
 
 def compute_deal_scores(*, model_id: int | None = None,
-                        liquidity: dict[int, dict] | None = None) -> dict:
+                        liquidity: dict[int, dict] | None = None, market=None) -> dict:
     """Value every eligible ad against its peers, or one model's.
 
     The deal-board lock is taken before the rows are read, not just around the
@@ -1206,11 +1236,11 @@ def compute_deal_scores(*, model_id: int | None = None,
     """
     with transaction.atomic():
         rebuild_lock(DEAL_SCORES_REBUILD)
-        return _compute_deal_scores(model_id=model_id, liquidity=liquidity)
+        return _compute_deal_scores(model_id=model_id, liquidity=liquidity, market=market)
 
 
 def _compute_deal_scores(*, model_id: int | None = None,
-                         liquidity: dict[int, dict] | None = None) -> dict:
+                         liquidity: dict[int, dict] | None = None, market=None) -> dict:
     """Value every eligible ad against its peers, or one model's.
 
     This used to write only bargains, and the name still says "deal" because
@@ -1249,10 +1279,10 @@ def _compute_deal_scores(*, model_id: int | None = None,
     for r in rows:
         # "unknown" rather than None so the ladder does not skip the row: an
         # unrecognised condition is a peer group of its own (see strict_peers).
-        r["condition_band"] = condition_band(r["body_status"]) or "unknown"
+        r["condition_band"] = peer_band(r["body_status"], r["mileage"]) or "unknown"
     inherit_repost_price_dates(rows)
     now = timezone.now()
-    verdicts = assess_deals(rows, now=now)
+    verdicts = assess_deals(rows, now=now, market=market or market_ratio())
 
     # Pooled across the whole catalogue, never just this model's slice — a
     # per-model rescore would otherwise measure the haircut on a handful of rows
@@ -1484,8 +1514,9 @@ def refresh_cohort_deal_scores(model_ids) -> dict:
     if not targets:
         return totals
     liquidity = _turnover_rates()
+    market = market_ratio()  # likewise once per pass
     for mid in targets:
-        result = compute_deal_scores(model_id=mid, liquidity=liquidity)
+        result = compute_deal_scores(model_id=mid, liquidity=liquidity, market=market)
         totals["refreshed_models"] += 1
         totals["total_scored"] += result["scored"]
         totals["total_outliers_flagged"] += result["outliers_flagged"]

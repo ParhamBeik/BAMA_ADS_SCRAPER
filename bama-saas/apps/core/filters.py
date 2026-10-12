@@ -53,6 +53,9 @@ class AdFilter(django_filters.FilterSet):
             ("cosmetic", "cosmetic"),
             ("painted", "painted"),
             ("structural", "structural"),
+            # The price page's peer groups also split out 0 km cars
+            # (`quality.peer_band`), and its listings link carries that on.
+            ("new", "new"),
         ),
         method="filter_condition",
     )
@@ -94,6 +97,8 @@ class AdFilter(django_filters.FilterSet):
 
         if not value:
             return queryset
+        if value == "new":
+            return queryset.filter(mileage=0)
         return queryset.filter(condition_band_q(value))
 
     class Meta:

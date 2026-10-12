@@ -1146,7 +1146,7 @@ def test_a_fresh_typical_car_below_most_peers_is_a_deal():
 @pytest.mark.django_db
 @pytest.mark.parametrize("row, reason", [
     (_row("x", 990_000_000, age=40), "stale_price"),
-    (_row("x", 990_000_000, km=250_000), "atypical_mileage"),
+    (_row("x", 990_000_000, km=5_000), "atypical_mileage"),
     (_row("x", 600_000_000), "beyond_spread"),
     (_row("x", 990_000_000, flags=["suspect_misfiled"]), "suspect_misfiled"),
 ])
@@ -1246,3 +1246,22 @@ def test_a_rule_that_opts_into_review_receives_checked_listings(notifier_catalog
     strict = {r.ad_id for r in N.matching_deals(min_discount_pct=10, min_peers=8,
                                                  exclude_review=True)}
     assert "check001" in opted_in and "check001" not in strict
+
+
+@pytest.mark.django_db
+def test_high_mileage_explains_a_low_price():
+    assert "x" not in FP.assess_deals([*_market(), _row("x", 990_000_000, km=250_000)], now=NOW)
+
+
+@pytest.mark.django_db
+def test_an_old_price_the_market_has_since_overtaken_is_not_cheap_today():
+    old = _row("x", 990_000_000, age=40)
+    assert "x" not in FP.assess_deals([*_market(), old], now=NOW, market=lambda day: 1.10)
+    still = FP.assess_deals([*_market(), old], now=NOW, market=lambda day: 1.0)["x"]
+    assert still["deal_reasons"] == ["stale_price"]
+
+
+def test_zero_km_cars_are_their_own_peer_group():
+    from apps.core.quality import peer_band
+    assert peer_band("بدون رنگ", 0) == "new"
+    assert peer_band("بدون رنگ", 12_000) == CLEAN

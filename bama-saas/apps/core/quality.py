@@ -248,6 +248,19 @@ def condition_band(body_status: str | None) -> str | None:
     return None
 
 
+# Peer groups split new cars from used ones as well as by condition. Measured
+# 2026-10-12: where both exist in one trim/year/condition group, 0 km cars ask
+# a median 5.7% more (-10% to +37%), and mixing them made 0 km cars 54% of the
+# deal board from 20% of the catalogue.
+NEW = "new"
+PEER_BANDS = (NEW, *CONDITION_BANDS)
+
+
+def peer_band(body_status: str | None, mileage: int | None) -> str | None:
+    """The condition part of a peer key: ``new`` at 0 km, else the body band."""
+    return NEW if mileage == 0 else condition_band(body_status)
+
+
 def condition_band_q(band: str, *, prefix: str = "") -> Q:
     """``condition_band`` as a queryset predicate, derived from the same rules.
 

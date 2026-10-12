@@ -16,7 +16,7 @@ from apps.core.pricing import (
     price_set_rows,
     scorable_rows,
 )
-from apps.core.quality import condition_band, without_cohort_outliers
+from apps.core.quality import peer_band, without_cohort_outliers
 
 RANGE_KEYS = ("p10", "p25", "median", "p75", "p90", "width_pct", "wide", "clusters",
               "old_price_pct", "old_price_days")
@@ -66,7 +66,7 @@ def model_exploration(model_id: int, *, variant_id: int | None = None,
     national = list(base.values(*fields))
     for row in national:
         row["mileage_bucket"] = _bucket(row["mileage"])
-        row["condition_band"] = condition_band(row["body_status"])
+        row["condition_band"] = peer_band(row["body_status"], row["mileage"])
     selected = [
         row for row in national
         if (variant_id is None or row["variant_id"] == variant_id)
