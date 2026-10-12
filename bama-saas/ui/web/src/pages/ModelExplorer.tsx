@@ -207,6 +207,8 @@ export function ModelExplorer() {
           );
           const label = (facets: Facet[], value?: string) =>
             facets.find((f) => String(f.value) === value)?.label;
+          const useSelected = refined && data.selected.asking_range != null;
+          const thinSelection = refined && !useSelected;
           const selectionTitle = [
             `${data.model.brand} ${data.model.name}`,
             label(data.facets.variants, params.variant),
@@ -216,13 +218,20 @@ export function ModelExplorer() {
           ].filter(Boolean).join(" · ");
           return (
             <>
-              {/* The answer first: the selection's range when there is one,
-                  otherwise the whole model's. Refining sits under it, and the
-                  whole-model range drops to a smaller card once refined. */}
-              <Card title={refined ? "قیمت انتخاب شما" : "قیمت در بازار"}>
+              {/* The answer first: the selection's range when it has one,
+                  otherwise the whole model's — a refinement too thin for a
+                  range must not push the one range there is below the
+                  filters. The whole-model card below appears only when the
+                  answer above is the selection's. */}
+              <Card title={useSelected ? "قیمت انتخاب شما" : "قیمت در بازار"}>
+                {thinSelection && (
+                  <span className="badge warn">
+                    انتخاب شما: {num(data.selected.count)} آگهی، کم برای بازه
+                  </span>
+                )}
                 <PriceSummary
-                  title={refined ? selectionTitle : `${data.model.brand} ${data.model.name}`}
-                  summary={refined ? data.selected : data.national} emphasis>
+                  title={useSelected ? selectionTitle : `${data.model.brand} ${data.model.name}`}
+                  summary={useSelected ? data.selected : data.national} emphasis>
                   {evidence}
                 </PriceSummary>
               </Card>
@@ -253,7 +262,7 @@ export function ModelExplorer() {
                 </div>
               </Card>
 
-              {refined && (
+              {useSelected && (
                 <Card title="کل این مدل">
                   <PriceSummary title={`${data.model.brand} ${data.model.name}`}
                                 summary={data.national} />

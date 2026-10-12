@@ -222,13 +222,12 @@ export function Provenance({
           catalog was frozen for six hours and this strip still only reported a
           cheerful listing count. */}
       {coverage.source_blocked && (
-        <span className="badge warn" title="این اعداد تا وصل شدن دوباره به‌روز نمی‌شوند">
+        <span className="badge warn">
           <AlertTriangle size={11} /> باما پاسخ نمی‌دهد
         </span>
       )}
       {coverage.removal_detection_paused && (
-        <span className="badge warn"
-              title="ممکن است آگهی فروخته‌شده هنوز فعال نشان داده شود">
+        <span className="badge warn">
           <AlertTriangle size={11} /> تشخیص حذف متوقف
         </span>
       )}
@@ -239,8 +238,7 @@ export function Provenance({
           {since(coverage.age_hours)}
         </span>
       ) : (
-        <span className="warn"
-              title="این اعداد ممکن است تنها بخشی از بازار را پوشش دهند">
+        <span className="warn">
           پوشش ناقص
         </span>
       )}
@@ -251,6 +249,19 @@ export function Provenance({
       )}
       {as_of && <span>· تا {new Date(as_of).toLocaleString("fa-IR-u-nu-latn")}</span>}
       {methodology_version != null && <MethodologyLink version={methodology_version} />}
+      {/* The consequences behind the tags, reachable by tap and keyboard. */}
+      {(coverage.source_blocked || coverage.removal_detection_paused
+        || !coverage.complete_sweep) && (
+        <HowWeKnow label="یعنی چه؟">
+          {coverage.source_blocked && <p>این اعداد تا وصل شدن دوباره به باما به‌روز نمی‌شوند.</p>}
+          {coverage.removal_detection_paused && (
+            <p>ممکن است آگهی فروخته‌شده هنوز فعال نشان داده شود.</p>
+          )}
+          {!coverage.complete_sweep && (
+            <p>هیچ بررسی کاملی ثبت نشده؛ این اعداد ممکن است تنها بخشی از بازار را پوشش دهند.</p>
+          )}
+        </HowWeKnow>
+      )}
     </div>
   );
 }
