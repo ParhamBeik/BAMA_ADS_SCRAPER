@@ -1365,3 +1365,13 @@ main:focus { outline: none; }
   .brand-strip .preset { flex: none; }
   .model-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* A sideways strip of cards: ads above the fold without pushing the page's
+   own content off it. Declared last so it wins over the phone grid rule. */
+.card-grid.card-strip {
+  grid-auto-flow: column; grid-template-columns: none;
+  grid-auto-columns: min(220px, 46%);
+  overflow-x: auto; overscroll-behavior-x: contain;
+  scroll-snap-type: x mandatory; padding-bottom: 4px;
+}
+.card-strip > * { scroll-snap-align: start; }
