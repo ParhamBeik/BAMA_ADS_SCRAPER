@@ -85,11 +85,50 @@ const LISTED_PRESETS: [string, number][] = [
   ["ماه اخیر", 30],
 ];
 
-const MILEAGE_PRESETS: [string, number][] = [
-  ["زیر 50 هزار", 50_000],
-  ["زیر 100 هزار", 100_000],
-  ["زیر 200 هزار", 200_000],
+/** 0 km is its own group (its peers are other 0 km cars), so every "under"
+ *  preset starts at 1 km. `[label, min, max]`. */
+const MILEAGE_PRESETS: [string, number, number | null][] = [
+  ["صفر کیلومتر", 0, 0],
+  ["زیر 5 هزار", 1, 5_000],
+  ["زیر 10 هزار", 1, 10_000],
+  ["زیر 20 هزار", 1, 20_000],
+  ["زیر 50 هزار", 1, 50_000],
+  ["زیر 100 هزار", 1, 100_000],
+  ["بالای 100 هزار", 100_001, null],
 ];
+
+/** A 0 km cap, however it was typed ("0", "00"). */
+export const isZeroKm = (max: string | null | undefined) =>
+  max != null && max.trim() !== "" && Number(max) === 0;
+
+/** Mileage presets plus free from/to fields, shared by the Cars and Price tabs.
+ *  Picking 0 km clears body condition: a 0 km car has no paint. */
+export function MileageField() {
+  const filters = useFilters();
+  const min = filters.get("mileage_min") ?? "";
+  const max = filters.get("mileage_max") ?? "";
+  return (
+    <>
+      <PresetRow>
+        {MILEAGE_PRESETS.map(([label, lo, hi]) => {
+          const on = String(lo) === min && String(hi ?? "") === max;
+          return (
+            <Preset key={label} label={label} on={on}
+                    onClick={() => filters.set(on
+                      ? { mileage_min: null, mileage_max: null, page: null }
+                      : { mileage_min: lo, mileage_max: hi, page: null,
+                          ...(hi === 0 ? { condition: null } : {}) })} />
+          );
+        })}
+      </PresetRow>
+      <RangeField
+        label="کارکرد (کیلومتر)"
+        minKey="mileage_min" maxKey="mileage_max"
+        placeholderMin="از" placeholderMax="تا"
+      />
+    </>
+  );
+}
 
 export const FILTER_KEYS = [
   "brand", "model", "variant", "city", "q", "price_min", "price_max",
@@ -146,7 +185,7 @@ function Group({
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <label className="grid gap-1.5">
+    <label className="grid grid-cols-1 gap-1.5">
       <span className="text-muted-foreground text-xs font-semibold">{label}</span>
       {children}
     </label>
@@ -187,7 +226,12 @@ function RangeField({
           aria-label={`${label} تا`}
           placeholder={placeholderMax}
           defaultValue={max ?? ""}
-          onBlur={(e) => filters.set({ [maxKey]: e.target.value || null, page: null })}
+          // A typed 0 km max clears body condition, like the 0 km preset: the
+          // condition control hides at 0 km and would otherwise be stuck on.
+          onBlur={(e) => filters.set({
+            [maxKey]: e.target.value || null, page: null,
+            ...(maxKey === "mileage_max" && isZeroKm(e.target.value) ? { condition: null } : {}),
+          })}
         />
       </div>
     </Field>
@@ -430,20 +474,7 @@ export function FilterPanel({
             minKey="year_min" maxKey="year_max"
             placeholderMin="از 1395 یا 2016" placeholderMax="تا 1404 یا 2025"
           />
-          <PresetRow>
-            {MILEAGE_PRESETS.map(([label, max]) => {
-              const on = String(max) === (mileageMax ?? "");
-              return (
-                <Preset key={label} label={label} on={on}
-                        onClick={() => filters.set({ mileage_max: on ? null : max, page: null })} />
-              );
-            })}
-          </PresetRow>
-          <RangeField
-            label="کارکرد (کیلومتر)"
-            minKey="mileage_min" maxKey="mileage_max"
-            placeholderMin="از" placeholderMax="تا"
-          />
+          <MileageField />
         </Group>
 
         {showListed && (
@@ -480,12 +511,12 @@ export function FilterPanel({
               onChange={(v) => filters.set({ body_type: v, page: null })}
               options={BODY_TYPES.map((b) => ({ value: b, label: b }))}
             />
-            <Choice
+            {!isZeroKm(mileageMax) && <Choice
               label="وضعیت بدنه" anyLabel="همه"
               value={filters.get("condition")}
               onChange={(v) => filters.set({ condition: v, page: null })}
               options={[...CONDITION_BANDS]}
-            />
+            />}
           </Group>
         )}
 

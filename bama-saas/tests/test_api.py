@@ -255,6 +255,10 @@ def test_the_new_car_peer_group_filters_listings_to_zero_km(api_client, catalog)
     resp = api_client.get("/api/ads/?condition=new")
     assert resp.status_code == 200, resp.content
     assert {r["code"] for r in resp.json()["results"]} == {"ad3"}
+    # Body condition describes used cars; the 0 km car is picked through mileage.
+    Ad.objects.filter(code="ad3").update(body_status="بدون رنگ")
+    clean = {r["code"] for r in api_client.get("/api/ads/?condition=clean").json()["results"]}
+    assert "ad3" not in clean
 
 
 @pytest.mark.django_db

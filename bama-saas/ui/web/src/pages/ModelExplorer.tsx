@@ -23,6 +23,7 @@ import { qs, useFilters } from "../filters";
 import { conditionLabel, km, num, toman, tomanRange } from "../format";
 import { Async, Card, Fa, HowWeKnow, ListingActions, RangeNotes, Thumb } from "../ui";
 import type { Distribution } from "../ui";
+import { isZeroKm, MileageField } from "../components/FilterPanel";
 import { ModelCombobox, type ModelRow } from "../components/ModelCombobox";
 import { Button } from "../components/ui/button";
 import {
@@ -44,8 +45,7 @@ type Exploration = {
   basis: string;
   national: Summary;
   selected: Summary;
-  facets: { variants: Facet[]; years: Facet[]; conditions: Facet[];
-    mileage: Facet[]; cities: Facet[] };
+  facets: { variants: Facet[]; years: Facet[]; conditions: Facet[]; cities: Facet[] };
   ads: Ad[];
   evidence: { feed_coverage_complete: boolean; minimum_for_range: number;
     latest_selected_sighting: string | null };
@@ -125,11 +125,6 @@ function FacetSelect({ label, value, options, onChange, format }: {
     </label>
   );
 }
-
-const mileageLabel = (o: Facet) => {
-  const edge = Number(o.value);
-  return edge === 0 ? "صفر کیلومتر" : `${num(edge)} کیلومتر`;
-};
 
 export function ModelExplorer() {
   const filters = useFilters();
@@ -285,17 +280,16 @@ export function ModelExplorer() {
                   <FacetSelect label="سال ساخت" value={params.year}
                     options={[...data.facets.years].sort((a, b) => Number(b.value) - Number(a.value))}
                     onChange={(value) => filters.set({ year: value })} />
-                  <FacetSelect label="وضعیت بدنه" value={params.condition} options={data.facets.conditions}
-                    format={(o) => conditionLabel(o.value)}
-                    onChange={(value) => filters.set({ condition: value })} />
+                  {!isZeroKm(params.mileage_max) && (
+                    <FacetSelect label="وضعیت بدنه" value={params.condition} options={data.facets.conditions}
+                      format={(o) => conditionLabel(o.value)}
+                      onChange={(value) => filters.set({ condition: value })} />
+                  )}
                   <FacetSelect label="شهر" value={params.city} options={data.facets.cities}
                     onChange={(value) => filters.set({ city: value })} />
-                  <FacetSelect label="کارکرد از" value={params.mileage_min} format={mileageLabel}
-                    options={[...data.facets.mileage].sort((a, b) => Number(a.value) - Number(b.value))}
-                    onChange={(value) => filters.set({ mileage_min: value })} />
-                  <FacetSelect label="کارکرد تا" value={params.mileage_max} format={mileageLabel}
-                    options={[...data.facets.mileage].sort((a, b) => Number(a.value) - Number(b.value))}
-                    onChange={(value) => filters.set({ mileage_max: value })} />
+                </div>
+                <div className="mt-3 space-y-2">
+                  <MileageField />
                 </div>
               </Card>
 
