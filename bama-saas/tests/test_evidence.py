@@ -131,6 +131,15 @@ def test_archive_prioritizes_current_versions(evidence, monkeypatch):
 
 
 @pytest.mark.django_db
+def test_archive_skips_removed_ads(evidence, monkeypatch):
+    ad, _ = evidence
+    ad.status = Ad.Status.REMOVED
+    ad.save(update_fields=["status"])
+    monkeypatch.setattr(photo_archive, "archive_one", lambda photo, now: "verified")
+    assert photo_archive.archive_pending() == {}
+
+
+@pytest.mark.django_db
 def test_archive_run_stops_when_bama_pushes_back(evidence, monkeypatch):
     ad, photo = evidence
     for n in (2, 3):
