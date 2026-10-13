@@ -552,18 +552,30 @@ function SupplyAndDemand({ days }: { days: number }) {
 }
 
 function BestBuys() {
-  const deals = useQuery({
+  const top = useQuery({
     queryKey: ["home-deals"],
     queryFn: ({ signal }) =>
       api.get<DealBoard>(`/api/analytics/deal-scores/${qs({ limit: SHORTLIST })}`, signal),
   });
+  // A quiet day can leave no verdict of "deal"; the strip then shows the
+  // cheapest-against-peers cars instead of an empty box at the top of Home.
+  const fallback = useQuery({
+    queryKey: ["home-deals", "all"],
+    enabled: top.data?.results?.length === 0,
+    queryFn: ({ signal }) =>
+      api.get<DealBoard>(`/api/analytics/deal-scores/${qs({ limit: SHORTLIST, band: "all" })}`, signal),
+  });
+  // Switch to the fallback as soon as top is known empty, so its loading and
+  // error states render instead of top's definitive "nothing today".
+  const usingFallback = top.data?.results?.length === 0;
+  const deals = usingFallback ? fallback : top;
 
   return (
     <Card
       title="بهترین خریدهای امروز"
       action={
         <Button asChild variant="ghost" size="sm">
-          <Link to="/cars?deals=1">همه معامله‌ها <ArrowLeft className="size-4" /></Link>
+          <Link to={usingFallback ? "/cars?deals=1&band=all" : "/cars?deals=1"}>همه معامله‌ها <ArrowLeft className="size-4" /></Link>
         </Button>
       }
     >
@@ -576,7 +588,7 @@ function BestBuys() {
           const ceiling = board.window?.ceiling_pct ?? 25;
           return (
             <>
-              <div className="card-grid">
+              <div className="card-grid card-strip">
                 {rows.map((deal) => (
                   <DealCard
                     key={deal.code}
@@ -610,18 +622,17 @@ export function Home() {
 
   return (
     <div className="stack">
-      {/* What most visitors came for, first: one car's price. */}
-      <div className="grid cols-2">
-        <Card title="قیمت یک خودرو">
-          <ModelCombobox
-            onSelect={(model) => model && navigate(`/price?model=${model.id}`)}
-            placeholder="نام مدل را بنویسید…"
-          />
-        </Card>
-        <Card title="با بودجه‌ی شما">
-          <Link to="/budget" className="btn">چه خودرویی می‌شود خرید؟</Link>
-        </Card>
-      </div>
+      {/* What most visitors came for, first: one car's price, then cars. */}
+      <Card title="قیمت یک خودرو" action={
+        <Button asChild variant="ghost" size="sm"><Link to="/budget">با بودجه‌ی من</Link></Button>
+      }>
+        <ModelCombobox
+          onSelect={(model) => model && navigate(`/price?model=${model.id}`)}
+          placeholder="نام مدل را بنویسید…"
+        />
+      </Card>
+      <BestBuys />
+
       <div className="row between gap-y-2" style={{ marginBottom: 2 }}>
         <div className="min-w-0">
           <h1 style={{ margin: 0, fontSize: 22, letterSpacing: "-0.01em" }}>
@@ -723,7 +734,6 @@ export function Home() {
       <MarketReadPanel days={days} />
       <MoversPanel days={days} />
       <SupplyAndDemand days={days} />
-      <BestBuys />
 
       <Async query={overview}>
         {(data) => (

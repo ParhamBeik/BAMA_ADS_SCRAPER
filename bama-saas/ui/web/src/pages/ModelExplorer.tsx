@@ -17,7 +17,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ArrowLeft, ArrowUpDown, X } from "lucide-react";
+import { ArrowLeft, X } from "lucide-react";
 import { api } from "../api";
 import { qs, useFilters } from "../filters";
 import { conditionLabel, km, num, toman, tomanRange } from "../format";
@@ -236,6 +236,43 @@ export function ModelExplorer() {
                 </PriceSummary>
               </Card>
 
+              {/* The cars behind the range, straight under it. */}
+              <Card
+                title={`آگهی‌ها (${num(data.selected.count)})`}
+                action={
+                  <Link to={toListings} className="btn">
+                    همه
+                    <ArrowLeft className="size-4" aria-hidden />
+                  </Link>
+                }
+              >
+                {data.ads.length ? (
+                  <div className="card-grid card-strip">
+                    {data.ads.map((ad) => (
+                      <div key={ad.code} className="listing-card stretch-host">
+                        <Thumb src={ad.image_url}>
+                          <ListingActions code={ad.code} compact />
+                        </Thumb>
+                        <div className="listing-meta">
+                          <strong>
+                            <Link to={ad.listing_url} className="stretch-link"><Fa>{ad.title}</Fa></Link>
+                          </strong>
+                          <span className="deal-price">{toman(ad.current_price)}</span>
+                          <div className="row card-facts">
+                            <span>{ad.year_jalali ?? "—"}</span>
+                            <span aria-hidden>·</span>
+                            <span>{km(ad.mileage)}</span>
+                            <span aria-hidden>·</span>
+                            <Fa>{ad.city__name_fa || "—"}</Fa>
+                          </div>
+                          <div className="row card-facts"><Fa>{ad.body_status || "وضعیت نامشخص"}</Fa></div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : <p>آگهی‌ای برای این انتخاب پیدا نشد.</p>}
+              </Card>
+
               <Card
                 title="دقیق‌تر کنید"
                 action={refined
@@ -269,47 +306,6 @@ export function ModelExplorer() {
                 </Card>
               )}
 
-              <Card
-                title={`آگهی‌های پشتیبان (${num(data.ads.length)} از ${num(data.selected.count)})`}
-                action={
-                  <Link to={toListings} className="btn">
-                    <ArrowUpDown className="size-4" aria-hidden />
-                    همه با مرتب‌سازی
-                    <ArrowLeft className="size-4" aria-hidden />
-                  </Link>
-                }
-              >
-                {data.ads.length ? (
-                  <div className="card-grid">
-                    {data.ads.map((ad) => (
-                      <div key={ad.code} className="listing-card stretch-host">
-                        <Thumb src={ad.image_url}>
-                          <ListingActions code={ad.code} compact />
-                        </Thumb>
-                        <div className="listing-meta">
-                          <strong>
-                            <Link to={ad.listing_url} className="stretch-link"><Fa>{ad.title}</Fa></Link>
-                          </strong>
-                          <span className="deal-price">{toman(ad.current_price)}</span>
-                          <div className="row card-facts">
-                            <span>{ad.year_jalali ?? "—"}</span>
-                            <span aria-hidden>·</span>
-                            <span>{km(ad.mileage)}</span>
-                            <span aria-hidden>·</span>
-                            <Fa>{ad.city__name_fa || "—"}</Fa>
-                          </div>
-                          <div className="row card-facts"><Fa>{ad.body_status || "وضعیت نامشخص"}</Fa></div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : <p>آگهی‌ای برای این انتخاب پیدا نشد.</p>}
-                {data.selected.count > data.ads.length && (
-                  <p className="stat-sub mt-3">
-                    <Link to={toListings}>همه‌ی {num(data.selected.count)} آگهی</Link>
-                  </p>
-                )}
-              </Card>
 
             </>
           );
