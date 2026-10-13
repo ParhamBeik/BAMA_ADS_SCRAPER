@@ -10,23 +10,15 @@ from django.utils import timezone
 from apps.core.coverage import coverage_state
 from apps.core.models import Model
 from apps.core.pricing import (
-    MILEAGE_BUCKETS,
     MIN_PEERS,
     peer_distribution,
     price_set_rows,
     scorable_rows,
 )
-from apps.core.quality import peer_band, without_cohort_outliers
+from apps.core.quality import NEW, condition_band, without_cohort_outliers
 
 RANGE_KEYS = ("p10", "p25", "median", "p75", "p90", "width_pct", "wide", "clusters",
               "old_price_pct", "old_price_days")
-
-
-def _bucket(km: int | None) -> str:
-    if km is None:
-        return "unknown"
-    edge = max((n for n in MILEAGE_BUCKETS if km >= n), default=0)
-    return str(edge)
 
 
 def _summary(rows: list[dict]) -> dict:
@@ -64,9 +56,14 @@ def model_exploration(model_id: int, *, variant_id: int | None = None,
               "year_jalali", "mileage", "body_status", "city_id", "city__name_fa",
               "publish_at", "last_seen_at", "price_set_at")
     national = list(base.values(*fields))
+    # 0 km is a mileage choice, not a body condition: such a car has no paint
+    # by definition, and its peers are other 0 km cars. Body condition only
+    # describes, and only filters, used cars.
     for row in national:
-        row["mileage_bucket"] = _bucket(row["mileage"])
-        row["condition_band"] = peer_band(row["body_status"], row["mileage"])
+        row["condition_band"] = None if row["mileage"] == 0 else condition_band(row["body_status"])
+    if condition == NEW:  # pre-2026-10-13 links
+        condition, mileage_min, mileage_max = None, 0, 0
+    new_only = mileage_max == 0
     selected = [
         row for row in national
         if (variant_id is None or row["variant_id"] == variant_id)
@@ -88,15 +85,16 @@ def model_exploration(model_id: int, *, variant_id: int | None = None,
         "model": {"id": model.pk, "name": model.name_fa, "brand": model.brand.name_fa},
         "basis": "observed Bama cash asking prices",
         "national": _summary(national),
-        # True peers only once trim, year and condition are all pinned; until
-        # then the range mixes cars that are not comparable, and says so.
+        # True peers only once trim, year and peer group are all pinned; until
+        # then the range mixes cars that are not comparable, and says so. The
+        # peer group is pinned by 0 km or, for used cars, by body condition.
         "selected": {**_summary(selected),
-                     "strict": None not in (variant_id, year, condition)},
+                     "strict": (None not in (variant_id, year)
+                                and (new_only or condition is not None))},
         "facets": {
             "variants": _facet(national, "variant_id", name_key="variant__name_fa"),
             "years": _facet(national, "year_jalali"),
-            "conditions": _facet(national, "condition_band"),
-            "mileage": _facet(national, "mileage_bucket"),
+            "conditions": _facet([r for r in national if r["condition_band"]], "condition_band"),
             "cities": _facet(national, "city_id", name_key="city__name_fa"),
         },
         "ads": recent,

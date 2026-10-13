@@ -97,9 +97,11 @@ class AdFilter(django_filters.FilterSet):
 
         if not value:
             return queryset
-        if value == "new":
+        if value == "new":  # pre-2026-10-13 links; 0 km is now a mileage choice
             return queryset.filter(mileage=0)
-        return queryset.filter(condition_band_q(value))
+        # Body condition describes used cars: a 0 km car has no paint by
+        # definition and is chosen through mileage instead.
+        return queryset.filter(condition_band_q(value)).exclude(mileage=0)
 
     class Meta:
         model = Ad

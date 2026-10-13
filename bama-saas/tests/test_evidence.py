@@ -163,6 +163,25 @@ def test_rare_model_group_keeps_ads_without_a_price_range(evidence):
     assert result["purchase_price"] is None
 
 
+@pytest.mark.django_db
+def test_zero_km_is_a_mileage_group_not_a_body_condition(evidence):
+    from apps.core.explorer import model_exploration
+
+    new, _ = evidence
+    used = Ad.objects.create(code="evidence_used", brand=new.brand, model=new.model,
+                             price_type="lumpsum", current_price=900_000_000)
+    for ad, km in ((new, 0), (used, 30_000)):
+        ad.publish_at, ad.year_jalali = timezone.now(), 1400
+        ad.mileage, ad.body_status = km, "یک درب رنگ"
+        ad.save()
+    result = model_exploration(new.model_id)
+    assert [f["value"] for f in result["facets"]["conditions"]] == ["painted"]
+    painted = model_exploration(new.model_id, condition="painted")
+    assert [a["code"] for a in painted["ads"]] == [used.code]
+    zero = model_exploration(new.model_id, mileage_min=0, mileage_max=0)
+    assert [a["code"] for a in zero["ads"]] == [new.code]
+
+
 def test_holdout_deduplicates_repost_and_uses_prior_baseline():
     from apps.ml.train import _cohort_quantile_baseline, _median_for, _median_table, time_split
 
