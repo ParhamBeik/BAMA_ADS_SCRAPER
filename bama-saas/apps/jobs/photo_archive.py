@@ -6,6 +6,7 @@ import hashlib
 import os
 import shutil
 import tempfile
+import time
 from datetime import timedelta
 from pathlib import Path
 
@@ -174,9 +175,17 @@ def archive_one(photo: AdVersionPhoto, *, now=None) -> str:
     return photo.state
 
 
-def archive_pending(*, limit: int = 50) -> dict:
-    """Worker job; each version remains independently inspectable."""
+def archive_pending(*, limit: int = 500, budget_s: float = 240) -> dict:
+    """Worker job; each version remains independently inspectable.
+
+    500 per run, not 50: at ~0.35 s a photo that is ~3 minutes of an ~18-minute
+    cadence. 50 archived ~165 photos an hour against ~14k pending (2026-10-13),
+    so most cards fell through to a live CDN fetch costing up to a second each.
+    The bigger batch stops early when Bama pushes back or the run hits
+    ``budget_s``, so a slow CDN cannot hold up the rest of the cadence.
+    """
     now = timezone.now()
+    started = time.monotonic()
     due = (AdVersionPhoto.objects.filter(state__in=["pending", "blocked"])
            .filter(Q(next_retry_at__isnull=True) | Q(next_retry_at__lte=now))
            .select_related("version__ad"))
@@ -187,6 +196,9 @@ def archive_pending(*, limit: int = 50) -> dict:
     for photo in current:
         outcome = archive_one(photo, now=now)
         counts[outcome] = counts.get(outcome, 0) + 1
-        if outcome == "capacity_paused":
+        if outcome in ("capacity_paused", "source_blocked"):
+            break
+        if time.monotonic() - started > budget_s:
+            counts["budget_stopped"] = 1
             break
     return counts
