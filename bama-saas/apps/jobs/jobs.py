@@ -11,6 +11,7 @@ import logging
 import statistics
 from collections import Counter, defaultdict
 from datetime import timedelta
+from pathlib import Path
 
 from django.conf import settings
 from django.core.cache import cache
@@ -33,6 +34,8 @@ from apps.core.locks import TRAIN_LEASE, lease_busy
 from apps.core.models import (
     Ad,
     AdObservation,
+    AdVersionPhoto,
+    ArchivedImage,
     DailyInventorySnapshot,
     DealScoreCache,
     DetailPageCheck,
@@ -903,6 +906,10 @@ def probe_depth(*, request_timeout: int | None = None) -> dict:
 
 # Storage policy: observations are change-only provenance, read only for the latest run.
 PRUNE_DEFAULT_DAYS = 7
+# How long a removed ad keeps its stored front photo (decided 2026-10-13): old
+# links and saved cars keep their picture for a month, and the archive stays
+# bounded instead of growing ~21 MB a day with every removal.
+REMOVED_PHOTO_DAYS = 30
 _PRUNE_BATCH = 5000
 
 
@@ -943,6 +950,38 @@ def prune(*, days: int = PRUNE_DEFAULT_DAYS, dry_run: bool = False) -> dict:
     }
     for name, qs in targets.items():
         counts[name] = qs.count() if dry_run else _batched_delete(qs)
+    counts.update(prune_photos(now=now, dry_run=dry_run))
+    return counts
+
+
+def prune_photos(*, now=None, dry_run: bool = False) -> dict:
+    """Storage policy: one stored photo per ad, kept until 30 days after removal.
+
+    Drops photo rows of old ad versions (only the current front photo is kept)
+    and of ads removed more than ``REMOVED_PHOTO_DAYS`` ago, then every archived
+    file no row uses any more. A file shared by a kept row stays.
+    """
+    now = now or timezone.now()
+    rows = AdVersionPhoto.objects.filter(
+        ~Q(version_id=F("version__ad__current_version_id"))
+        | Q(version__ad__status=Ad.Status.REMOVED,
+            version__ad__removed_at__lt=now - timedelta(days=REMOVED_PHOTO_DAYS))
+    )
+    if dry_run:
+        kept = AdVersionPhoto.objects.exclude(pk__in=rows.values("pk"))
+        return {"photo_rows": rows.count(),
+                "photo_files": ArchivedImage.objects.exclude(photo_uses__in=kept).count()}
+    counts = {"photo_rows": _batched_delete(rows), "photo_files": 0}
+    root = Path(settings.PHOTO_ARCHIVE_ROOT)
+    orphans = ArchivedImage.objects.filter(photo_uses__isnull=True)
+    while batch := list(orphans.values_list("pk", "relative_path")[:_PRUNE_BATCH]):
+        # Row first, then file: a crash in between leaves a stray file for the
+        # next run's disk audit, never a row pointing at nothing.
+        ArchivedImage.objects.filter(pk__in=[pk for pk, _ in batch],
+                                     photo_uses__isnull=True).delete()
+        for _, path in batch:
+            (root / path).unlink(missing_ok=True)
+        counts["photo_files"] += len(batch)
     return counts
 
 

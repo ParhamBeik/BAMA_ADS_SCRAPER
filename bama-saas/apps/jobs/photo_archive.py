@@ -19,7 +19,7 @@ from apps.common.parsing import HEADERS, is_cdn_url
 from apps.core.admission import sync_admission
 from apps.core.coverage import consecutive_blocks
 from apps.core.images import ALLOWED_IMAGE_TYPES
-from apps.core.models import AdVersionPhoto, ArchivedImage
+from apps.core.models import Ad, AdVersionPhoto, ArchivedImage
 
 RETRY_DELAYS = (timedelta(hours=8), timedelta(hours=24))
 
@@ -190,7 +190,11 @@ def archive_pending(*, limit: int = 500, budget_s: float = 240) -> dict:
            .filter(Q(next_retry_at__isnull=True) | Q(next_retry_at__lte=now))
            .select_related("version__ad"))
     # Storage policy: only the current version's front photo is archived.
-    current = list(due.filter(position=0, version_id=F("version__ad__current_version_id"))
+    # And only for ads still for sale: 2026-10-13, 79k of the 91k queued front
+    # photos belonged to removed ads, whose pictures Bama has mostly deleted
+    # (403), so each run spent a third of its budget asking for nothing.
+    current = list(due.filter(position=0, version_id=F("version__ad__current_version_id"),
+                              version__ad__status=Ad.Status.ACTIVE)
                    .order_by("-pk")[:limit])
     counts: dict[str, int] = {}
     for photo in current:

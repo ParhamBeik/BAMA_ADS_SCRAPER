@@ -9,6 +9,10 @@ column, a volume, a downloader or a cache.
 1. **One local photo per ad: the front photo.** `AdVersionPhoto` holds only
    `position=0` of the ad's current version; `photo_archive` fetches only that.
    The `/api/img/<code>/thumb/` endpoint serves the local copy first.
+   Only ads still for sale are archived. A removed ad keeps its photo for
+   **30 days** after `removed_at`, then `prune` deletes the row and the file
+   (decided 2026-10-13: ~1,000 removals a day would otherwise add ~21 MB a day
+   with no end, and no screen or metric reads a removed ad's photo).
 2. **Every other photo is a link.** The gallery lives in `Ad.image_urls` and is
    served through the image proxy (Redis cache, then redirect). Never archive
    gallery photos or photos of old versions.
@@ -31,5 +35,7 @@ pauses collectors at 95% use.
 
 ## Cleanup
 
-`manage.py compact_photos --dry-run`, then without `--dry-run`, removes rows and
-files that break rules 1–2 and creates missing front-photo rows.
+`prune` (maintenance cadence, ~6 h) enforces rule 1 continuously: old-version
+photo rows, photos of ads removed over 30 days ago, then orphan files.
+`manage.py compact_photos --dry-run`, then without `--dry-run`, also removes
+gallery rows and creates missing front-photo rows.

@@ -131,6 +131,52 @@ def test_archive_prioritizes_current_versions(evidence, monkeypatch):
 
 
 @pytest.mark.django_db
+def test_prune_keeps_removed_ads_photo_for_30_days(evidence, tmp_path):
+    from apps.jobs.jobs import prune_photos
+
+    live, _ = evidence
+    now = timezone.now()
+
+    def stored(ad, name, *, current=True):
+        version = AdVersion.objects.create(ad=ad, semantic_hash=name * 64, raw_hash=name * 64,
+                                           first_observed_at=now)
+        if current:
+            ad.current_version = version
+            ad.save(update_fields=["current_version"])
+        digest = sha256(name.encode()).hexdigest()
+        (tmp_path / digest).write_bytes(b"x")
+        asset = ArchivedImage.objects.create(sha256=digest, relative_path=digest,
+                                             content_type="image/jpeg", byte_size=1)
+        AdVersionPhoto.objects.create(version=version, position=0, source_url=name,
+                                      state=AdVersionPhoto.State.VERIFIED, asset=asset)
+        return digest
+
+    def removed(code, days_ago):
+        return Ad.objects.create(code=code, brand=live.brand, model=live.model,
+                                 status=Ad.Status.REMOVED,
+                                 removed_at=now - timedelta(days=days_ago))
+
+    old_version = stored(live, "o", current=False)
+    active = stored(live, "k")
+    recent = stored(removed("recent", 10), "r")
+    expired = stored(removed("expired", 40), "e")
+    with override_settings(PHOTO_ARCHIVE_ROOT=str(tmp_path)):
+        # Rows: the fixture's original photo and "o" (old versions), "e" (expired).
+        assert prune_photos(now=now) == {"photo_rows": 3, "photo_files": 2}
+    assert {p.name for p in tmp_path.iterdir()} == {active, recent}
+    assert not ArchivedImage.objects.filter(pk__in=[old_version, expired]).exists()
+
+
+@pytest.mark.django_db
+def test_archive_skips_removed_ads(evidence, monkeypatch):
+    ad, _ = evidence
+    ad.status = Ad.Status.REMOVED
+    ad.save(update_fields=["status"])
+    monkeypatch.setattr(photo_archive, "archive_one", lambda photo, now: "verified")
+    assert photo_archive.archive_pending() == {}
+
+
+@pytest.mark.django_db
 def test_archive_run_stops_when_bama_pushes_back(evidence, monkeypatch):
     ad, photo = evidence
     for n in (2, 3):
