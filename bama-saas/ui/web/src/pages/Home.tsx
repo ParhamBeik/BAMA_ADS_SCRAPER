@@ -565,14 +565,17 @@ function BestBuys() {
     queryFn: ({ signal }) =>
       api.get<DealBoard>(`/api/analytics/deal-scores/${qs({ limit: SHORTLIST, band: "all" })}`, signal),
   });
-  const deals = top.data?.results?.length === 0 && fallback.data ? fallback : top;
+  // Switch to the fallback as soon as top is known empty, so its loading and
+  // error states render instead of top's definitive "nothing today".
+  const usingFallback = top.data?.results?.length === 0;
+  const deals = usingFallback ? fallback : top;
 
   return (
     <Card
       title="بهترین خریدهای امروز"
       action={
         <Button asChild variant="ghost" size="sm">
-          <Link to="/cars?deals=1">همه معامله‌ها <ArrowLeft className="size-4" /></Link>
+          <Link to={usingFallback ? "/cars?deals=1&band=all" : "/cars?deals=1"}>همه معامله‌ها <ArrowLeft className="size-4" /></Link>
         </Button>
       }
     >
