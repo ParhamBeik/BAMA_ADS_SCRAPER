@@ -320,7 +320,12 @@ a:hover { text-decoration: underline; }
   gap: 8px;
   justify-content: space-between;
   align-items: center;
+  margin-bottom: 12px;
 }
+/* The head owns the spacing; a title's own margin pushed it off-centre from
+   the action beside it, which then sat on the content below. */
+.card-head > .card-title { margin: 0; }
+.card-head > .btn { padding: 0.3rem 0.65rem; font-size: 13px; }
 .muted { color: var(--muted); }
 .breadcrumb { display: flex; flex-wrap: wrap; gap: 6px; color: var(--muted); font-size: 13px; }
 select, input { max-width: 100%; }
@@ -461,6 +466,8 @@ td.num, th.num {
   color: var(--muted);
   border: 1px solid var(--border);
 }
+/* A tag is as wide as its words, also inside a grid that stretches children. */
+.badge { justify-self: start; }
 .badge.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
 .badge.accent { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
 
@@ -650,7 +657,7 @@ code {
 .save-fab.on { color: #ff5a6e; }
 .save-btn { display: inline-flex; align-items: center; gap: 0.35rem; }
 .save-btn.on { color: var(--accent); border-color: var(--accent); }
-@media (pointer: coarse) { .save-fab { width: 40px; height: 40px; } }
+@media (pointer: coarse) { .save-fab { width: 36px; height: 36px; } }
 
 .listing-meta { font-size: 13px; }
 .listing-meta strong { font-size: 13.5px; line-height: 1.35; }
@@ -1331,8 +1338,10 @@ main:focus { outline: none; }
 
 /* One facts line on a listing card: year · km · city. Truncates instead of
    wrapping, so every card in a row keeps the same height. */
-.card-facts { flex-wrap: nowrap; overflow: hidden; white-space: nowrap; }
-.card-facts > :last-child { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+/* Wrap rather than clip: on a two-column phone grid the last fact (mileage or
+   city) was cut mid-word. Each fact stays whole. */
+.card-facts { flex-wrap: wrap; row-gap: 2px; }
+.card-facts > * { white-space: nowrap; }
 
 /* --- model browser (ModelExplorer with nothing picked) --------------------- */
 

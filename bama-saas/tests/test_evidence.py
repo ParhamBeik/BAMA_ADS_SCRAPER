@@ -180,6 +180,9 @@ def test_zero_km_is_a_mileage_group_not_a_body_condition(evidence):
     assert [a["code"] for a in painted["ads"]] == [used.code]
     zero = model_exploration(new.model_id, mileage_min=0, mileage_max=0)
     assert [a["code"] for a in zero["ads"]] == [new.code]
+    # Every other list counts only the cars the current choices leave.
+    assert sum(f["count"] for f in zero["facets"]["years"]) == zero["selected"]["count"] == 1
+    assert zero["facets"]["conditions"] == []
 
 
 def test_holdout_deduplicates_repost_and_uses_prior_baseline():
