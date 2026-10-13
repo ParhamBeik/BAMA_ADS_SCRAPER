@@ -4,8 +4,7 @@ from rest_framework import serializers
 
 from apps.common.verify import MAX_PLAUSIBLE_MILEAGE
 from apps.core import images
-from apps.core.admission import verified_local_photo
-from apps.core.models import Ad, AdVersionPhoto, Brand, NotifierSettings, Variant
+from apps.core.models import Ad, Brand, NotifierSettings, Variant
 from apps.core.pricing import MIN_PEERS
 from apps.core.quality import condition_discounted
 
@@ -69,24 +68,12 @@ class AdSerializer(serializers.ModelSerializer):
     bama_url = serializers.SerializerMethodField()
     feed_evidence = serializers.SerializerMethodField()
     detail_evidence = serializers.SerializerMethodField()
-    photo_evidence = serializers.SerializerMethodField()
 
     def get_feed_evidence(self, obj) -> dict:
         return {"state": obj.status, "last_seen_at": obj.last_seen_at}
 
     def get_detail_evidence(self, obj) -> dict:
         return {"state": obj.detail_state or "unknown", "checked_at": obj.detail_checked_at}
-
-    def get_photo_evidence(self, obj) -> dict:
-        if not obj.current_version_id:
-            return {"state": "legacy_unverified", "archived_count": 0}
-        photos = AdVersionPhoto.objects.filter(version_id=obj.current_version_id)
-        archived = photos.filter(state=AdVersionPhoto.State.VERIFIED)
-        local = sum(verified_local_photo(photo) for photo in
-                    archived.filter(asset__isnull=False).select_related("asset"))
-        return {"state": ("local_verified" if local else "unverified"),
-                "archived_count": archived.count(), "local_verified_count": local,
-                "source_count": photos.count()}
 
     def get_seller_type(self, obj) -> str:
         return "dealer" if obj.dealer_id is not None else "private"
@@ -130,7 +117,7 @@ class AdSerializer(serializers.ModelSerializer):
             # on an index instead of scanning every description.
             "cohort_flags", "price_basis_unclear", "condition_flagged",
             "mileage_implausible",
-            "admission_state", "feed_evidence", "detail_evidence", "photo_evidence",
+            "admission_state", "feed_evidence", "detail_evidence", 
         )
 
 

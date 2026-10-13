@@ -131,6 +131,24 @@ def test_archive_prioritizes_current_versions(evidence, monkeypatch):
 
 
 @pytest.mark.django_db
+def test_archive_run_stops_when_bama_pushes_back(evidence, monkeypatch):
+    ad, photo = evidence
+    for n in (2, 3):
+        other = Ad.objects.create(code=f"evidence{n}", brand=ad.brand, model=ad.model)
+        version = AdVersion.objects.create(ad=other, semantic_hash=f"{n}" * 64,
+                                           raw_hash=f"{n}" * 64, first_observed_at=timezone.now())
+        other.current_version = version
+        other.save(update_fields=["current_version"])
+        AdVersionPhoto.objects.create(version=version, position=0, source_url=photo.source_url)
+    calls = []
+    monkeypatch.setattr(photo_archive, "archive_one", lambda photo, now: (
+        calls.append(photo.pk) or "source_blocked"
+    ))
+    assert photo_archive.archive_pending() == {"source_blocked": 1}
+    assert len(calls) == 1
+
+
+@pytest.mark.django_db
 def test_rare_model_group_keeps_ads_without_a_price_range(evidence):
     from apps.core.explorer import model_exploration
 
