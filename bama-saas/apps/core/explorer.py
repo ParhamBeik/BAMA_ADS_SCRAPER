@@ -64,17 +64,27 @@ def model_exploration(model_id: int, *, variant_id: int | None = None,
     if condition == NEW:  # pre-2026-10-13 links
         condition, mileage_min, mileage_max = None, 0, 0
     new_only = mileage_max == 0
-    selected = [
-        row for row in national
-        if (variant_id is None or row["variant_id"] == variant_id)
-        and (year is None or row["year_jalali"] == year)
-        and (city_id is None or row["city_id"] == city_id)
-        and (condition is None or row["condition_band"] == condition)
-        and (mileage_min is None or
-             (row["mileage"] is not None and row["mileage"] >= mileage_min))
-        and (mileage_max is None or
-             (row["mileage"] is not None and row["mileage"] <= mileage_max))
-    ]
+    tests = {
+        "variant": lambda r: variant_id is None or r["variant_id"] == variant_id,
+        "year": lambda r: year is None or r["year_jalali"] == year,
+        "city": lambda r: city_id is None or r["city_id"] == city_id,
+        "condition": lambda r: condition is None or r["condition_band"] == condition,
+        "mileage": lambda r: (
+            (mileage_min is None and mileage_max is None) or (
+                r["mileage"] is not None
+                and (mileage_min is None or r["mileage"] >= mileage_min)
+                and (mileage_max is None or r["mileage"] <= mileage_max))),
+    }
+
+    def matching(*, but: str | None = None) -> list[dict]:
+        """Rows passing every chosen filter except ``but``.
+
+        Each facet counts against the other choices, so its numbers add up to
+        what the reader is looking at, and switching within it stays possible.
+        """
+        return [r for r in national if all(t(r) for k, t in tests.items() if k != but)]
+
+    selected = matching()
     recent = sorted(selected, key=lambda row: row["publish_at"] or timezone.now() -
                     timedelta(days=10000), reverse=True)[:12]
     for row in recent:
@@ -92,10 +102,12 @@ def model_exploration(model_id: int, *, variant_id: int | None = None,
                      "strict": (None not in (variant_id, year)
                                 and (new_only or condition is not None))},
         "facets": {
-            "variants": _facet(national, "variant_id", name_key="variant__name_fa"),
-            "years": _facet(national, "year_jalali"),
-            "conditions": _facet([r for r in national if r["condition_band"]], "condition_band"),
-            "cities": _facet(national, "city_id", name_key="city__name_fa"),
+            "variants": _facet(matching(but="variant"), "variant_id",
+                               name_key="variant__name_fa"),
+            "years": _facet(matching(but="year"), "year_jalali"),
+            "conditions": _facet([r for r in matching(but="condition") if r["condition_band"]],
+                                 "condition_band"),
+            "cities": _facet(matching(but="city"), "city_id", name_key="city__name_fa"),
         },
         "ads": recent,
         "evidence": {
