@@ -23,7 +23,7 @@ import { qs, useFilters } from "../filters";
 import { conditionLabel, km, num, toman, tomanRange } from "../format";
 import { Async, Card, Fa, HowWeKnow, ListingActions, RangeNotes, Thumb } from "../ui";
 import type { Distribution } from "../ui";
-import { MileageField } from "../components/FilterPanel";
+import { isZeroKm, MileageField } from "../components/FilterPanel";
 import { ModelCombobox, type ModelRow } from "../components/ModelCombobox";
 import { Button } from "../components/ui/button";
 import {
@@ -280,7 +280,7 @@ export function ModelExplorer() {
                   <FacetSelect label="سال ساخت" value={params.year}
                     options={[...data.facets.years].sort((a, b) => Number(b.value) - Number(a.value))}
                     onChange={(value) => filters.set({ year: value })} />
-                  {params.mileage_max !== "0" && (
+                  {!isZeroKm(params.mileage_max) && (
                     <FacetSelect label="وضعیت بدنه" value={params.condition} options={data.facets.conditions}
                       format={(o) => conditionLabel(o.value)}
                       onChange={(value) => filters.set({ condition: value })} />

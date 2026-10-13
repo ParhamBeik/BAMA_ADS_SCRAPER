@@ -97,6 +97,10 @@ const MILEAGE_PRESETS: [string, number, number | null][] = [
   ["بالای 100 هزار", 100_001, null],
 ];
 
+/** A 0 km cap, however it was typed ("0", "00"). */
+export const isZeroKm = (max: string | null | undefined) =>
+  max != null && max.trim() !== "" && Number(max) === 0;
+
 /** Mileage presets plus free from/to fields, shared by the Cars and Price tabs.
  *  Picking 0 km clears body condition: a 0 km car has no paint. */
 export function MileageField() {
@@ -222,7 +226,12 @@ function RangeField({
           aria-label={`${label} تا`}
           placeholder={placeholderMax}
           defaultValue={max ?? ""}
-          onBlur={(e) => filters.set({ [maxKey]: e.target.value || null, page: null })}
+          // A typed 0 km max clears body condition, like the 0 km preset: the
+          // condition control hides at 0 km and would otherwise be stuck on.
+          onBlur={(e) => filters.set({
+            [maxKey]: e.target.value || null, page: null,
+            ...(maxKey === "mileage_max" && isZeroKm(e.target.value) ? { condition: null } : {}),
+          })}
         />
       </div>
     </Field>
@@ -502,7 +511,7 @@ export function FilterPanel({
               onChange={(v) => filters.set({ body_type: v, page: null })}
               options={BODY_TYPES.map((b) => ({ value: b, label: b }))}
             />
-            {mileageMax !== "0" && <Choice
+            {!isZeroKm(mileageMax) && <Choice
               label="وضعیت بدنه" anyLabel="همه"
               value={filters.get("condition")}
               onChange={(v) => filters.set({ condition: v, page: null })}
