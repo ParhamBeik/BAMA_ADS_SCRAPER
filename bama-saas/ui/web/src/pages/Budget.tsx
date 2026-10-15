@@ -30,8 +30,8 @@ import { Wallet } from "lucide-react";
 import { api } from "../api";
 import type { Envelope } from "../api";
 import { qs, useFilters } from "../filters";
-import { Async, Card, Fa, NumberInput, Provenance, Stat, Table, HowWeKnow } from "../ui";
-import { fa, km, num, parseBudget, pct, toman } from "../format";
+import { Async, Card, Fa, NumberInput, Provenance, HowWeKnow } from "../ui";
+import { fa, km, num, parseBudget, toman } from "../format";
 import { Button } from "../components/ui/button";
 
 interface Option {
@@ -93,13 +93,6 @@ export function Budget() {
 
   return (
     <div className="stack">
-      <div>
-        <h1 style={{ margin: 0, fontSize: 22, letterSpacing: "-0.01em" }}>
-          با بودجه‌ام چه می‌توانم بخرم؟
-        </h1>
-        
-      </div>
-
       <Card title="بودجه شما">
         <form
           className="row"
@@ -174,81 +167,40 @@ export function Budget() {
           >
             {(data) => (
               <>
-                <div className="grid cols-4" style={{ marginBottom: 10 }}>
-                  <Stat label="بودجه" value={toman(data.budget)} sub="تومان" />
-                  <Stat
-                    label="سقف بررسی"
-                    value={toman(data.ceiling)}
-                    sub={`با ${fa(data.tolerance_pct)}% تحمل`}
-                  />
-                  <Stat
-                    label="دسته‌های در دسترس"
-                    value={num(data.cohorts_matched)}
-                    sub="مدل، تیپ و سال ساخت"
-                  />
-                  <Stat
-                    label="آگهی در این محدوده"
-                    value={num(data.listings_matched)}
-                    sub="فعال و قیمت‌دار"
-                  />
-                </div>
+                <p className="stat-sub" style={{ marginBottom: 10 }}>
+                  {num(data.cohorts_matched)} گزینه · {num(data.listings_matched)} آگهی تا{" "}
+                  <bdi>{toman(data.ceiling)}</bdi> تومان
+                </p>
 
-                <Table
-                  head={[
-                    "خودرو", "سال", "چند درصد این دسته",
-                    "زیر بودجه", "میانه قیمت", "ارزان‌ترین", "کارکرد میانه",
-                  ]}
-                >
+                {/* One row per car, not a seven-column table: on a phone the
+                    table was 533 px inside a 309 px box. */}
+                <ul className="budget-list">
                   {data.options.map((o) => (
-                    <tr key={`${o.model_id}-${o.variant_id}-${o.year_jalali}`}>
-                      <td>
-                        <Link
-                          to={`/analyse${qs({
-                            model: o.model_id,
-                            variant: o.variant_id ?? undefined,
-                            year: o.year_jalali,
-                          })}`}
-                        >
-                          <Fa>{o.name}</Fa>
-                        </Link>
-                        <div className="stat-sub">
-                          <Fa>{[o.brand_name, o.variant_name].filter(Boolean).join(" · ")}</Fa>
-                        </div>
-                      </td>
-                      <td className="num">{o.year_jalali}</td>
-                      <td>
-                        {/* The bar is the answer; the number beside it is the
-                            evidence. A column of percentages alone makes the
-                            reader do the comparison the ranking already did. */}
-                        <div className="row" style={{ gap: 6 }}>
-                          <span className="num">{pct(o.reach_pct, 0)}</span>
-                          <span
-                            className="bar"
-                            style={{ width: `${Math.min(100, o.reach_pct)}%` }}
-                          />
-                        </div>
-                        <div className="stat-sub">
-                          {num(o.n)} از{" "}
-                          {num(o.cohort_size)} آگهی
-                        </div>
-                      </td>
-                      <td className="num">
-                        {num(o.within_budget)}
-                      </td>
-                      <td className="num">{toman(o.median_price)}</td>
-                      <td className="num">{toman(o.cheapest)}</td>
-                      <td className="num">{km(o.median_mileage)}</td>
-                    </tr>
+                    <li key={`${o.model_id}-${o.variant_id}-${o.year_jalali}`}>
+                      <Link
+                        to={`/price${qs({
+                          model: o.model_id,
+                          variant: o.variant_id ?? undefined,
+                          year: o.year_jalali,
+                        })}`}
+                        className="budget-row"
+                      >
+                        <span className="budget-name">
+                          <Fa>{[o.brand_name, o.name, o.variant_name].filter(Boolean).join(" ")}</Fa>
+                          <span className="muted"> · {o.year_jalali}</span>
+                        </span>
+                        <span className="budget-price">
+                          میانه <bdi>{toman(o.median_price)}</bdi>
+                        </span>
+                        <span className="stat-sub">
+                          {num(o.within_budget)} آگهی زیر بودجه
+                          {o.median_mileage != null && <> · کارکرد میانه {km(o.median_mileage)}</>}
+                        </span>
+                      </Link>
+                    </li>
                   ))}
-                </Table>
+                </ul>
 
-                {/* The distinction the two count columns carry, said once. */}
-                <HowWeKnow><p>
-                  «چند درصد این دسته» یعنی بودجه شما چه سهمی از آگهی‌های آن خودرو
-                  را پوشش می‌دهد — نه اینکه چقدر ارزان است. ستون «زیر بودجه»
-                  آگهی‌هایی است که دقیقاً تا سقف مبلغ شما هستند؛ بقیه تا{" "}
-                  {fa(data.tolerance_pct)}% بالاترند و برای همین نمایش داده شده‌اند.
-                </p></HowWeKnow>
                 <Provenance envelope={data} />
               </>
             )}

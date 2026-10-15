@@ -43,12 +43,6 @@ const ListingDetail = lazy(() =>
 const Control = lazy(() =>
   import("./pages/Control").then((m) => ({ default: m.Control })),
 );
-const Analyse = lazy(() =>
-  import("./pages/Analyse").then((m) => ({ default: m.Analyse })),
-);
-const Budget = lazy(() =>
-  import("./pages/Budget").then((m) => ({ default: m.Budget })),
-);
 const Methodology = lazy(() =>
   import("./pages/Methodology").then((m) => ({ default: m.Methodology })),
 );
@@ -187,8 +181,9 @@ function AppShell() {
           <Route path="/price" element={<Lazy><ModelExplorer /></Lazy>} />
           <Route path="/cars" element={<Lazy><Cars /></Lazy>} />
           <Route path="/mine" element={<Lazy><Mine /></Lazy>} />
-          <Route path="/analyse" element={<Lazy><Analyse /></Lazy>} />
-          <Route path="/budget" element={<Lazy><Budget /></Lazy>} />
+          {/* Analyse and Budget answered price questions, so they are Price now. */}
+          <Route path="/analyse" element={<Moved to="/price" />} />
+          <Route path="/budget" element={<Moved to="/price" add={{ mode: "budget" }} />} />
           <Route path="/methodology" element={<Lazy><Methodology /></Lazy>} />
           {/* Where the pages were before the four tabs, filters kept. */}
           <Route path="/models" element={<Moved to="/price" />} />
@@ -212,8 +207,8 @@ function AppShell() {
           {/* The two screens that used to live at these paths. A bookmark or a
               shared link from before the merge should land on the page that
               answers the same question, not on a redirect to the front page. */}
-          <Route path="/market" element={<Navigate to="/analyse" replace />} />
-          <Route path="/research" element={<Navigate to="/analyse" replace />} />
+          <Route path="/market" element={<Navigate to="/" replace />} />
+          <Route path="/research" element={<Navigate to="/price" replace />} />
           <Route path="/research/:modelId" element={<LegacyResearchRedirect />} />
           {/* Signed in, so the auth routes are meaningless here — but landing
               on one is exactly what happens after signing in, and it is where
@@ -258,7 +253,7 @@ function Moved({ to, add }: { to: string; add?: Record<string, string> }) {
 /** `/research/42` was the old per-model analysis URL; it is now a scope query. */
 function LegacyResearchRedirect() {
   const { modelId } = useParams();
-  return <Navigate to={modelId ? `/analyse?model=${modelId}` : "/analyse"} replace />;
+  return <Navigate to={modelId ? `/price?model=${modelId}` : "/price"} replace />;
 }
 
 function Lazy({ children }: { children: ReactNode }) {

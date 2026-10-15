@@ -15,7 +15,8 @@
  * range, scrolled, changed a trim, and had to scroll back up to see what moved.
  */
 import { useMemo, useState, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useBrands } from "../catalogue";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { ArrowLeft, X } from "lucide-react";
 import { api } from "../api";
@@ -23,8 +24,13 @@ import { qs, useFilters } from "../filters";
 import { conditionLabel, km, num, toman, tomanRange } from "../format";
 import { Async, Card, Fa, HowWeKnow, ListingActions, RangeNotes, Thumb } from "../ui";
 import type { Distribution } from "../ui";
-import { isZeroKm, MileageField } from "../components/FilterPanel";
+import { isZeroKm, MILEAGE_PRESETS } from "../components/FilterPanel";
 import { ModelCombobox, type ModelRow } from "../components/ModelCombobox";
+import { FollowButton } from "../components/FollowButton";
+import {
+  DEFAULT_DAYS, RetentionPanel, SurvivalPanel, TrendPanel, trendRequest,
+} from "../components/ModelInsights";
+import { Budget } from "./Budget";
 import { Button } from "../components/ui/button";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -126,9 +132,107 @@ function FacetSelect({ label, value, options, onChange, format }: {
   );
 }
 
+const MAX_COMPARE = 4;
+
+/**
+ * Two to four cars side by side, under the same year, condition and mileage.
+ *
+ * Trim is left out on purpose: trims belong to one model, and "same trim"
+ * across a 206 and a Quick means nothing.
+ */
+function CompareCard({ ids, params, onAdd, onRemove }: {
+  ids: string[];
+  params: Record<string, string | undefined>;
+  onAdd: (id: string) => void;
+  onRemove: (id: string) => void;
+}) {
+  const results = useQueries({
+    queries: ids.map((id) => ({
+      queryKey: ["model-exploration", id, params],
+      queryFn: ({ signal }: { signal: AbortSignal }) =>
+        api.get<Exploration>(`/api/models/${id}/explore/${qs(params)}`, signal),
+    })),
+  });
+  const refined = Object.values(params).some(Boolean);
+  return (
+    <Card title="مقایسه">
+      <ul className="compare-list">
+        {ids.map((id, i) => {
+          const q = results[i];
+          const data = q.data;
+          const summary = data && (refined && data.selected.asking_range ? data.selected : data.national);
+          const r = summary?.asking_range;
+          return (
+            <li key={id} className="compare-row">
+              <span className="compare-name">
+                <Fa>{data ? `${data.model.brand} ${data.model.name}` : "…"}</Fa>
+              </span>
+              <span className="compare-range">
+                {q.isLoading ? "…" : r ? <><bdi>{tomanRange(r.p25, r.p75)}</bdi> تومان</> : "نمونه کم"}
+              </span>
+              <span className="stat-sub">
+                {r && <>میانه <bdi>{toman(r.median)}</bdi> · </>}
+                {summary && <>{num(summary.count)} آگهی</>}
+              </span>
+              {ids.length > 1 && (
+                <button type="button" className="compare-remove" aria-label="حذف از مقایسه"
+                        onClick={() => onRemove(id)}>
+                  <X className="size-4" />
+                </button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {ids.length < MAX_COMPARE && (
+        <div className="mt-3">
+          <ModelCombobox placeholder="افزودن خودرو برای مقایسه…"
+                         onSelect={(m) => m && !ids.includes(String(m.id)) && onAdd(String(m.id))} />
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/** Mileage as one select, like the other refinements: seven preset buttons
+ *  and a from/to pair pushed the price below the first screen on a phone. */
+function MileageSelect() {
+  const filters = useFilters();
+  const min = filters.get("mileage_min") ?? "";
+  const max = filters.get("mileage_max") ?? "";
+  const current = MILEAGE_PRESETS.find(([, lo, hi]) => String(lo) === min && String(hi ?? "") === max);
+  return (
+    <label className="grid gap-1.5">
+      <span className="text-muted-foreground text-xs font-semibold">کارکرد</span>
+      <Select
+        value={current ? current[0] : ANY}
+        onValueChange={(next) => {
+          const preset = MILEAGE_PRESETS.find(([label]) => label === next);
+          filters.set(preset
+            ? { mileage_min: preset[1], mileage_max: preset[2],
+                ...(preset[2] === 0 ? { condition: null } : {}) }
+            : { mileage_min: null, mileage_max: null });
+        }}
+      >
+        <SelectTrigger className="w-full" aria-label="کارکرد"><SelectValue /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value={ANY}>همه</SelectItem>
+          {MILEAGE_PRESETS.map(([label]) => (
+            <SelectItem key={label} value={label}>{label}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </label>
+  );
+}
+
 export function ModelExplorer() {
   const filters = useFilters();
   const model = filters.get("model");
+  const mode = filters.get("mode");
+  const compare = (filters.get("compare") ?? "").split(",").filter((x) => x && x !== model);
+  const [comparing, setComparing] = useState(false);
+  const days = filters.getInt("days") ?? DEFAULT_DAYS;
   const params = {
     variant: filters.get("variant"), year: filters.get("year"),
     city: filters.get("city"), condition: filters.get("condition"),
@@ -146,14 +250,14 @@ export function ModelExplorer() {
   const clearRefine = () => filters.set(Object.fromEntries(REFINE_KEYS.map((k) => [k, null])));
   const pick = (next: ModelRow | null) => filters.set({
     model: next?.id, variant: null, year: null, city: null, condition: null,
-    mileage_min: null, mileage_max: null,
+    mileage_min: null, mileage_max: null, mode: null, compare: null,
   });
 
   return (
     <div className="stack" dir="rtl">
-      <Card title="کاوش قیمت یک مدل">
+      <Card title="قیمت یک خودرو">
         <div className="flex flex-wrap items-center gap-2">
-          <div className="min-w-0 flex-1 sm:max-w-md">
+          <div className="min-w-0 flex-1 basis-full sm:max-w-md sm:basis-auto">
             <ModelCombobox value={model} onSelect={pick} />
           </div>
           {model && (
@@ -161,15 +265,48 @@ export function ModelExplorer() {
               <Button variant="ghost" size="sm" onClick={() => pick(null)}>
                 <X className="size-4" /> مدل دیگر
               </Button>
-              <Button asChild variant="ghost" size="sm">
-                <Link to={`/analyse${qs({ model })}`}>روند و تحلیل</Link>
-              </Button>
+              <FollowButton scope={{ model, variant: params.variant, year: params.year }} />
+              {!comparing && compare.length === 0 && (
+                <Button variant="outline" size="sm" onClick={() => setComparing(true)}>
+                  مقایسه
+                </Button>
+              )}
             </>
           )}
         </div>
       </Card>
 
-      {!model && <ModelBrowser onPick={pick} />}
+      {model && (comparing || compare.length > 0) && (
+        <CompareCard
+          ids={[model, ...compare]}
+          params={{ year: params.year, condition: params.condition,
+                    mileage_min: params.mileage_min, mileage_max: params.mileage_max }}
+          onAdd={(id) => filters.set({ compare: [...compare, id].join(",") })}
+          onRemove={(id) => {
+            if (id === model) {
+              // The first of the others becomes the page's car.
+              const [next, ...rest] = compare;
+              filters.set({ model: next ?? null, compare: rest.join(",") || null, variant: null });
+            } else {
+              filters.set({ compare: compare.filter((x) => x !== id).join(",") || null });
+            }
+          }}
+        />
+      )}
+
+      {!model && (
+        <div className="segmented" role="group" aria-label="چطور پیدا کنید">
+          <button type="button" className={mode !== "budget" ? "on" : ""}
+                  aria-pressed={mode !== "budget"} onClick={() => filters.set({ mode: null })}>
+            یک مدل
+          </button>
+          <button type="button" className={mode === "budget" ? "on" : ""}
+                  aria-pressed={mode === "budget"} onClick={() => filters.set({ mode: "budget" })}>
+            با بودجه‌ی من
+          </button>
+        </div>
+      )}
+      {!model && (mode === "budget" ? <Budget /> : <ModelBrowser onPick={pick} />)}
 
       {model && <Async query={exploration}>
         {(data) => {
@@ -213,6 +350,29 @@ export function ModelExplorer() {
           ].filter(Boolean).join(" · ");
           return (
             <>
+              <Card
+                title="دقیق‌تر کنید"
+                action={refined
+                  ? <Button variant="ghost" size="sm" onClick={clearRefine}>پاک کردن</Button>
+                  : undefined}
+              >
+                <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+                  <FacetSelect label="تیپ" value={params.variant} options={data.facets.variants}
+                    onChange={(value) => filters.set({ variant: value })} />
+                  <FacetSelect label="سال ساخت" value={params.year}
+                    options={[...data.facets.years].sort((a, b) => Number(b.value) - Number(a.value))}
+                    onChange={(value) => filters.set({ year: value })} />
+                  {!isZeroKm(params.mileage_max) && (
+                    <FacetSelect label="وضعیت بدنه" value={params.condition} options={data.facets.conditions}
+                      format={(o) => conditionLabel(o.value)}
+                      onChange={(value) => filters.set({ condition: value })} />
+                  )}
+                  <FacetSelect label="شهر" value={params.city} options={data.facets.cities}
+                    onChange={(value) => filters.set({ city: value })} />
+                  <MileageSelect />
+                </div>
+              </Card>
+
               {/* The answer first: the selection's range when it has one,
                   otherwise the whole model's — a refinement too thin for a
                   range must not push the one range there is below the
@@ -268,30 +428,6 @@ export function ModelExplorer() {
                 ) : <p>آگهی‌ای برای این انتخاب پیدا نشد.</p>}
               </Card>
 
-              <Card
-                title="دقیق‌تر کنید"
-                action={refined
-                  ? <Button variant="ghost" size="sm" onClick={clearRefine}>پاک کردن</Button>
-                  : undefined}
-              >
-                <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
-                  <FacetSelect label="تیپ" value={params.variant} options={data.facets.variants}
-                    onChange={(value) => filters.set({ variant: value })} />
-                  <FacetSelect label="سال ساخت" value={params.year}
-                    options={[...data.facets.years].sort((a, b) => Number(b.value) - Number(a.value))}
-                    onChange={(value) => filters.set({ year: value })} />
-                  {!isZeroKm(params.mileage_max) && (
-                    <FacetSelect label="وضعیت بدنه" value={params.condition} options={data.facets.conditions}
-                      format={(o) => conditionLabel(o.value)}
-                      onChange={(value) => filters.set({ condition: value })} />
-                  )}
-                  <FacetSelect label="شهر" value={params.city} options={data.facets.cities}
-                    onChange={(value) => filters.set({ city: value })} />
-                </div>
-                <div className="mt-3 space-y-2">
-                  <MileageField />
-                </div>
-              </Card>
 
               {useSelected && (
                 <Card title="کل این مدل">
@@ -299,6 +435,13 @@ export function ModelExplorer() {
                                 summary={data.national} />
                 </Card>
               )}
+
+              <TrendPanel url={trendRequest({
+                model: String(data.model.id), variant: params.variant, year: params.year, days,
+              })!} />
+              <RetentionPanel model={String(data.model.id)} variant={params.variant} />
+              <SurvivalPanel model={String(data.model.id)} variant={params.variant}
+                             year={params.year} />
 
 
             </>
@@ -335,15 +478,13 @@ function ModelBrowser({ onPick }: { onPick: (model: ModelRow) => void }) {
     queryFn: ({ signal }) => api.get<ModelRow[]>(`/api/models/${qs({ brand })}`, signal),
   });
 
-  const brands = useMemo(() => {
-    const totals = new Map<string, { slug: string; name: string; count: number }>();
-    for (const m of top.data ?? []) {
-      const row = totals.get(m.brand_slug) ?? { slug: m.brand_slug, name: m.brand_name, count: 0 };
-      row.count += m.ad_count;
-      totals.set(m.brand_slug, row);
-    }
-    return [...totals.values()].sort((a, b) => b.count - a.count);
-  }, [top.data]);
+  // The catalogue's own per-brand totals. Summing the top-60 model list
+  // undercounted every brand with a long tail: Toyota read 636 here and 1,680
+  // on the home page.
+  const { list: brandList } = useBrands();
+  const brands = brandList
+    .filter((b) => (b.ad_count ?? 0) > 0)
+    .map((b) => ({ slug: b.slug, name: b.name_fa, count: b.ad_count ?? 0 }));
 
   const source = brand ? brandModels : top;
   const models = useMemo(() => {
