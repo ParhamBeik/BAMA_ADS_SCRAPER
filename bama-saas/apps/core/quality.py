@@ -31,7 +31,10 @@ FLAG_OUTLIER_LOW = "price_outlier_low"
 # range, never hidden from the listings themselves.
 FLAG_SUSPECT_INSTALLMENT = "suspect_installment_price"
 FLAG_SUSPECT_MISFILED = "suspect_misfiled"
-SUSPECT_FLAGS = (FLAG_SUSPECT_INSTALLMENT, FLAG_SUSPECT_MISFILED)
+# Not a car's price at all: a placeholder (111,111,111), a deposit or a dropped
+# zero, judged by `pricing.flag_suspects`. The one suspect the listings hide.
+FLAG_PRICE_IMPLAUSIBLE = "price_implausible"
+SUSPECT_FLAGS = (FLAG_SUSPECT_INSTALLMENT, FLAG_SUSPECT_MISFILED, FLAG_PRICE_IMPLAUSIBLE)
 COHORT_FLAGS = frozenset({FLAG_OUTLIER_HIGH, FLAG_OUTLIER_LOW, *SUSPECT_FLAGS})
 
 
@@ -72,12 +75,16 @@ def without_cohort_outliers(qs):
 
 
 def without_high_outliers(qs):
-    """The browse-list filter: drop prices far *above* peers, and only those.
+    """The browse-list filter: drop prices far *above* peers, and prices too low
+    to be a car.
 
-    An absurd asking price is noise (a 206 was listed at 5.8 trillion toman); an
-    absurdly cheap one is the underpriced car this product exists to find.
+    An absurd asking price is noise (a 206 was listed at 5.8 trillion toman). A
+    cheap one is usually the underpriced car this product exists to find, so
+    only the implausible kind goes: before it did, cheapest-first opened on a
+    2026 Camry at 11,111,111 toman in every brand a buyer tried.
     """
-    return qs.filter(has_high_outlier=False)
+    return qs.filter(has_high_outlier=False).exclude(
+        cohort_flags__contains=[FLAG_PRICE_IMPLAUSIBLE])
 
 
 def verified_by_ad(qs, field: str = "ad"):

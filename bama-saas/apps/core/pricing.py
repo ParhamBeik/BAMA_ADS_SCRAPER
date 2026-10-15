@@ -47,9 +47,11 @@ from apps.core.quality import (
     CONDITION_BANDS,
     FLAG_OUTLIER_HIGH,
     FLAG_OUTLIER_LOW,
+    FLAG_PRICE_IMPLAUSIBLE,
     FLAG_SUSPECT_INSTALLMENT,
     FLAG_SUSPECT_MISFILED,
     INSTALLMENT_WORDS_RE,
+    SUSPECT_FLAGS,
     condition_band,
     exclude_unclear_price,
     peer_band,
@@ -848,6 +850,12 @@ def flag_high_outliers(*, model_id: int | None = None) -> dict:
 # on 2026-10-12, mostly dealer stock ("نقد و اقساط تا ۵ سال").
 INSTALLMENT_MAX_RATIO = 0.8
 
+# Under this share of its own group's median a price is not a car's, words or
+# not. Measured 2026-10-15 on 11k active ads: every one below it was a
+# placeholder, a deposit or a dropped zero; between it and 0.5 they were real
+# crashed, free-zone or worn-out cars.
+IMPLAUSIBLE_MAX_RATIO = 0.2
+
 # A car this far from its own group's median, outside its P10-P90, with an
 # ordinary odometer for its group, and sitting inside another trim's or year's
 # middle half of the same model and condition, is more likely filed under the
@@ -878,15 +886,19 @@ def flag_suspects(*, model_id: int | None = None) -> dict:
     cheap = {r["code"] for r in rows
              if (m := medians.get((r["model_id"], r["variant_id"], r["year_jalali"])))
              and r["current_price"] < INSTALLMENT_MAX_RATIO * m}
+    implausible = {r["code"] for r in rows
+                   if (m := medians.get((r["model_id"], r["variant_id"], r["year_jalali"])))
+                   and r["current_price"] < IMPLAUSIBLE_MAX_RATIO * m}
     installment = {
         code for code, title, description in
         Ad.objects.filter(code__in=cheap).values_list("code", "title", "description")
         if INSTALLMENT_WORDS_RE.search(f"{title or ''}\n{description or ''}")
     }
 
+    unpriced = installment | implausible
     groups: dict = defaultdict(list)
     for r in rows:
-        if r["code"] not in installment:
+        if r["code"] not in unpriced:
             groups[(r["model_id"], r["variant_id"], r["year_jalali"], r["band"])].append(r)
     stats = {}
     for key, peers in groups.items():
@@ -921,8 +933,9 @@ def flag_suspects(*, model_id: int | None = None) -> dict:
 
     changed = []
     for r in rows:
-        flags = [f for f in (r["cohort_flags"] or [])
-                 if f not in (FLAG_SUSPECT_INSTALLMENT, FLAG_SUSPECT_MISFILED)]
+        flags = [f for f in (r["cohort_flags"] or []) if f not in SUSPECT_FLAGS]
+        if r["code"] in implausible:
+            flags.append(FLAG_PRICE_IMPLAUSIBLE)
         if r["code"] in installment:
             flags.append(FLAG_SUSPECT_INSTALLMENT)
         if r["code"] in misfiled:
@@ -932,6 +945,7 @@ def flag_suspects(*, model_id: int | None = None) -> dict:
     if changed:
         Ad.objects.bulk_update(changed, ["cohort_flags"], batch_size=500)
     return {"installment": len(installment), "misfiled": len(misfiled),
+            "implausible": len(implausible),
             "changed": len(changed), "model_id": model_id}
 
 
