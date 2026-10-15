@@ -519,6 +519,18 @@ def market_index() -> dict:
     return {"scopes": scopes, "points": points}
 
 
+def warm_pulse() -> dict:
+    """Precompute the home page's answers so no visitor waits on a miss.
+
+    Runs after ``market_index``: movers, turnover, arrivals and the market read
+    are all arithmetic over what the warm tick just wrote.
+    """
+    from apps.core import pulse
+    from apps.core.api import refresh_answers
+
+    return {"answers": refresh_answers(pulse.default_answers(), pulse.PULSE_CACHE_SECONDS)}
+
+
 # ---------------------------------------------------------------------------
 # Fetch, deal scores, notifications
 # ---------------------------------------------------------------------------

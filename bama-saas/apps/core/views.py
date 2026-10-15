@@ -32,7 +32,7 @@ from rest_framework.response import Response
 
 from apps.common.parsing import normalize_model_year
 from apps.common.verify import MAX_JALALI_YEAR, MIN_JALALI_YEAR
-from apps.core import explorer, images, pricing, research
+from apps.core import explorer, images, pricing, pulse, research
 from apps.core.api import (
     cache_key,
     cached,
@@ -912,16 +912,10 @@ def market_index(request):
 # ---------------------------------------------------------------------------
 
 
-# The home page is the same answer for everyone and is rebuilt on the warm tick,
-# so it is cached for the same reason `markets` is: shorter than the worker's
-# cycle, so a cached summary is never more than one tick behind its data.
-PULSE_CACHE_SECONDS = 120
-
-# Which scopes the movers board can rank. The market series has nothing to be
-# ranked against — it is one row — so it is the one scope excluded.
-RANKABLE_SCOPES = tuple(
-    s for s in MarketIndex.Scope.values if s != MarketIndex.Scope.MARKET
-)
+def _pulse(answer: pulse.Answer) -> tuple:
+    """`cached_answer` arguments for a home-page answer; see `apps.core.pulse`."""
+    key, produce = answer
+    return key, pulse.PULSE_CACHE_SECONDS, produce
 
 
 def _window_days(params, default: int = 30) -> int:
@@ -954,16 +948,12 @@ def movers_view(request):
     is reach, not new computation.
     """
     scope = request.query_params.get("scope", MarketIndex.Scope.MODEL)
-    if scope not in RANKABLE_SCOPES:
-        return Response({"detail": f"scope must be one of {', '.join(RANKABLE_SCOPES)}"},
+    if scope not in pulse.RANKABLE_SCOPES:
+        return Response({"detail": f"scope must be one of {', '.join(pulse.RANKABLE_SCOPES)}"},
                         status=status.HTTP_400_BAD_REQUEST)
     limit = _leaderboard_limit(request.query_params)
     days = _window_days(request.query_params)
-    payload, coverage = cached_answer(
-        cache_key("pulse:movers", {"scope": scope, "days": days, "limit": limit}),
-        PULSE_CACHE_SECONDS,
-        lambda: research.movers(scope, days=days, limit=limit),
-    )
+    payload, coverage = cached_answer(*_pulse(pulse.movers(scope, days, limit)))
     return envelope(payload, coverage=coverage)
 
 
@@ -975,10 +965,7 @@ def turnover_view(request):
     """
     limit = _leaderboard_limit(request.query_params)
     days = _window_days(request.query_params)
-    payload, coverage = cached_answer(
-        cache_key("pulse:turnover", {"days": days, "limit": limit}), PULSE_CACHE_SECONDS,
-        lambda: research.turnover(days=days, limit=limit),
-    )
+    payload, coverage = cached_answer(*_pulse(pulse.turnover(days, limit)))
     return envelope(payload, coverage=coverage)
 
 
@@ -987,10 +974,7 @@ def arrivals_view(request):
     """Which models are taking on the most new listings — the supply half."""
     limit = _leaderboard_limit(request.query_params)
     days = _window_days(request.query_params)
-    payload, coverage = cached_answer(
-        cache_key("pulse:arrivals", {"days": days, "limit": limit}), PULSE_CACHE_SECONDS,
-        lambda: research.arrivals(days=days, limit=limit),
-    )
+    payload, coverage = cached_answer(*_pulse(pulse.arrivals(days, limit)))
     return envelope(payload, coverage=coverage)
 
 
@@ -1036,10 +1020,7 @@ def market_read_view(request):
     answers "where should I position myself".
     """
     days = _window_days(request.query_params)
-    payload, coverage = cached_answer(
-        cache_key("pulse:read", {"days": days}), PULSE_CACHE_SECONDS,
-        lambda: research.market_read(days=days),
-    )
+    payload, coverage = cached_answer(*_pulse(pulse.market_read(days)))
     return envelope(payload, coverage=coverage)
 
 

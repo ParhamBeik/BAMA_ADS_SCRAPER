@@ -1900,6 +1900,19 @@ def test_coverage_is_computed_once_per_answer_not_once_per_request(api_client):
         assert spy.call_count == 2, "a second answer carries its own reading"
 
 
+@pytest.mark.django_db
+def test_a_warmed_home_page_answer_is_served_without_recomputing(api_client):
+    """`turnover` is ~10 s on the VPS. The worker computes it after the warm
+    tick so the reader who arrives next is handed the stored answer."""
+    from apps.jobs import jobs
+
+    jobs.warm_pulse()
+    with patch("apps.core.research.turnover") as spy:
+        assert api_client.get("/api/analytics/turnover/?days=30").status_code == 200
+        assert api_client.get("/api/analytics/movers/?scope=brand&days=7").status_code == 200
+        assert spy.call_count == 0, "the request recomputed a warmed answer"
+
+
 # Each endpoint reaches a different expensive call, so "the scan never ran" has
 # to be spied on the one that endpoint actually makes — patching the other
 # proves nothing and would pass with the guard deleted.
