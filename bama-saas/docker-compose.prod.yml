@@ -81,8 +81,8 @@ services:
   # not just a ratio — `EXPLAIN (BUFFERS)` on the population count came back
   # `read=5684 written=1740`, a *read* query evicting dirty pages to make room.
   #
-  # 512 MB, not the usual "25% of RAM": the host has 15 GB but runs three other
-  # stacks beside this one, and 512 MB already covers the hot set. The exact
+  # 512 MB, not the usual "25% of RAM": the host has 8 GB and runs the portfolio
+  # stack beside this one (news and twitter retired 2026-10-15), and 512 MB already covers the hot set. The exact
   # command below was started against this same `postgres:16-alpine` tag on the
   # VPS before being written here, and all four settings plus the preload were
   # read back from a live `SHOW` — a wrong parameter here means the database
@@ -103,6 +103,12 @@ services:
     image: postgres:16-alpine
     container_name: bama-postgres
     restart: unless-stopped
+    # Request path (postgres, redis, django, frontend) gets 2× the default CPU
+    # weight. The 4-core host is shared, and on 2026-10-15 a neighbour's
+    # database held load at 16–18 while Bama sat near 0% CPU, so every API call
+    # queued behind it (16–24 s on the home page). Shares only matter under
+    # contention; an idle box is unaffected. The worker keeps the default.
+    cpu_shares: 2048
     # Docker's default /dev/shm is 64 MB; parallel hash joins over large tables
     # failed with "could not resize shared memory segment" (photo_archive, 2026-10-02).
     shm_size: 256mb
@@ -134,6 +140,7 @@ services:
     image: redis:7-alpine
     container_name: bama-redis
     restart: unless-stopped
+    cpu_shares: 2048
     logging: *logging
     command: >
       redis-server --maxmemory ${REDIS_MAXMEMORY:-512mb}
@@ -153,6 +160,7 @@ services:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
     container_name: bama-django
     restart: unless-stopped
+    cpu_shares: 2048
     logging: *logging
     environment:
       <<: *django-env
@@ -219,6 +227,7 @@ services:
         VITE_SITE_URL: ${VITE_SITE_URL:-}
     container_name: bama-frontend
     restart: unless-stopped
+    cpu_shares: 2048
     logging: *logging
     depends_on:
       django: { condition: service_healthy }

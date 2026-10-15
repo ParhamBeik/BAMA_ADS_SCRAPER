@@ -1,6 +1,6 @@
 # Storage policy (decided 2026-10-02)
 
-Bama runs on one 100 GB VPS shared with three other apps, with **no backups**.
+Bama runs on one 100 GB VPS shared with one other app (portfolio), with **no backups**.
 Every change that stores data must follow these rules. Read before adding a
 column, a volume, a downloader or a cache.
 
