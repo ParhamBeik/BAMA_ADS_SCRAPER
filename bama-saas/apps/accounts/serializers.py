@@ -18,7 +18,8 @@ from rest_framework import serializers
 
 from apps.accounts.models import AlertDelivery, AlertRule, Favorite, Watchlist
 from apps.core import images
-from apps.core.models import Ad, PriceDropEvent
+from apps.core.filters import MAX_CARS
+from apps.core.models import Ad, Brand, Model, PriceDropEvent
 from apps.core.pricing import MIN_PEERS
 
 User = get_user_model()
@@ -126,9 +127,38 @@ class AlertRuleSerializer(ScopeSerializerMixin, serializers.ModelSerializer):
                   "year_jalali", "scope_key", "model_name", "variant_name",
                   "brand_name", "min_discount_pct", "min_residual_pct",
                   "min_peers", "price_min", "price_max", "mileage_max",
-                  "exclude_review", "telegram_chat_id", "created_at"]
+                  "exclude_review", "telegram_chat_id", "created_at",
+                  "model_ids", "brand_slugs", "cars"]
         read_only_fields = ["id", "created_at"]
         extra_kwargs = {"min_residual_pct": {"allow_null": True, "required": False}}
+
+    cars = serializers.SerializerMethodField()
+
+    def get_cars(self, rule) -> list[dict]:
+        """The listed cars with their names; the UI words them."""
+        models = {
+            pk: (name, brand) for pk, name, brand in
+            Model.objects.filter(pk__in=rule.model_ids)
+            .values_list("pk", "name_fa", "brand__name_fa")
+        }
+        brand_names = dict(
+            Brand.objects.filter(slug__in=rule.brand_slugs).values_list("slug", "name_fa")
+        )
+        return ([{"kind": "brand", "brand": brand_names.get(b, b)} for b in rule.brand_slugs]
+                + [{"kind": "model", "brand": models[m][1], "model": models[m][0]}
+                   for m in rule.model_ids if m in models])
+
+    def validate_model_ids(self, value):
+        if len(value) > MAX_CARS:
+            raise serializers.ValidationError(f"at most {MAX_CARS} cars")
+        if Model.objects.filter(pk__in=value).count() != len(set(value)):
+            raise serializers.ValidationError("unknown model id")
+        return sorted(set(value))
+
+    def validate_brand_slugs(self, value):
+        if len(value) > MAX_CARS:
+            raise serializers.ValidationError(f"at most {MAX_CARS} cars")
+        return sorted(set(value))
 
     def validate_min_discount_pct(self, value):
         # 100% would be a free car; 0 would deliver every listing on the site.
@@ -158,6 +188,13 @@ class AlertRuleSerializer(ScopeSerializerMixin, serializers.ModelSerializer):
         hi = attrs.get("price_max", getattr(self.instance, "price_max", None))
         if lo is not None and hi is not None and lo > hi:
             raise serializers.ValidationError({"price_min": "must not exceed price_max"})
+        listed = len(attrs.get("model_ids", getattr(self.instance, "model_ids", [])) or []) + \
+            len(attrs.get("brand_slugs", getattr(self.instance, "brand_slugs", [])) or [])
+        if listed and (attrs.get("variant") or attrs.get("year_jalali")):
+            # A trim or model year names one model; across several cars it
+            # would silently drop every other car's listings.
+            raise serializers.ValidationError(
+                {"variant": "trim and year apply to a single car, not a list"})
         return attrs
 
 class AlertDeliverySerializer(serializers.ModelSerializer):

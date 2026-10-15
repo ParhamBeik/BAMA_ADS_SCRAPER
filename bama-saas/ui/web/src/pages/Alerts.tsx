@@ -22,12 +22,16 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useMlEnabled } from "../auth";
 import { Link } from "react-router-dom";
-import { BellOff, Plus, Trash2 } from "lucide-react";
+import { BellOff, Plus, Trash2, X } from "lucide-react";
 import { api } from "../api";
 import type { Paginated } from "../api";
 import { Async, BamaLink, Card, Fa, NumberInput, Table, Thumb, HowWeKnow } from "../ui";
 import { km, pct, toman } from "../format";
 import { ModelCombobox } from "../components/ModelCombobox";
+import { useBrands } from "../catalogue";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "../components/ui/select";
 import { Button } from "../components/ui/button";
 import { Label } from "../components/ui/label";
 import { Switch } from "../components/ui/switch";
@@ -69,17 +73,26 @@ interface Rule {
   mileage_max: number | null;
   exclude_review: boolean;
   telegram_chat_id: string;
+  model_ids: number[];
+  brand_slugs: string[];
+  cars: ({ kind: "brand"; brand: string } | { kind: "model"; brand: string; model: string })[];
 }
+
+interface PickedCar { kind: "model" | "brand"; id: string; label: string }
+const MAX_CARS = 10;
 
 const MIN_PEERS = 8;
 
 function RuleForm({ onDone }: { onDone: () => void }) {
   const mlEnabled = useMlEnabled();
   const client = useQueryClient();
+  const [cars, setCars] = useState<PickedCar[]>([]);
+  const { list: brandList } = useBrands();
+  const addCar = (car: PickedCar) =>
+    setCars((now) => now.some((c) => c.kind === car.kind && c.id === car.id) || now.length >= MAX_CARS
+      ? now : [...now, car]);
   const [form, setForm] = useState({
     name: "",
-    model: null as number | null,
-    brand_slug: "",
     min_discount_pct: 12,
     min_residual_pct: "" as string | number,
     min_peers: MIN_PEERS,
@@ -92,6 +105,8 @@ function RuleForm({ onDone }: { onDone: () => void }) {
     mutationFn: () =>
       api.post<Rule>("/api/alert-rules/", {
         ...form,
+        model_ids: cars.filter((c) => c.kind === "model").map((c) => Number(c.id)),
+        brand_slugs: cars.filter((c) => c.kind === "brand").map((c) => c.id),
         price_max: form.price_max === "" ? null : Number(form.price_max),
         mileage_max: form.mileage_max === "" ? null : Number(form.mileage_max),
         min_residual_pct:
@@ -119,18 +134,41 @@ function RuleForm({ onDone }: { onDone: () => void }) {
           />
         </label>
         <div className="grid gap-1.5">
-          <span className="text-muted-foreground text-xs font-semibold">خودرو</span>
+          <span className="text-muted-foreground text-xs font-semibold">
+            خودروها {cars.length === 0 && "(خالی = همه خودروها)"}
+          </span>
+          {cars.length > 0 && (
+            <div className="chips">
+              {cars.map((c) => (
+                <span key={`${c.kind}-${c.id}`} className="chip">
+                  <Fa>{c.label}</Fa>
+                  <button type="button" aria-label={`حذف ${c.label}`}
+                          onClick={() => setCars(cars.filter((x) => x !== c))}>
+                    <X size={12} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
           <ModelCombobox
-            value={form.model ? String(form.model) : undefined}
-            placeholder="همه خودروها"
-            onSelect={(picked) =>
-              setForm({
-                ...form,
-                model: picked ? picked.id : null,
-                brand_slug: picked ? picked.brand_slug : "",
-              })
-            }
+            placeholder="افزودن مدل…"
+            onSelect={(picked) => picked && addCar({
+              kind: "model", id: String(picked.id), label: `${picked.brand_name} ${picked.name_fa}`,
+            })}
           />
+          <Select value="" onValueChange={(slug) => {
+            const b = brandList.find((x) => x.slug === slug);
+            if (b) addCar({ kind: "brand", id: b.slug, label: `همه‌ی ${b.name_fa}` });
+          }}>
+            <SelectTrigger aria-label="افزودن همه‌ی مدل‌های یک برند">
+              <SelectValue placeholder="یا همه‌ی مدل‌های یک برند" />
+            </SelectTrigger>
+            <SelectContent>
+              {brandList.map((b) => (
+                <SelectItem key={b.slug} value={b.slug}><Fa>{b.name_fa}</Fa></SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         <label className="grid gap-1.5">
           <span className="text-muted-foreground text-xs font-semibold">
@@ -164,20 +202,6 @@ function RuleForm({ onDone }: { onDone: () => void }) {
             </span>
           </label>
         )}
-        <label className="grid gap-1.5">
-          <span className="text-muted-foreground text-xs font-semibold">
-            کمترین آگهی مشابه
-          </span>
-          <NumberInput
-            className={field}
-            value={form.min_peers}
-            onChange={(e) => setForm({ ...form, min_peers: Number(e.target.value) })}
-          />
-          <span className="text-muted-foreground text-[11px]">
-            کمتر از {MIN_PEERS} پذیرفته نمی‌شود — میانه‌ای که از آگهی‌های کمتر ساخته
-            شود، مبنای قابل اتکایی برای اعلان نیست.
-          </span>
-        </label>
         <label className="grid gap-1.5">
           <span className="text-muted-foreground text-xs font-semibold">
             بیشترین قیمت (تومان)
@@ -271,9 +295,13 @@ function Rules() {
                 <tr key={rule.id}>
                   <td><Fa>{rule.name || "بدون نام"}</Fa></td>
                   <td>
-                    <Fa>{rule.model_name || "همه خودروها"}</Fa>
-                    {rule.brand_name && (
-                      <div className="stat-sub"><Fa>{rule.brand_name}</Fa></div>
+                    <Fa>{[
+                      rule.model_name && `${rule.brand_name} ${rule.model_name}`,
+                      ...rule.cars.map((c) => c.kind === "brand"
+                        ? `همه‌ی ${c.brand}` : `${c.brand} ${c.model}`),
+                    ].filter(Boolean).join("، ") || "همه خودروها"}</Fa>
+                    {rule.price_max != null && (
+                      <div className="stat-sub">تا <bdi>{toman(rule.price_max)}</bdi> تومان</div>
                     )}
                   </td>
                   <td className="num">

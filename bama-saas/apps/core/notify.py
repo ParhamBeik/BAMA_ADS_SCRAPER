@@ -19,8 +19,10 @@ from datetime import timedelta
 
 import requests
 from django.conf import settings
+from django.db.models import Q
 from django.utils import timezone
 
+from apps.core.filters import car_scope_q
 from apps.core.models import DealScoreCache, NotifiedAd, NotifierSettings
 from apps.core.quality import exclude_unclear_price, verified_by_ad
 
@@ -66,6 +68,7 @@ def matching_deals(
     brand_slug: str = "",
     variant_id: int | None = None,
     year_jalali: int | None = None,
+    cars: Q | None = None,
     exclude_review: bool = False,
     already_sent=None,
     min_residual_pct: float | None = None,
@@ -110,6 +113,8 @@ def matching_deals(
         qs = qs.filter(ad__current_price__lte=price_max)
     if mileage_max is not None:
         qs = qs.filter(ad__mileage__lte=mileage_max)
+    if cars is not None:
+        qs = qs.filter(cars)
     if model_ids:
         qs = qs.filter(ad__model_id__in=model_ids)
     if brand_slug:
@@ -308,14 +313,21 @@ def deliver_alerts(*, dry_run: bool = False) -> dict:
     for rule in rules:
         if per_user[rule.user_id] >= MAX_PER_USER_PER_RUN:
             continue
+        cars = None
+        if rule.model_ids or rule.brand_slugs:
+            # The rule's single car joins its list, read like the Cars tab.
+            models = [*rule.model_ids, *([rule.model_id] if rule.model_id else [])]
+            brands = [*rule.brand_slugs, *([rule.brand_slug] if rule.brand_slug else [])]
+            cars = car_scope_q(",".join(brands), ",".join(map(str, models)), prefix="ad__")
         rows = matching_deals(
             min_discount_pct=rule.min_discount_pct,
             min_peers=rule.min_peers,
             price_min=rule.price_min,
             price_max=rule.price_max,
             mileage_max=rule.mileage_max,
-            model_ids=[rule.model_id] if rule.model_id else None,
-            brand_slug=rule.brand_slug,
+            model_ids=None if cars else ([rule.model_id] if rule.model_id else None),
+            brand_slug="" if cars else rule.brand_slug,
+            cars=cars,
             variant_id=rule.variant_id,
             year_jalali=rule.year_jalali,
             exclude_review=rule.exclude_review,

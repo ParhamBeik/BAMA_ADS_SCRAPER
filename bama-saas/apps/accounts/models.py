@@ -27,6 +27,7 @@ from django.contrib.auth.models import (
     BaseUserManager,
     PermissionsMixin,
 )
+from django.contrib.postgres.fields import ArrayField
 from django.db import models
 from django.utils import timezone
 
@@ -214,12 +215,27 @@ class AlertRule(ScopedToACar):
     # who wants them can say so.
     exclude_review = models.BooleanField(default=True)
 
+    # Several cars in one rule, read the way the Cars tab reads `brand=` and
+    # `model=` lists (`core.filters.car_scope_q`): every listed model, plus
+    # every listed brand none of whose models is listed. Added to the single
+    # scope fields above, which older rules still use.
+    model_ids = ArrayField(models.IntegerField(), default=list, blank=True)
+    brand_slugs = ArrayField(models.CharField(max_length=160), default=list, blank=True)
+
     # Optional per-user Telegram. The in-app feed is always written; this is a
     # second channel, not the only one, which is what the singleton it replaces
     # got wrong.
     telegram_chat_id = models.CharField(max_length=64, blank=True)
 
     created_at = models.DateTimeField(default=timezone.now)
+
+    def build_scope_key(self) -> str:
+        key = super().build_scope_key()
+        if not (self.model_ids or self.brand_slugs):
+            return key
+        cars = ",".join([*(f"brand:{b}" for b in sorted(self.brand_slugs)),
+                         *(f"model:{m}" for m in sorted(self.model_ids))])
+        return f"cars:{cars}" if key == "market" else f"{key}/cars:{cars}"
 
     class Meta:
         db_table = "accounts_alertrule"
