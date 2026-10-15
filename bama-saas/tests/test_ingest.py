@@ -1435,6 +1435,26 @@ def test_a_cheap_instalment_ad_and_a_misfiled_ad_stay_out_of_the_range(catalog):
 
 
 @pytest.mark.django_db
+def test_a_price_too_low_to_be_a_car_leaves_the_list_but_a_cheap_car_stays(catalog, api_client):
+    from apps.core import pricing
+    from apps.core.quality import FLAG_PRICE_IMPLAUSIBLE
+
+    for i in range(10):
+        _ad(catalog, f"peer{i:04d}", NOW, year_jalali=1399, price=1_000_000_000 + i)
+    placeholder = _ad(catalog, "plchold1", NOW, year_jalali=1399, price=111_111_111)
+    crashed = _ad(catalog, "crashed1", NOW, year_jalali=1399, price=450_000_000)
+
+    assert pricing.flag_suspects()["implausible"] == 1
+
+    flags = dict(Ad.objects.values_list("code", "cohort_flags"))
+    assert FLAG_PRICE_IMPLAUSIBLE in flags[placeholder.code]
+    assert FLAG_PRICE_IMPLAUSIBLE not in flags[crashed.code]
+    listed = api_client.get("/api/ads/?ordering=current_price").json()["results"]
+    assert listed[0]["code"] == crashed.code
+    assert placeholder.code not in {row["code"] for row in listed}
+
+
+@pytest.mark.django_db
 def test_a_model_year_can_be_searched_in_either_calendar(catalog, api_client):
     _ad(catalog, "old00001", NOW, year_jalali=1395)
     _ad(catalog, "new00001", NOW, year_jalali=1402)
