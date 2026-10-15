@@ -4,7 +4,7 @@ Cadences (see ``CADENCES``):
 
     hot         ~15 min   fetch + removal marking + incremental deals + notify
     coverage    ~10 min   one bounded chunk of whatever the feed has not shown lately
-    warm        ~30 min   episodes + daily snapshot + market index + health
+    warm        ~30 min   episodes + daily snapshot + market index + home-page cache + health
     maintenance   ~6 h    full deal rebuild + prune
     train        ~daily   refit the learned models, gate them, rescore the board
     full                  every hot/warm step, with a full deal-score rebuild
@@ -47,6 +47,7 @@ JOBS: dict[str, Callable[..., dict]] = {
     "episodes": jobs.sync_episodes,
     "snapshot": jobs.daily_snapshot,
     "market_index": jobs.market_index,
+    "warm_pulse": jobs.warm_pulse,
     "deal_scores": jobs.deal_scores,
     "probe_sold": jobs.probe_sold,
     "notify": jobs.notify,
@@ -78,7 +79,7 @@ JOBS: dict[str, Callable[..., dict]] = {
 # `ml_score` on both sides of a training step, and this is the side that
 # matters: `ml_train` is in no other cadence, so nothing else is affected.
 STEP_ORDER = ("fetch", "photo_archive", "mark_inactive", "link_reposts", "episodes", "snapshot",
-              "market_index", "deal_scores", "ml_train", "ml_score", "probe_sold",
+              "market_index", "warm_pulse", "deal_scores", "ml_train", "ml_score", "probe_sold",
               "notify", "alerts", "alerts_send", "coverage", "backfill_images",
               "image_sweep", "prune", "health")
 
@@ -90,7 +91,8 @@ CADENCES = {
     # cadence it was capable of missing a two-and-a-half hour outage entirely.
     # It is the job that tells a human something is wrong; running it four times
     # a day was making detection latency the largest term in every incident.
-    "warm": ("link_reposts", "episodes", "snapshot", "market_index", "image_sweep", "health"),
+    "warm": ("link_reposts", "episodes", "snapshot", "market_index", "warm_pulse", "image_sweep",
+             "health"),
     "coverage": ("coverage",),
     # Training is its own cadence and its own container. It is the one step here
     # that is CPU-bound for minutes rather than seconds, and running it inside
@@ -107,7 +109,7 @@ CADENCES = {
     # would turn the one command an operator runs to catch up into something
     # they stop running. `bama train` is one keystroke away.
     "full": ("fetch", "photo_archive", "mark_inactive", "link_reposts", "episodes", "snapshot",
-             "market_index", "deal_scores", "ml_score", "probe_sold", "notify",
+             "market_index", "warm_pulse", "deal_scores", "ml_score", "probe_sold", "notify",
              "alerts", "alerts_send"),
 }
 

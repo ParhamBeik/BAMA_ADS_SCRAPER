@@ -147,3 +147,17 @@ def cached_answer(key: str, seconds: int, produce) -> tuple[dict, dict]:
         hit = {"payload": produce(), "coverage": _coverage()}
         cache.set(key, hit, seconds)
     return hit["payload"], hit["coverage"]
+
+
+def refresh_answers(answers, seconds: int) -> int:
+    """Recompute and store `cached_answer` entries ahead of any reader.
+
+    One coverage reading for the batch: every answer here is computed from the
+    same rows in the same minute, so they share a vintage.
+    """
+    coverage = _coverage()
+    n = 0
+    for key, produce in answers:
+        cache.set(key, {"payload": produce(), "coverage": coverage}, seconds)
+        n += 1
+    return n
