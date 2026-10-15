@@ -77,6 +77,12 @@ MARKETS_CACHE_SECONDS = 120
 # — 1-2 s each on the VPS, and the model browser fires three at once. The
 # crawl moves these by a handful per tick, so ten minutes stale is invisible.
 CATALOG_CACHE_SECONDS = 600
+# A car's price page reads every listing of that car in Python: ~1 s of CPU for
+# a 206 on the VPS. Uncached, 20 readers queued it to 12.6 s at the median
+# (load test 2026-10-15). Shared by every reader, so held like the catalog.
+EXPLORE_CACHE_SECONDS = 600
+# Five counts over every listable ad plus coverage; it moves a few ads a tick.
+OVERVIEW_CACHE_SECONDS = 300
 
 
 
@@ -234,11 +240,12 @@ def model_explore(request, model_pk: int):
             raise ValueError(f"condition must be one of {', '.join(PEER_BANDS)}")
     except ValueError as exc:
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-    return Response(explorer.model_exploration(
+    key = cache_key("explore", {"model": model_pk, "condition": condition, **numeric})
+    return Response(cached(key, EXPLORE_CACHE_SECONDS, lambda: explorer.model_exploration(
         model_pk, variant_id=numeric["variant"], year=numeric["year"],
         city_id=numeric["city"], condition=condition,
         mileage_min=numeric["mileage_min"], mileage_max=numeric["mileage_max"],
-    ))
+    )))
 
 
 # Everything `GET /api/ads/` actually reads: the filterset's own names, the two
@@ -1249,19 +1256,23 @@ def overview_view(request):
     for — how many listings are excluded because their price is a down payment
     — and is a number that can differ from the one above it.
     """
-    active = without_high_outliers(pricing.scorable_rows())
-    excluded = without_high_outliers(
-        verified(Ad.objects).filter(status=Ad.Status.ACTIVE, price_basis_unclear=True)
-    )
-    return envelope({
-        "active_listings": active.count(),
-        "instalment_listings": excluded.count(),
-        "brands": active.values("brand_id").distinct().count(),
-        "models": active.values("model_id").distinct().count(),
-        "top_brands": list(
-            active.values("brand__name_fa").annotate(n=Count("code")).order_by("-n")[:10]
-        ),
-    })
+    def produce():
+        active = without_high_outliers(pricing.scorable_rows())
+        excluded = without_high_outliers(
+            verified(Ad.objects).filter(status=Ad.Status.ACTIVE, price_basis_unclear=True)
+        )
+        return {
+            "active_listings": active.count(),
+            "instalment_listings": excluded.count(),
+            "brands": active.values("brand_id").distinct().count(),
+            "models": active.values("model_id").distinct().count(),
+            "top_brands": list(
+                active.values("brand__name_fa").annotate(n=Count("code")).order_by("-n")[:10]
+            ),
+        }
+
+    payload, coverage = cached_answer("overview", OVERVIEW_CACHE_SECONDS, produce)
+    return envelope(payload, coverage=coverage)
 
 
 # ---------------------------------------------------------------------------
