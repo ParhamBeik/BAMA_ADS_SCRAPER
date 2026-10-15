@@ -344,7 +344,9 @@ function MoversTable({
           style={drillable ? { cursor: "pointer" } : undefined}
           onClick={
             drillable
-              ? () => navigate(`/analyse?${scope}=${row.scope_id}`)
+              ? () => navigate(scope === "model"
+                ? `/price?model=${row.scope_id}`
+                : `/cars?brand=${encodeURIComponent(row.scope_id)}`)
               : undefined
           }
         >
@@ -481,7 +483,7 @@ function SupplyAndDemand({ days }: { days: number }) {
                 {data.models.map((row) => (
                   <tr key={row.model_id}>
                     <td>
-                      <Link to={`/analyse?model=${row.model_id}`}>
+                      <Link to={`/price?model=${row.model_id}`}>
                         <Fa>{row.name}</Fa>
                       </Link>
                       {row.brand_name && (
@@ -519,7 +521,7 @@ function SupplyAndDemand({ days }: { days: number }) {
                 {data.fastest.map((row) => (
                   <tr key={row.model_id}>
                     <td>
-                      <Link to={`/analyse?model=${row.model_id}`}>
+                      <Link to={`/price?model=${row.model_id}`}>
                         <Fa>{row.name}</Fa>
                       </Link>
                       {row.brand_name && (
@@ -624,7 +626,7 @@ export function Home() {
     <div className="stack">
       {/* What most visitors came for, first: one car's price, then cars. */}
       <Card title="قیمت یک خودرو" action={
-        <Button asChild variant="ghost" size="sm"><Link to="/budget">با بودجه‌ی من</Link></Button>
+        <Button asChild variant="ghost" size="sm"><Link to="/price?mode=budget">با بودجه‌ی من</Link></Button>
       }>
         <ModelCombobox
           onSelect={(model) => model && navigate(`/price?model=${model.id}`)}

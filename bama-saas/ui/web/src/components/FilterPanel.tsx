@@ -87,7 +87,7 @@ const LISTED_PRESETS: [string, number][] = [
 
 /** 0 km is its own group (its peers are other 0 km cars), so every "under"
  *  preset starts at 1 km. `[label, min, max]`. */
-const MILEAGE_PRESETS: [string, number, number | null][] = [
+export const MILEAGE_PRESETS: [string, number, number | null][] = [
   ["صفر کیلومتر", 0, 0],
   ["زیر 5 هزار", 1, 5_000],
   ["زیر 10 هزار", 1, 10_000],

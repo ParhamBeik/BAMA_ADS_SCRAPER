@@ -1384,3 +1384,26 @@ main:focus { outline: none; }
   scroll-snap-type: x mandatory; padding-bottom: 4px;
 }
 .card-strip > * { scroll-snap-align: start; }
+
+/* Budget results: one tappable row per car (was a 7-column table). */
+.budget-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.budget-row {
+  display: grid; gap: 2px; padding: 10px 12px; border: 1px solid var(--border);
+  border-radius: var(--radius); color: inherit; text-decoration: none;
+}
+.budget-row:hover, .budget-row:focus-visible { border-color: var(--accent); }
+.budget-name { font-weight: 600; }
+.budget-price { font-size: 15px; }
+
+/* Price-tab compare: one row per car. */
+.compare-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.compare-row {
+  position: relative; display: grid; gap: 2px; padding-block: 10px; padding-inline: 12px 44px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+}
+.compare-name { font-weight: 600; }
+.compare-range { font-size: 16px; font-weight: 700; }
+.compare-remove {
+  position: absolute; inset-inline-end: 6px; top: 6px; width: 32px; height: 32px;
+  display: grid; place-items: center; border-radius: 8px; color: var(--muted);
+}
