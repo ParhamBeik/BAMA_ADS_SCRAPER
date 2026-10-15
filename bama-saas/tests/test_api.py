@@ -2187,6 +2187,35 @@ def test_alerts_are_delivered_per_user_and_only_once(member, other_member, deal_
 
 
 @pytest.mark.django_db
+def test_one_alert_rule_can_cover_several_cars(member, deal_market):
+    """A rule listing cars matches any of them, read like the Cars tab."""
+    from apps.core.notify import deliver_alerts
+
+    client, user = member
+    other = Model.objects.create(brand=deal_market["brand"], name_fa="مدل دیگر")
+    response = client.post("/api/alert-rules/", {
+        "min_discount_pct": 5, "min_peers": 8,
+        "model_ids": [deal_market["model"].pk, other.pk], "brand_slugs": ["elsewhere"],
+    }, format="json")
+    assert response.status_code == 201, response.json()
+    assert {"kind": "model", "brand": "برند تست", "model": "مدل تست"} in response.json()["cars"]
+    elsewhere_only = AlertRule.objects.create(
+        user=user, min_discount_pct=5, min_peers=8, model_ids=[other.pk])
+
+    compute_deal_scores()
+    assert deliver_alerts()["delivered"] > 0
+    assert not AlertDelivery.objects.filter(rule=elsewhere_only).exists()
+    assert AlertDelivery.objects.exclude(rule=elsewhere_only).exists()
+
+    # A trim names one model; with a list it would drop the other cars.
+    bad = client.post("/api/alert-rules/", {
+        "min_discount_pct": 5, "min_peers": 8, "model_ids": [other.pk],
+        "variant": deal_market["variant"].pk,
+    }, format="json")
+    assert bad.status_code == 400
+
+
+@pytest.mark.django_db
 def test_two_of_one_users_rules_matching_one_car_deliver_it_once(member, catalog):
     """Overlapping rules are normal; the same car arriving twice is not."""
     from apps.core.notify import deliver_alerts
