@@ -111,6 +111,7 @@ const FLAG_SHORT: Record<string, string> = {
   price_outlier_low: "ارزان‌تر از مشابه‌ها",
   suspect_installment_price: "پیش‌پرداخت؟",
   suspect_misfiled: "تیپ یا سال مشکوک",
+  price_implausible: "قیمت نامعتبر",
 };
 
 /**

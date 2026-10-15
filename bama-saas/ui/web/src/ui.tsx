@@ -31,6 +31,8 @@ export const FLAG_LABEL: Record<string, string> = {
   // Kept out of every price range; the listing itself stays visible.
   suspect_installment_price: "احتمالاً پیش‌پرداخت اقساطی است، نه قیمت کامل",
   suspect_misfiled: "قیمتش به تیپ یا سال دیگری از همین مدل می‌خورد — شاید اشتباه ثبت شده",
+  // Hidden from the listings; seen only on a directly opened ad.
+  price_implausible: "این عدد قیمت خودرو نیست — احتمالاً پیش‌پرداخت یا اشتباه تایپی",
 };
 
 /**
