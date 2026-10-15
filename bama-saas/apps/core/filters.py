@@ -8,14 +8,44 @@ answer forever, and ``?has_image=false`` would silently return nothing.
 
 import django_filters
 from django.db.models import Q
+from rest_framework.exceptions import ValidationError
 
 from apps.common.parsing import normalize_model_year
-from apps.core.models import Ad
+from apps.core.models import Ad, Model
+
+# Several cars at once (Cars tab). Bounded so one URL cannot become an
+# unbounded IN list.
+MAX_CARS = 10
+
+
+def car_scope_q(brands: str | None, models: str | None, *, prefix: str = "") -> Q | None:
+    """``?brand=a,b&model=1,2``: every listed model, plus every listed brand
+    none of whose models was picked.
+
+    So "Peugeot 206 + Peugeot 207 + all of Quick" is ``brand=peugeot,quick
+    &model=<206>,<207>``, and the old single-car link ``brand=X&model=Y`` keeps
+    meaning model Y, because a picked model narrows its own brand.
+    """
+    brand_list = [b for b in (brands or "").split(",") if b.strip()][:MAX_CARS]
+    raw_models = [m.strip() for m in (models or "").split(",") if m.strip()][:MAX_CARS]
+    if not brand_list and not raw_models:
+        return None
+    if not all(m.isdigit() for m in raw_models):
+        raise ValidationError({"model": "model must be a comma-separated list of ids"})
+    model_ids = [int(m) for m in raw_models]
+    narrowed = set(
+        Model.objects.filter(pk__in=model_ids).values_list("brand_id", flat=True)
+    )
+    whole_brands = [b.strip() for b in brand_list if b.strip() not in narrowed]
+    q = Q()
+    if model_ids:
+        q |= Q(**{f"{prefix}model_id__in": model_ids})
+    if whole_brands:
+        q |= Q(**{f"{prefix}model__brand__slug__in": whole_brands})
+    return q if q else Q(pk__in=[])
 
 
 class AdFilter(django_filters.FilterSet):
-    brand = django_filters.CharFilter(field_name="brand__slug")
-    model = django_filters.NumberFilter(field_name="model_id")
     variant = django_filters.NumberFilter(field_name="variant_id")
     city = django_filters.NumberFilter(field_name="city_id")
 
@@ -102,6 +132,11 @@ class AdFilter(django_filters.FilterSet):
         # Body condition describes used cars: a 0 km car has no paint by
         # definition and is chosen through mileage instead.
         return queryset.filter(condition_band_q(value)).exclude(mileage=0)
+
+    def filter_queryset(self, queryset):
+        queryset = super().filter_queryset(queryset)
+        scope = car_scope_q(self.data.get("brand"), self.data.get("model"))
+        return queryset if scope is None else queryset.filter(scope)
 
     class Meta:
         model = Ad
