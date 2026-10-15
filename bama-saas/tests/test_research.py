@@ -477,6 +477,23 @@ def test_movers_ranks_by_change_and_splits_on_sign(db):
 
 
 @pytest.mark.django_db
+def test_movers_drops_a_series_the_latest_index_run_did_not_extend(db):
+    """A model removed from the catalogue keeps its old index rows. Ranked, it
+    showed up as this month's top riser under a bare numeric id, frozen two
+    weeks earlier."""
+    today = timezone.now().date()
+    for offset in range(10):
+        on = today - timedelta(days=9 - offset)
+        _index_row(MarketIndex.Scope.MODEL, "1", on, 100.0 + offset)
+        if offset < 6:
+            _index_row(MarketIndex.Scope.MODEL, "234", on, 100.0 + offset * 20)
+
+    result = movers(MarketIndex.Scope.MODEL, days=30, limit=10)
+    assert [r["scope_id"] for r in result["risers"]] == ["1"]
+    assert result["scopes_ranked"] == 1
+
+
+@pytest.mark.django_db
 def test_movers_refuses_a_scope_with_too_little_history(db):
     """Two dates is a gap between two days, not a trend."""
     today = timezone.now().date()

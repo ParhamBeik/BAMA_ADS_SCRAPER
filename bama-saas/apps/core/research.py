@@ -621,9 +621,16 @@ def movers(scope: str, *, days: int = 30, limit: int = 10) -> dict:
     for scope_id, day, value, ads, cohorts, low in rows:
         by_scope[str(scope_id)].append((day, value, ads, cohorts, low))
 
+    # A series the latest index run did not extend is no longer being built:
+    # its model was removed from the catalogue or fell below the cohort bar.
+    # On 2026-10-15 half the model series in a 30-day window were such
+    # leftovers, frozen since 1 October and still ranked as this month's
+    # movers under a bare numeric id.
+    newest = max((points[-1][0] for points in by_scope.values()), default=None)
+
     ranked = []
     for scope_id, points in by_scope.items():
-        if len(points) < MOVER_MIN_DAYS:
+        if len(points) < MOVER_MIN_DAYS or points[-1][0] != newest:
             continue
         first, last = points[0], points[-1]
         if not first[1]:
