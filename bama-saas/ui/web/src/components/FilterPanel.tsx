@@ -25,7 +25,7 @@ import { api, type Variant } from "@/api";
 import { useFilters } from "@/filters";
 import { Fa, NumberInput } from "@/ui";
 import { CONDITION_BANDS, conditionLabel, num, toman } from "@/format";
-import { ModelCombobox, normalizePersianInput, useModelLabel } from "@/components/ModelCombobox";
+import { ModelCombobox, normalizePersianInput, useModelLabels } from "@/components/ModelCombobox";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
@@ -155,14 +155,16 @@ const ANY = "__any__";
  * controls but never the fact that it is filtering.
  */
 function Group({
-  label, keys, children,
+  label, keys, count, children,
 }: {
   label: string;
   keys: string[];
+  /** Overrides the per-key count, for a group whose keys hold lists. */
+  count?: number;
   children: React.ReactNode;
 }) {
   const filters = useFilters();
-  const active = keys.filter((k) => filters.get(k)).length;
+  const active = count ?? keys.filter((k) => filters.get(k)).length;
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -347,9 +349,128 @@ function CityPicker() {
   );
 }
 
+/** Comma-separated URL list, e.g. `model=12,40`. */
+export const listParam = (raw?: string) => (raw ? raw.split(",").filter(Boolean) : []);
+const MAX_CARS = 10;
+
+/**
+ * Several cars in one list: whole brands and single models, mixed.
+ *
+ * A picked model is stored in `model`, a whole brand in `brand`. The API reads
+ * a brand that also has a picked model as narrowed by it, so the old one-car
+ * links (`brand=X&model=Y`) still mean model Y.
+ */
+function CarPicker() {
+  const filters = useFilters();
+  const { list: brandList } = useBrands();
+  const brands = listParam(filters.get("brand"));
+  const models = listParam(filters.get("model"));
+  const full = brands.length + models.length >= MAX_CARS;
+  const set = (nextBrands: string[], nextModels: string[]) =>
+    filters.set({
+      brand: nextBrands.join(",") || null,
+      model: nextModels.join(",") || null,
+      variant: null,
+      page: null,
+    });
+  return (
+    <div className="space-y-3">
+      <CarChips />
+      {full ? (
+        <p className="text-muted-foreground text-xs">حداکثر {num(MAX_CARS)} خودرو.</p>
+      ) : (
+        <>
+          <Field label="افزودن مدل">
+            <ModelCombobox
+              placeholder="نام مدل را بنویسید…"
+              onSelect={(picked) => {
+                if (picked && !models.includes(String(picked.id))) {
+                  set(brands, [...models, String(picked.id)]);
+                }
+              }}
+            />
+          </Field>
+          <Choice
+            label="یا همه‌ی مدل‌های یک برند"
+            anyLabel="انتخاب برند"
+            onChange={(v) => { if (v && !brands.includes(v)) set([...brands, v], models); }}
+            options={brandList
+              .filter((b) => !brands.includes(b.slug))
+              .map((b) => ({ value: b.slug, label: `${b.name_fa} (${num(b.ad_count)} آگهی)` }))}
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
+/** One removable chip per picked car. Shared by the picker and the chip row. */
+function CarChips({ inline = false }: { inline?: boolean }) {
+  const items = useCarItems();
+  if (!items.length) return null;
+  return (
+    <div className={inline ? "contents" : "chips"}>
+      {items.map((item) => (
+        <span key={item.key} className="chip">
+          <Fa>{item.label}</Fa>
+          <button type="button" aria-label={`حذف ${item.label}`} onClick={item.drop}>
+            <X size={12} />
+          </button>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** The picked cars as removable items: whole brands, then single models. */
+function useCarItems() {
+  const filters = useFilters();
+  const { list: brandList } = useBrands();
+  const brands = listParam(filters.get("brand"));
+  const models = listParam(filters.get("model"));
+  const labels = useModelLabels(models);
+  // A brand narrowed by one of its own picked models is not a separate car.
+  const narrowed = new Set(labels.map((m) => m.brand_slug));
+  const remove = (nextBrands: string[], nextModels: string[]) =>
+    filters.set({
+      brand: nextBrands.join(",") || null,
+      model: nextModels.join(",") || null,
+      variant: null,
+      page: null,
+    });
+  const items = [
+    ...brands.filter((b) => !narrowed.has(b)).map((slug) => ({
+      key: `b-${slug}`,
+      label: `همه‌ی ${brandList.find((b) => b.slug === slug)?.name_fa ?? slug}`,
+      drop: () => remove(brands.filter((b) => b !== slug), models),
+    })),
+    ...models.map((id) => {
+      const m = labels.find((x) => String(x.id) === id);
+      return {
+        key: `m-${id}`,
+        label: m ? `${m.brand_name} ${m.name_fa}` : "…",
+        drop: () => remove(
+          // Dropping the last picked model of a narrowed brand drops the brand too,
+          // or the list would silently widen to the whole brand.
+          brands.filter((b) => !(m && b === m.brand_slug &&
+            !labels.some((o) => o.brand_slug === b && String(o.id) !== id))),
+          models.filter((x) => x !== id),
+        ),
+      };
+    }),
+  ];
+  return items;
+}
+
 function TrimPicker() {
   const filters = useFilters();
-  const model = filters.get("model");
+  const picked = listParam(filters.get("model"));
+  const brands = listParam(filters.get("brand"));
+  const [label] = useModelLabels(picked);
+  // A trim belongs to one model. With any other car picked beside it, a trim
+  // filter would silently drop every row of the others.
+  const model = picked.length === 1 && label && brands.every((b) => b === label.brand_slug)
+    ? picked[0] : undefined;
   const variants = useQuery({
     queryKey: ["variants", model],
     enabled: Boolean(model),
@@ -375,9 +496,7 @@ export function FilterPanel({
   showSearch = true,
 }: FilterOptions) {
   const filters = useFilters();
-  const brand = filters.get("brand");
-
-  const { list: brandList } = useBrands();
+  const carCount = useCarItems().length;
 
   const priceMin = filters.get("price_min");
   const priceMax = filters.get("price_max");
@@ -401,30 +520,8 @@ export function FilterPanel({
         {showSearch && <SearchBox key={filters.get("q") ?? ""} />}
 
         <div className="-mx-1 flex min-w-0 basis-full items-center gap-2 overflow-x-auto px-1 pb-0.5 [scrollbar-width:none] sm:mx-0 sm:basis-auto sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
-        <Group label="خودرو" keys={["brand", "model", "variant"]}>
-          <Choice
-            label="برند"
-            anyLabel="همه برندها"
-            value={brand}
-            onChange={(v) => filters.set({ brand: v, model: null, variant: null, page: null })}
-            options={brandList.map((b) => ({ value: b.slug, label: `${b.name_fa} (${num(b.ad_count)} آگهی)` }))}
-          />
-          <Field label="مدل خودرو">
-            <ModelCombobox
-              value={filters.get("model")}
-              brand={brand}
-              placeholder="همه مدل‌ها"
-              onSelect={(picked) =>
-                filters.set(
-                  picked
-                    // Setting the brand too keeps the coarse select honest: it
-                    // would otherwise still read "همه برندها" next to one model.
-                    ? { model: picked.id, brand: picked.brand_slug, variant: null, page: null }
-                    : { model: null, variant: null, page: null },
-                )
-              }
-            />
-          </Field>
+        <Group label="خودرو" keys={["brand", "model", "variant"]} count={carCount}>
+          <CarPicker />
           <TrimPicker />
         </Group>
 
@@ -581,11 +678,9 @@ function SearchBox() {
 }
 
 /** Persian labels for whatever is currently narrowing the list. */
-function chipLabel(key: string, value: string, modelName?: string): string {
+function chipLabel(key: string, value: string): string {
   switch (key) {
     case "q": return `جست‌وجو: ${value}`;
-    case "brand": return `برند: ${value}`;
-    case "model": return modelName ? `مدل: ${modelName}` : "مدل انتخاب‌شده";
     case "variant": return "تیپ انتخاب‌شده";
     case "city": return "شهر انتخاب‌شده";
     case "price_min": return `از ${toman(Number(value))} تومان`;
@@ -611,16 +706,11 @@ function chipLabel(key: string, value: string, modelName?: string): string {
  *  dropping one of five choices mean re-entering the other four. */
 function ActiveChips() {
   const filters = useFilters();
-  // The chip used to read "مدل انتخاب‌شده" because the panel never knew which
-  // model; the picker resolves it by id now, so the chip can say the name.
-  const selectedModel = useModelLabel(filters.get("model"));
   const cities = useCities();
-  const active = FILTER_KEYS.map((k) => [k, filters.get(k)] as const).filter(([, v]) => v);
-  if (!active.length) return null;
-
-  const modelName = selectedModel
-    ? `${selectedModel.brand_name} ${selectedModel.name_fa}`
-    : undefined;
+  const all = FILTER_KEYS.map((k) => [k, filters.get(k)] as const).filter(([, v]) => v);
+  if (!all.length) return null;
+  // Picked cars get one chip each from `CarChips`.
+  const active = all.filter(([k]) => k !== "brand" && k !== "model");
 
   const clearAll = () => {
     const cleared: Record<string, null> = { page: null };
@@ -630,10 +720,11 @@ function ActiveChips() {
 
   return (
     <div className="chips mt-3">
+      <CarChips inline />
       {active.map(([key, value]) => {
         const label = key === "city"
           ? `شهر: ${cities.data?.find((c) => String(c.id) === value)?.name_fa ?? value}`
-          : chipLabel(key, value as string, modelName);
+          : chipLabel(key, value as string);
         return (
           <span key={key} className="chip">
             <Fa>{label}</Fa>
@@ -642,13 +733,7 @@ function ActiveChips() {
               aria-label={`حذف فیلتر ${label}`}
               onClick={() =>
                 filters.set(
-                  // Dropping a model must drop the trim under it, or the list
-                  // filters on a trim belonging to a model nobody selected.
-                  key === "brand"
-                    ? { brand: null, model: null, variant: null, page: null }
-                    : key === "model"
-                    ? { model: null, variant: null, page: null }
-                    : { [key]: null, page: null },
+                  { [key]: null, page: null },
                 )
               }
             >

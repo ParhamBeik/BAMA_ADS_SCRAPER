@@ -51,6 +51,18 @@ export function useModelLabel(modelId?: string) {
   return query.data?.[0];
 }
 
+/** Labels for several selected models at once (the Cars tab's multi-pick). */
+export function useModelLabels(ids: string[]) {
+  const key = ids.join(",");
+  const query = useQuery({
+    queryKey: ["models-by-id", key],
+    enabled: ids.length > 0,
+    staleTime: Infinity,
+    queryFn: ({ signal }) => api.get<ModelRow[]>(`/api/models/${qs({ id: key })}`, signal),
+  });
+  return query.data ?? [];
+}
+
 export function normalizePersianInput(input: string): string {
   const digits: Record<string, string> = {
     "۰": "0", "۱": "1", "۲": "2", "۳": "3", "۴": "4",

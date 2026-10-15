@@ -39,7 +39,7 @@ from apps.core.api import (
     cached_answer,
     envelope,
 )
-from apps.core.filters import AdFilter
+from apps.core.filters import AdFilter, car_scope_q
 from apps.core.models import (
     Ad,
     AdVersionPhoto,
@@ -154,7 +154,9 @@ def model_search(request):
     qs = Model.objects.select_related("brand")
     by_id = (params.get("id") or "").strip()
     if by_id:
-        qs = qs.filter(pk=by_id) if by_id.isdigit() else qs.none()
+        # A comma list too: the Cars tab names every car it is filtering on.
+        ids = [i for i in by_id.split(",")[:10] if i.strip()]
+        qs = qs.filter(pk__in=ids) if all(i.isdigit() for i in ids) else qs.none()
     else:
         if brand := params.get("brand"):
             qs = qs.filter(brand__slug=brand)
@@ -246,6 +248,8 @@ def model_explore(request, model_pk: int):
 # rejected as unknown.
 _AD_QUERY_PARAMS = frozenset(AdFilter.base_filters) | {
     "page", "ordering", "include_outliers",
+    # Read by `AdFilter.filter_queryset` as lists, so not declared filters.
+    "brand", "model",
 }
 
 
@@ -717,7 +721,6 @@ def deal_scores(request):
     """
     params = request.query_params
     try:
-        model = _opt(params, "model", int)
         variant = _opt(params, "variant", int)
         city = _opt(params, "city", int)
         year = _year(params, "year")
@@ -782,8 +785,6 @@ def deal_scores(request):
     qs = qs.filter(ad__publish_at__gte=cutoff)
 
     filters = {
-        "ad__model__brand__slug": params.get("brand") or None,
-        "ad__model_id": model,
         "ad__variant_id": variant,
         "ad__city_id": city,
         "ad__year_jalali": year,
@@ -795,6 +796,9 @@ def deal_scores(request):
         "ad__mileage__lte": mileage_max,
     }
     qs = qs.filter(**{k: v for k, v in filters.items() if v is not None})
+    cars = car_scope_q(params.get("brand"), params.get("model"), prefix="ad__")
+    if cars is not None:
+        qs = qs.filter(cars)
 
     # peer_count and confidence live in the components JSON. Filtering
     # confidence by its peer-count threshold instead keeps it in SQL.

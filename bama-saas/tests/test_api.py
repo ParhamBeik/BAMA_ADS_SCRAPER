@@ -295,6 +295,35 @@ def test_ads_list_filters(api_client, catalog):
 
 
 @pytest.mark.django_db
+def test_ads_list_takes_several_cars_at_once(api_client, catalog):
+    """Picked models, plus picked brands none of whose models were picked."""
+    brand, model = catalog["brand"], catalog["model"]
+    other_model = Model.objects.create(brand=brand, name_fa="مدل دوم")
+    second = Brand.objects.create(slug="second", name_fa="برند دوم")
+    second_model = Model.objects.create(brand=second, name_fa="مدل سوم")
+    for code, m, b in (("om", other_model, brand), ("sm", second_model, second)):
+        Ad.objects.create(
+            code=code, brand=b, model=m, city=catalog["city"], title=code,
+            year=1399, year_jalali=1399, mileage=10_000, current_price=900_000_000,
+            publish_at=_NOW, last_seen_at=_NOW, first_seen_at=_NOW,
+        )
+
+    def codes(query):
+        resp = api_client.get(f"/api/ads/?{query}")
+        assert resp.status_code == 200, resp.content
+        return {r["code"] for r in resp.json()["results"]}
+
+    mine = {f"ad{i}" for i in range(8)}
+    # The old single-car link: a picked model narrows its own brand.
+    assert codes(f"brand={brand.slug}&model={model.id}") == mine
+    # Two models of one brand, plus a whole second brand.
+    assert codes(f"brand={brand.slug},{second.slug}&model={model.id},{other_model.id}") \
+        == mine | {"om", "sm"}
+    assert codes(f"model={model.id},{second_model.id}") == mine | {"sm"}
+    assert api_client.get("/api/ads/?model=1,x").status_code == 400
+
+
+@pytest.mark.django_db
 def test_ads_list_seller_type(api_client, catalog):
     """dealer_name/seller_type on AdSerializer: "dealer" when dealer_id is set,
     "private" otherwise. select_related("dealer") is already on the viewset
