@@ -1159,6 +1159,24 @@ def test_affordable_separates_inside_the_budget_from_inside_the_tolerance(cohort
 
 
 @pytest.mark.django_db
+def test_affordable_lists_a_car_once_at_its_newest_reachable_year(cohorts):
+    """Ranked per year, Peugeot 206 tip 2 took 8 of the top 9 rows for 1bn."""
+    brand, model, cheap = cohorts["brand"], cohorts["model"], cohorts["cheap"]
+    _priced(brand, model, cheap, [600_000_000] * 5, year=1395)
+    _priced(brand, model, cheap, [800_000_000] * 5, year=1398)
+    # The bottom of 1400 only: not what the budget buys.
+    _priced(brand, model, cheap, [950_000_000] * 5 + [2_000_000_000] * 20, year=1400)
+
+    result = R.affordable(1_000_000_000, tolerance_pct=0)
+
+    [row] = result["options"]
+    assert row["year_jalali"] == 1398
+    assert (row["year_min"], row["year_max"]) == (1395, 1400)
+    assert row["n"] == 15
+    assert result["cohorts_matched"] == 1
+
+
+@pytest.mark.django_db
 def test_affordable_refuses_rather_than_returning_a_cohort_of_two(cohorts):
     brand, model, cheap = cohorts["brand"], cohorts["model"], cohorts["cheap"]
     _priced(brand, model, cheap, [500_000_000, 600_000_000], year=1399)

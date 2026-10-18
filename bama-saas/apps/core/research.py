@@ -1540,6 +1540,7 @@ def affordable(
                 "budget": budget, "tolerance_pct": tolerance_pct,
                 "ceiling": ceiling, "required": MIN_AFFORDABLE_ADS}
 
+    options = _one_row_per_car(options)
     # Reach first, then how many are genuinely inside the budget. A cohort the
     # budget clears outright beats one it only just reaches into.
     options.sort(key=lambda r: (r["reach_pct"], r["within_budget"]), reverse=True)
@@ -1552,6 +1553,38 @@ def affordable(
         "listings_matched": sum(o["n"] for o in options),
         "options": options[:limit],
     }
+
+
+# A year counts as "what the budget buys" of a car when it reaches at least
+# half that year's listings; below that it is the bottom of the market.
+AFFORDABLE_REACH_PCT = 50.0
+
+
+def _one_row_per_car(options: list[dict]) -> list[dict]:
+    """Collapse a car's model years into one row: its newest well-reached year.
+
+    Ranked per year, a cheap common trim took the list over — eight of the top
+    nine rows for a 1bn budget were Peugeot 206 tip 2, one per year. The
+    reader's question is which cars, then which year of it; the row now
+    answers the first and names the year range, and the counts cover every
+    year folded in.
+    """
+    by_car: dict[tuple, list[dict]] = defaultdict(list)
+    for o in options:
+        by_car[(o["model_id"], o["variant_id"])].append(o)
+    rows = []
+    for years in by_car.values():
+        reached = [o for o in years if o["reach_pct"] >= AFFORDABLE_REACH_PCT]
+        best = (max(reached, key=lambda o: o["year_jalali"]) if reached
+                else max(years, key=lambda o: (o["reach_pct"], o["year_jalali"])))
+        rows.append({
+            **best,
+            "year_min": min(o["year_jalali"] for o in years),
+            "year_max": max(o["year_jalali"] for o in years),
+            "n": sum(o["n"] for o in years),
+            "within_budget": sum(o["within_budget"] for o in years),
+        })
+    return rows
 
 
 # ---------------------------------------------------------------------------
