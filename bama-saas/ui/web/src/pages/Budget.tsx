@@ -77,6 +77,8 @@ const PRESETS: [string, number][] = [
 
 const TOLERANCES = [0, 5, 10, 20];
 const PAGE = 40;
+/** `_affordable_limit` on the server; asking past it returns the same rows. */
+const MAX_LIMIT = 400;
 
 export function Budget() {
   const filters = useFilters();
@@ -218,12 +220,12 @@ export function Budget() {
                   ))}
                 </ul>
 
-                {data.options.length < data.cohorts_matched && (
+                {data.options.length < data.cohorts_matched && limit < MAX_LIMIT && (
                   <Button
                     variant="outline"
                     className="mt-3 w-full"
                     disabled={result.isFetching}
-                    onClick={() => setShown({ key: searchKey, limit: limit + PAGE })}
+                    onClick={() => setShown({ key: searchKey, limit: Math.min(limit + PAGE, MAX_LIMIT) })}
                   >
                     {result.isFetching
                       ? "در حال دریافت…"
