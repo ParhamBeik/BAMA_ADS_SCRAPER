@@ -9,7 +9,7 @@
  * Telegram notifier that quotes the same price.
  */
 import { describe, expect, it } from "vitest";
-import { verdictNote } from "./components/DealCard";
+import { onePerSeller, verdictNote } from "./components/DealCard";
 import { scopeKey } from "./components/FollowButton";
 import { qs } from "./filters";
 import { mileageLabel } from "./components/FilterPanel";
@@ -185,4 +185,14 @@ it("names a car without the words its trim repeats", () => {
   expect(carName("ام وی ام", "110 دنده ای", "4 سیلندر دنده ای")).toBe("ام وی ام 110 دنده ای 4 سیلندر");
   expect(carName("پژو", "206 دنده ای", "تیپ 2")).toBe("پژو 206 دنده ای تیپ 2");
   expect(carName("پژو", "206", "")).toBe("پژو 206");
+});
+
+it("keeps one car per dealer on a shortlist, and every private seller", () => {
+  const rows = [
+    { code: "a", dealer_id: 5175 }, { code: "b", dealer_id: 5175 },
+    { code: "c", dealer_id: null }, { code: "d", dealer_id: null },
+    { code: "e", dealer_id: 718 }, { code: "f", dealer_id: 5175 },
+  ];
+  expect(onePerSeller(rows, 6).map((r) => r.code)).toEqual(["a", "c", "d", "e"]);
+  expect(onePerSeller(rows, 2).map((r) => r.code)).toEqual(["a", "c"]);
 });

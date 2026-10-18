@@ -34,7 +34,7 @@ import { fa, num, pct } from "../format";
 import { Sparkline } from "../components/Sparkline";
 import { WindowPicker } from "../components/WindowPicker";
 import { ModelCombobox } from "../components/ModelCombobox";
-import { DealCard, type DealBoard } from "../components/DealCard";
+import { DealCard, onePerSeller, type DealBoard } from "../components/DealCard";
 import { Button } from "../components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 
@@ -42,6 +42,27 @@ const Chart = lazy(() => import("@/components/Chart").then((m) => ({ default: m.
 
 const DEFAULT_DAYS = 30;
 const SHORTLIST = 6;
+/** Fetched a page at a time past the shortlist so one-per-seller still fills
+ *  it; capped so a board of one dealer's stock cannot page forever. */
+const SHORTLIST_POOL = 30;
+const SHORTLIST_SCAN = 300;
+
+/** Board pages until SHORTLIST distinct sellers are in hand or it runs out:
+ *  a big dealer can own the whole first page. */
+async function sellerDiverse(band: string | undefined, signal: AbortSignal): Promise<DealBoard> {
+  let board: DealBoard | undefined;
+  const rows: DealBoard["results"] = [];
+  for (let offset = 0; offset < SHORTLIST_SCAN; offset += SHORTLIST_POOL) {
+    board = await api.get<DealBoard>(
+      `/api/analytics/deal-scores/${qs({ limit: SHORTLIST_POOL, offset, band })}`, signal);
+    rows.push(...(board.results ?? []));
+    if (onePerSeller(rows, SHORTLIST).length >= SHORTLIST
+        || offset + SHORTLIST_POOL >= (board.count ?? 0)) break;
+  }
+  return { ...board!, results: rows };
+}
+
+
 
 interface OverviewData extends Envelope {
   active_listings: number;
@@ -556,16 +577,14 @@ function SupplyAndDemand({ days }: { days: number }) {
 function BestBuys() {
   const top = useQuery({
     queryKey: ["home-deals"],
-    queryFn: ({ signal }) =>
-      api.get<DealBoard>(`/api/analytics/deal-scores/${qs({ limit: SHORTLIST })}`, signal),
+    queryFn: ({ signal }) => sellerDiverse(undefined, signal),
   });
   // A quiet day can leave no verdict of "deal"; the strip then shows the
   // cheapest-against-peers cars instead of an empty box at the top of Home.
   const fallback = useQuery({
     queryKey: ["home-deals", "all"],
     enabled: top.data?.results?.length === 0,
-    queryFn: ({ signal }) =>
-      api.get<DealBoard>(`/api/analytics/deal-scores/${qs({ limit: SHORTLIST, band: "all" })}`, signal),
+    queryFn: ({ signal }) => sellerDiverse("all", signal),
   });
   // Switch to the fallback as soon as top is known empty, so its loading and
   // error states render instead of top's definitive "nothing today".
@@ -574,7 +593,8 @@ function BestBuys() {
 
   return (
     <Card
-      title="بهترین خریدهای امروز"
+      // Prices here were set within two weeks, freshest first; "today" overclaimed.
+      title="بهترین خریدهای تازه"
       action={
         <Button asChild variant="ghost" size="sm">
           <Link to={usingFallback ? "/cars?deals=1&band=all" : "/cars?deals=1"}>همه معامله‌ها <ArrowLeft className="size-4" /></Link>
@@ -583,7 +603,7 @@ function BestBuys() {
     >
       <Async query={deals} shape="cards" empty="هنوز امتیازی محاسبه نشده است.">
         {(board) => {
-          const rows = board.results ?? [];
+          const rows = onePerSeller(board.results ?? [], SHORTLIST);
           if (!rows.length) {
             return <div className="state">امروز آگهی‌ای به این حد نرسیده است.</div>;
           }

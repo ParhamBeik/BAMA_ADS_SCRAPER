@@ -624,6 +624,8 @@ def _deal_score_row(obj, *, now=None):
         "brand_name": getattr(obj, "brand_name", None),
         "image_url": images.ad_image_paths(obj.ad)[0],
         "city_name": obj.ad.city.name_fa if obj.ad.city_id else "",
+        # Bama's own dealer id, so a shortlist can hold one car per seller.
+        "dealer_id": obj.ad.dealer_id,
         # The listing's own explanation for being cheap. Not a reason to hide it,
         # but the cohort key has no condition dimension, so without this the gap
         # looks like free money instead of accident damage.

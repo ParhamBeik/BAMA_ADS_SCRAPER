@@ -7,12 +7,16 @@ import { Async, BamaLink, FLAG_LABEL, Fa, ListingActions, PriceBar, PriceVerdict
 import { bothDates, fa, faDate, modelYear, num, pct, toman } from "../format";
 import type { Basis, Distribution, Verdict } from "../ui";
 import { verdictNote, type Deal } from "../components/DealCard";
+import { FollowButton } from "../components/FollowButton";
+import { qs } from "../filters";
 
 type Ad = {
   code: string;
   title: string;
   brand_name: string;
+  model_id: number | null;
   model_name: string;
+  variant_id: number | null;
   variant_name: string;
   year_jalali: number | null;
   year_calendar?: string;
@@ -160,8 +164,10 @@ function ListingState({
   }
 
   const guess: Record<string, string> = {
-    likely_sold: "احتمالاً فروخته شده",
-    likely_expired: "احتمالاً اعتبار آگهی تمام شده",
+    // Plain facts: the prefix below already says how sure the guess is, and
+    // «به احتمال زیاد: احتمالاً فروخته شده» hedged twice.
+    likely_sold: "فروخته شده",
+    likely_expired: "اعتبار آگهی تمام شده",
     reposted: "با آگهی تازه‌ای دوباره ثبت شده",
     unknown: "دلیلش را نمی‌دانیم",
   };
@@ -237,6 +243,27 @@ export function ListingDetail() {
                     />
                   )}
                   <p className="price">{data.current_price != null ? toman(data.current_price) : "—"}</p>
+                  {/* From one ad to the question behind it: what this car
+                      costs in general, and news when that changes. */}
+                  {data.model_id != null && (
+                    <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                      <Link
+                        className="btn"
+                        to={`/price${qs({
+                          model: data.model_id,
+                          variant: data.variant_id ?? undefined,
+                          year: data.year_jalali ?? undefined,
+                        })}`}
+                      >
+                        قیمت این خودرو در بازار
+                      </Link>
+                      <FollowButton scope={{
+                        model: String(data.model_id),
+                        variant: data.variant_id != null ? String(data.variant_id) : undefined,
+                        year: data.year_jalali != null ? String(data.year_jalali) : undefined,
+                      }} />
+                    </div>
+                  )}
                   {data.price_basis_unclear && (
                     <p className="badge warn">
                       این عدد به احتمال زیاد پیش‌پرداخت یا قسط است، نه قیمت کامل
@@ -376,7 +403,7 @@ export function ListingDetail() {
           way to tell whether the board had picked this car out at all. A 404
           is the ordinary case (most listings are not on the board), so it
           renders nothing rather than an error. */}
-      <DealVerdict code={code} />
+      <DealVerdict code={code} fairVerdict={fair.data?.verdict} />
 
       {/* The learned estimate, deliberately *below* the statistical one and
           never in place of it. Two independent accounts of the same car, and
@@ -424,7 +451,7 @@ interface DealRow extends Pick<Deal, "deal_status" | "deal_reasons" | "cheaper_t
   components?: { cohort_stale?: boolean };
 }
 
-function DealVerdict({ code }: { code: string }) {
+function DealVerdict({ code, fairVerdict }: { code: string; fairVerdict?: Verdict }) {
   const verdict = useQuery({
     queryKey: ["deal-score", code],
     enabled: !!code,
@@ -435,8 +462,14 @@ function DealVerdict({ code }: { code: string }) {
       api.get<DealRow>(`/api/analytics/deal-scores/${code}/`, signal),
   });
 
-  if (!verdict.data) return null;
   const d = verdict.data;
+  // A car the board passed over has nothing to add to the valuation above;
+  // a card reading "not on the board" only looked like a second opinion.
+  if (!d || (d.deal_status !== "deal" && d.deal_status !== "check")) return null;
+  // The two cards ask different peers: this one only cars priced in the last
+  // month, the valuation every live listing. Said, not left to look like a
+  // contradiction.
+  const differs = d.deal_status === "deal" && (fairVerdict === "above" || fairVerdict === "inline");
   // `pricing` writes a row whatever the sign (a negative discount is a car
   // priced *above* its peers), and the board filters on the sign at query
   // time. This card used to assume every row it received was on the board, so
@@ -448,9 +481,10 @@ function DealVerdict({ code }: { code: string }) {
     <div className="card">
       <h2>تابلوی معامله‌ها</h2>
       <p>
-        {d.deal_status === "deal" ? <span className="badge ok">معامله‌ی خوب</span>
-          : d.deal_status === "check" ? <span className="badge warn">نیازمند بررسی</span>
-          : <span className="badge">در تابلو نیست</span>}
+        {d.deal_status === "deal"
+          ? <span className="badge ok">معامله‌ی خوب</span>
+          : <span className="badge warn">نیازمند بررسی</span>}
+        {differs && <span className="badge">در مقایسه با قیمت‌های تازه</span>}
       </p>
       {note && <p className="stat-sub">{note}</p>}
       {d.liquidity && (
@@ -463,6 +497,13 @@ function DealVerdict({ code }: { code: string }) {
           معامله‌ی خوب یعنی قیمتی که در ۱۴ روز اخیر ثبت شده، از بیشتر آگهی‌های هم‌گروهِ ماه
           اخیر ارزان‌تر است، کارکرد عادی دارد و در متن آگهی دلیلی برای ارزانی دیده نمی‌شود.
         </p>
+        {differs && (
+          <p>
+            ارزیابی قیمتِ بالا همه‌ی آگهی‌های فعال مشابه را می‌سنجد، از جمله قیمت‌هایی که
+            هفته‌ها پیش ثبت شده‌اند. این تابلو فقط قیمت‌های ماه اخیر را؛ در بازاری که
+            قیمت‌ها بالا می‌رود، این دو می‌توانند متفاوت باشند.
+          </p>
+        )}
       </HowWeKnow>
       <Link className="btn" to="/cars?deals=1">همه معامله‌ها</Link>
     </div>
