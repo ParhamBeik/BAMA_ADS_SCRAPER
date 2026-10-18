@@ -2455,3 +2455,38 @@ def test_an_unreachable_database_is_a_500_with_the_reason_in_the_log(client, cap
     assert response.status_code == 500
     assert response.json() == {"status": "error"}
     assert "no route to host" in caplog.text
+
+
+@pytest.mark.django_db
+def test_a_cars_price_page_is_computed_once_per_filter_set(catalog, api_client, monkeypatch):
+    from apps.core import explorer
+
+    calls = []
+    real = explorer.model_exploration
+    monkeypatch.setattr(explorer, "model_exploration",
+                        lambda *a, **kw: calls.append(kw) or real(*a, **kw))
+    url = f"/api/models/{catalog['model'].pk}/explore/"
+
+    first = api_client.get(url)
+    assert first.status_code == 200, first.content
+    assert api_client.get(url).json() == first.json()
+    api_client.get(url + "?year=1400")
+    assert len(calls) == 2
+
+    # A mileage the picker never sends is answered live, not stored.
+    for km in (1234, 1234):
+        assert api_client.get(f"{url}?mileage_min={km}").status_code == 200
+    assert len(calls) == 4
+
+
+@pytest.mark.django_db
+def test_a_cached_answer_keeps_the_time_it_was_computed(catalog, api_client):
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    first = api_client.get("/api/analytics/overview/").json()["as_of"]
+    later = timezone.now() + timedelta(minutes=3)
+    with patch("apps.core.api.timezone.now", return_value=later):
+        again = api_client.get("/api/analytics/overview/").json()["as_of"]
+    assert again == first

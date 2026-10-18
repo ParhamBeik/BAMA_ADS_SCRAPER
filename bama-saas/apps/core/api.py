@@ -89,7 +89,9 @@ def envelope(payload: dict, *, coverage: dict | Literal[False] | None = None,
     is not merely private but wrong: a model card is no more or less true
     because the crawl is behind.
     """
-    body = {**payload, "as_of": timezone.now(),
+    # A cached answer carries the moment it was computed (`cached_answer`), so
+    # a warm hit does not claim its counts were taken just now.
+    body = {**payload, "as_of": payload.get("as_of") or timezone.now(),
             "methodology_version": METHODOLOGY_VERSION, **extra}
     if coverage is not False:
         body["coverage"] = coverage if coverage is not None else _coverage()
@@ -144,9 +146,10 @@ def cached_answer(key: str, seconds: int, produce) -> tuple[dict, dict]:
     """
     hit = cache.get(key)
     if hit is None:
-        hit = {"payload": produce(), "coverage": _coverage()}
+        hit = {"payload": produce(), "coverage": _coverage(), "as_of": timezone.now()}
         cache.set(key, hit, seconds)
-    return hit["payload"], hit["coverage"]
+    # Entries written before `as_of` was stored fall back to the request time.
+    return {**hit["payload"], "as_of": hit.get("as_of")}, hit["coverage"]
 
 
 def refresh_answers(answers, seconds: int) -> int:
@@ -158,6 +161,7 @@ def refresh_answers(answers, seconds: int) -> int:
     coverage = _coverage()
     n = 0
     for key, produce in answers:
-        cache.set(key, {"payload": produce(), "coverage": coverage}, seconds)
+        cache.set(key, {"payload": produce(), "coverage": coverage,
+                        "as_of": timezone.now()}, seconds)
         n += 1
     return n
