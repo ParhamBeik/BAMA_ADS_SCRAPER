@@ -181,3 +181,12 @@ export function bothDates(value: string | null | undefined): string {
   const gregorian = date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
   return `${faDate(date)} · ${gregorian}`;
 }
+
+/** Brand, model and trim as one name, without the words the trim repeats.
+ *  Bama's trim names restate the model's gearbox and engine, so the plain join
+ *  read «کیا ریو دنده ای دنده ای» and «ام وی ام 110 دنده ای 4 سیلندر دنده ای». */
+export function carName(brand: string, model: string, trim?: string | null): string {
+  const said = new Set(model.split(/\s+/));
+  const extra = (trim ?? "").split(/\s+/).filter((w) => w && !said.has(w)).join(" ");
+  return [brand, model, extra].filter(Boolean).join(" ");
+}

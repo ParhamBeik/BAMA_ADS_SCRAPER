@@ -31,13 +31,17 @@ import { api } from "../api";
 import type { Envelope } from "../api";
 import { qs, useFilters } from "../filters";
 import { Async, Card, Fa, NumberInput, Provenance, HowWeKnow } from "../ui";
-import { fa, km, num, parseBudget, toman } from "../format";
+import { carName, fa, km, num, parseBudget, toman } from "../format";
 import { Button } from "../components/ui/button";
 
 interface Option {
   model_id: number;
   variant_id: number | null;
   year_jalali: number;
+  /** Every model year folded into this row; `year_jalali` is the newest the
+   *  budget reaches most of. */
+  year_min: number;
+  year_max: number;
   name: string;
   brand_name: string;
   brand_slug: string;
@@ -72,19 +76,30 @@ const PRESETS: [string, number][] = [
 ];
 
 const TOLERANCES = [0, 5, 10, 20];
+const PAGE = 40;
+/** `_affordable_limit` on the server; asking past it returns the same rows. */
+const MAX_LIMIT = 400;
 
 export function Budget() {
   const filters = useFilters();
   const budget = filters.getInt("budget");
   const tolerance = filters.getInt("tolerance") ?? 10;
   const [draft, setDraft] = useState(budget ? String(budget) : "");
+  // Grows by a page per "more"; a new budget or tolerance starts over.
+  const [shown, setShown] = useState({ key: "", limit: PAGE });
+  const searchKey = `${budget}-${tolerance}`;
+  const limit = shown.key === searchKey ? shown.limit : PAGE;
 
   const result = useQuery({
-    queryKey: ["affordable", budget, tolerance],
+    queryKey: ["affordable", budget, tolerance, limit],
     enabled: Boolean(budget),
+    // The shorter list stays on screen while the longer one loads — for the
+    // same search only, never a different budget's answer.
+    placeholderData: (previous: Affordable | undefined, prior) =>
+      prior?.queryKey[1] === budget && prior?.queryKey[2] === tolerance ? previous : undefined,
     queryFn: ({ signal }) =>
       api.get<Affordable>(
-        `/api/analytics/affordable/${qs({ budget, tolerance })}`, signal),
+        `/api/analytics/affordable/${qs({ budget, tolerance, limit })}`, signal),
   });
 
   const commit = (value: string) => {
@@ -186,10 +201,14 @@ export function Budget() {
                         className="budget-row"
                       >
                         <span className="budget-name">
-                          <Fa>{[o.brand_name, o.name, o.variant_name].filter(Boolean).join(" ")}</Fa>
-                          <span className="muted"> · {o.year_jalali}</span>
+                          <Fa>{carName(o.brand_name, o.name, o.variant_name)}</Fa>
+                          <span className="muted">
+                            {" · "}
+                            {o.year_min === o.year_max ? o.year_min : `${o.year_min} تا ${o.year_max}`}
+                          </span>
                         </span>
                         <span className="budget-price">
+                          {o.year_min !== o.year_max && <>{o.year_jalali}: </>}
                           میانه <bdi>{toman(o.median_price)}</bdi>
                         </span>
                         <span className="stat-sub">
@@ -200,6 +219,19 @@ export function Budget() {
                     </li>
                   ))}
                 </ul>
+
+                {data.options.length < data.cohorts_matched && limit < MAX_LIMIT && (
+                  <Button
+                    variant="outline"
+                    className="mt-3 w-full"
+                    disabled={result.isFetching}
+                    onClick={() => setShown({ key: searchKey, limit: Math.min(limit + PAGE, MAX_LIMIT) })}
+                  >
+                    {result.isFetching
+                      ? "در حال دریافت…"
+                      : `${num(data.cohorts_matched - data.options.length)} گزینه‌ی دیگر`}
+                  </Button>
+                )}
 
                 <Provenance envelope={data} />
               </>

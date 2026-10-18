@@ -13,7 +13,7 @@ import { verdictNote } from "./components/DealCard";
 import { scopeKey } from "./components/FollowButton";
 import { qs } from "./filters";
 import { mileageLabel } from "./components/FilterPanel";
-import { fa, modelYear, parseAmount, parseBudget, pct, toman, tomanRange } from "./format";
+import { carName, fa, modelYear, parseAmount, parseBudget, pct, toman, tomanRange } from "./format";
 
 it("parses Persian and Arabic-Indic budget input without dropping its digits", () => {
   expect(parseBudget("۱٬۲۰۰٬۰۰۰٬۰۰۰")).toBe(1_200_000_000);
@@ -178,4 +178,11 @@ describe("tomanRange", () => {
   it("keeps both units when they differ", () => {
     expect(tomanRange(950_000_000, 1_100_000_000)).toBe("950 میلیون – 1.1 میلیارد");
   });
+});
+
+it("names a car without the words its trim repeats", () => {
+  expect(carName("کیا", "ریو (مونتاژ) دنده ای", "دنده ای")).toBe("کیا ریو (مونتاژ) دنده ای");
+  expect(carName("ام وی ام", "110 دنده ای", "4 سیلندر دنده ای")).toBe("ام وی ام 110 دنده ای 4 سیلندر");
+  expect(carName("پژو", "206 دنده ای", "تیپ 2")).toBe("پژو 206 دنده ای تیپ 2");
+  expect(carName("پژو", "206", "")).toBe("پژو 206");
 });

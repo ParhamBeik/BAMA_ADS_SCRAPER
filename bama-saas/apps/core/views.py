@@ -1077,6 +1077,13 @@ BUDGET_CACHE_GRID = 10_000_000
 MAX_BUDGET = 500_000_000_000
 
 
+def _affordable_limit(params) -> int:
+    try:
+        return max(1, min(int(params.get("limit", 40)), 400))
+    except (TypeError, ValueError):
+        return 40
+
+
 @api_view(["GET"])
 def affordable_view(request):
     """What a given budget actually buys, grouped by cohort.
@@ -1107,7 +1114,9 @@ def affordable_view(request):
         "brand": params.get("brand") or None,
         "condition": condition,
         "mileage_max": mileage_max,
-        "limit": _leaderboard_limit(params, default=40),
+        # Past the shared leaderboard cap: the screen pages through every car
+        # the budget reaches, 40 at a time.
+        "limit": _affordable_limit(params),
     }
     key = cache_key("affordable", scope)
     snapped = scope.pop("budget")
