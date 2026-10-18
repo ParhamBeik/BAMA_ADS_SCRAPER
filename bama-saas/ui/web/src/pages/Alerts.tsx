@@ -78,7 +78,8 @@ interface Rule {
   cars: ({ kind: "brand"; brand: string } | { kind: "model"; brand: string; model: string })[];
 }
 
-interface PickedCar { kind: "model" | "brand"; id: string; label: string }
+/** `brand` is the slug a model belongs to, or the brand itself. */
+interface PickedCar { kind: "model" | "brand"; id: string; label: string; brand: string }
 const MAX_CARS = 10;
 
 const MIN_PEERS = 8;
@@ -88,9 +89,15 @@ function RuleForm({ onDone }: { onDone: () => void }) {
   const client = useQueryClient();
   const [cars, setCars] = useState<PickedCar[]>([]);
   const { list: brandList } = useBrands();
+  // A brand and one of its models do not sit side by side: the server reads
+  // that pair as "only this model" (`car_scope_q`), so "all Peugeot" beside a
+  // 206 alerted on 206s alone. The newer pick replaces the other.
   const addCar = (car: PickedCar) =>
-    setCars((now) => now.some((c) => c.kind === car.kind && c.id === car.id) || now.length >= MAX_CARS
-      ? now : [...now, car]);
+    setCars((now) => {
+      if (now.some((c) => c.kind === car.kind && c.id === car.id)) return now;
+      const kept = now.filter((c) => c.brand !== car.brand || c.kind === car.kind);
+      return kept.length >= MAX_CARS ? now : [...kept, car];
+    });
   const [form, setForm] = useState({
     name: "",
     min_discount_pct: 12,
@@ -154,11 +161,12 @@ function RuleForm({ onDone }: { onDone: () => void }) {
             placeholder="افزودن مدل…"
             onSelect={(picked) => picked && addCar({
               kind: "model", id: String(picked.id), label: `${picked.brand_name} ${picked.name_fa}`,
+              brand: picked.brand_slug,
             })}
           />
           <Select value="" onValueChange={(slug) => {
             const b = brandList.find((x) => x.slug === slug);
-            if (b) addCar({ kind: "brand", id: b.slug, label: `همه‌ی ${b.name_fa}` });
+            if (b) addCar({ kind: "brand", id: b.slug, label: `همه‌ی ${b.name_fa}`, brand: b.slug });
           }}>
             <SelectTrigger aria-label="افزودن همه‌ی مدل‌های یک برند">
               <SelectValue placeholder="یا همه‌ی مدل‌های یک برند" />

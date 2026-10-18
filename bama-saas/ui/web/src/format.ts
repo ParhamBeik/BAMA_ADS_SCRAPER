@@ -20,9 +20,22 @@ export function latinDigits(input: string): string {
     .replace(/[,٬\s]/g, "");
 }
 
+/** The way prices are said, not only typed: «۸۰۰ میلیون», «1.5 میلیارد»,
+ *  «50 هزار». Digits alone pass through. The word used to be dropped, so
+ *  «۸۰۰ میلیون» filtered for 800 tomans. */
+const MAGNITUDES: [RegExp, number][] = [[/میلیارد/, 1e9], [/میلیون/, 1e6], [/هزار/, 1e3]];
+
+export function parseAmount(input: string): number | null {
+  const text = latinDigits(input).replace(/٫/g, ".");
+  const digits = text.match(/\d+(?:\.\d+)?/);
+  if (!digits) return null;
+  const scale = MAGNITUDES.find(([word]) => word.test(text))?.[1] ?? 1;
+  return Math.round(Number(digits[0]) * scale);
+}
+
 export function parseBudget(input: string): number | null {
-  const amount = Number(latinDigits(input).replace(/[^\d]/g, ""));
-  return Number.isFinite(amount) && amount > 0 ? amount : null;
+  const amount = parseAmount(input);
+  return amount != null && amount > 0 ? amount : null;
 }
 
 export function toman(value: number | null | undefined): string {

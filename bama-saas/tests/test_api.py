@@ -631,6 +631,29 @@ def test_deal_scores_price_bounds(api_client, catalog):
 
 
 @pytest.mark.django_db
+def test_the_deal_board_applies_the_listing_filters_it_shows(api_client, catalog):
+    """Gearbox, search and the rest showed as chips on the board and were
+    ignored: 7 of 9 "automatic" deals were manual."""
+    from django.utils import timezone
+
+    auto, manual = catalog["ads"][0], catalog["ads"][1]
+    Ad.objects.filter(code__in=(auto.code, manual.code)).update(publish_at=timezone.now())
+    Ad.objects.filter(code=auto.code).update(transmission="اتوماتیک")
+    Ad.objects.filter(code=manual.code).update(transmission="دنده ای")
+    for ad in (auto, manual):
+        DealScoreCache.objects.create(
+            ad=ad, score=10.0, discount_pct=10.0, peer_median=1_200_000_000,
+            components={"deal_status": "deal", "peer_count": 11, "confidence": "low", "age_days": 3},
+        )
+
+    resp = api_client.get("/api/analytics/deal-scores/?band=all&transmission=اتوماتیک")
+    assert resp.status_code == 200, resp.content
+    assert {r["code"] for r in resp.json()["results"]} == {auto.code}
+    bad = api_client.get("/api/analytics/deal-scores/?band=all&condition=nonsense")
+    assert bad.status_code == 400
+
+
+@pytest.mark.django_db
 def test_deal_scores_filter_by_city_and_variant(api_client, catalog):
     from django.utils import timezone
 

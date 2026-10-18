@@ -136,14 +136,10 @@ export const FILTER_KEYS = [
   "body_type", "condition", "seller_type", "confidence",
 ];
 
-/** Which controls a screen wants. The board has no body-type question; the
- *  explorer has no confidence one. */
+/** Which controls a screen wants. Both lists apply every filter here; only
+ *  the deal board has a confidence question. */
 export interface FilterOptions {
-  showSpecs?: boolean;
-  /** "Listed within N days". Off on the deal board, which groups by freshness. */
-  showListed?: boolean;
   showConfidence?: boolean;
-  showSearch?: boolean;
 }
 
 const ANY = "__any__";
@@ -194,8 +190,9 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-/** A labelled min/max pair. Committed on blur, like the rest of the app —
- *  filtering per keystroke would refetch on every digit of a price. */
+/** A labelled min/max pair. Committed on blur or Enter, like the rest of the
+ *  app — filtering per keystroke would refetch on every digit of a price. A
+ *  pair typed backwards is swapped rather than silently matching nothing. */
 function RangeField({
   label, minKey, maxKey, placeholderMin, placeholderMax,
 }: {
@@ -210,6 +207,24 @@ function RangeField({
   const max = filters.get(maxKey);
   const input =
     "border-border bg-panel min-w-0 flex-1 rounded-md border px-2.5 py-1.5 text-sm";
+  const commit = (key: string, raw: string) => {
+    const next: Record<string, string | null> = { [minKey]: min ?? null, [maxKey]: max ?? null };
+    next[key] = raw || null;
+    const lo = next[minKey], hi = next[maxKey];
+    if (lo != null && hi != null && Number(lo) > Number(hi)) {
+      next[minKey] = hi;
+      next[maxKey] = lo;
+    }
+    filters.set({
+      ...next, page: null,
+      // A typed 0 km max clears body condition, like the 0 km preset: the
+      // condition control hides at 0 km and would otherwise be stuck on.
+      ...(maxKey === "mileage_max" && isZeroKm(next[maxKey]) ? { condition: null } : {}),
+    });
+  };
+  const onEnter = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") e.currentTarget.blur();
+  };
   return (
     <Field label={label}>
       <div className="flex items-center gap-2">
@@ -219,7 +234,8 @@ function RangeField({
           aria-label={`${label} از`}
           placeholder={placeholderMin}
           defaultValue={min ?? ""}
-          onBlur={(e) => filters.set({ [minKey]: e.target.value || null, page: null })}
+          onKeyDown={onEnter}
+          onBlur={(e) => commit(minKey, e.target.value)}
         />
         <span className="text-muted-foreground flex-none text-xs">تا</span>
         <NumberInput
@@ -228,12 +244,8 @@ function RangeField({
           aria-label={`${label} تا`}
           placeholder={placeholderMax}
           defaultValue={max ?? ""}
-          // A typed 0 km max clears body condition, like the 0 km preset: the
-          // condition control hides at 0 km and would otherwise be stuck on.
-          onBlur={(e) => filters.set({
-            [maxKey]: e.target.value || null, page: null,
-            ...(maxKey === "mileage_max" && isZeroKm(e.target.value) ? { condition: null } : {}),
-          })}
+          onKeyDown={onEnter}
+          onBlur={(e) => commit(maxKey, e.target.value)}
         />
       </div>
     </Field>
@@ -365,6 +377,7 @@ function CarPicker() {
   const { list: brandList } = useBrands();
   const brands = listParam(filters.get("brand"));
   const models = listParam(filters.get("model"));
+  const labels = useModelLabels(models);
   const full = brands.length + models.length >= MAX_CARS;
   const set = (nextBrands: string[], nextModels: string[]) =>
     filters.set({
@@ -393,9 +406,15 @@ function CarPicker() {
           <Choice
             label="یا همه‌ی مدل‌های یک برند"
             anyLabel="انتخاب برند"
-            onChange={(v) => { if (v && !brands.includes(v)) set([...brands, v], models); }}
+            // "All of a brand" replaces that brand's single models. Kept beside
+            // them, the models narrowed the brand back down and the pick did
+            // nothing (`car_scope_q`).
+            onChange={(v) => {
+              if (v) set([...brands.filter((b) => b !== v), v],
+                         models.filter((id) => labels.find((m) => String(m.id) === id)?.brand_slug !== v));
+            }}
             options={brandList
-              .filter((b) => !brands.includes(b.slug))
+              .filter((b) => !brands.includes(b.slug) || labels.some((m) => m.brand_slug === b.slug))
               .map((b) => ({ value: b.slug, label: `${b.name_fa} (${num(b.ad_count)} آگهی)` }))}
           />
         </>
@@ -489,12 +508,7 @@ function TrimPicker() {
   );
 }
 
-export function FilterPanel({
-  showSpecs = true,
-  showListed = true,
-  showConfidence = false,
-  showSearch = true,
-}: FilterOptions) {
+export function FilterPanel({ showConfidence = false }: FilterOptions) {
   const filters = useFilters();
   const carCount = useCarItems().length;
 
@@ -517,7 +531,7 @@ export function FilterPanel({
       <div className="flex flex-wrap items-center gap-2">
         <SlidersHorizontal className="text-muted-foreground hidden size-4 flex-none sm:block" aria-hidden />
 
-        {showSearch && <SearchBox key={filters.get("q") ?? ""} />}
+        <SearchBox key={filters.get("q") ?? ""} />
 
         <div className="-mx-1 flex min-w-0 basis-full items-center gap-2 overflow-x-auto px-1 pb-0.5 [scrollbar-width:none] sm:mx-0 sm:basis-auto sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
         <Group label="خودرو" keys={["brand", "model", "variant"]} count={carCount}>
@@ -556,7 +570,12 @@ export function FilterPanel({
           />
         </Group>
 
-        <Group label="سال و کارکرد" keys={["year_min", "year_max", "mileage_min", "mileage_max"]}>
+        <Group
+          label="سال و کارکرد"
+          keys={["year_min", "year_max", "mileage_min", "mileage_max"]}
+          count={[yearMin, filters.get("year_max")].filter(Boolean).length +
+                 (mileageLabel(filters.get("mileage_min"), mileageMax) ? 1 : 0)}
+        >
           <PresetRow>
             {YEAR_PRESETS.map(([label, from]) => {
               const on = String(from ?? "") === (yearMin ?? "");
@@ -574,48 +593,44 @@ export function FilterPanel({
           <MileageField />
         </Group>
 
-        {showListed && (
-          <Group label="تاریخ ثبت" keys={["listed_days"]}>
-            <PresetRow>
-              {LISTED_PRESETS.map(([label, days]) => {
-                const on = String(days) === (listedDays ?? "");
-                return (
-                  <Preset key={label} label={label} on={on}
-                          onClick={() => filters.set({ listed_days: on ? null : days, page: null })} />
-                );
-              })}
-            </PresetRow>
-          </Group>
-        )}
+        <Group label="تاریخ ثبت" keys={["listed_days"]}>
+          <PresetRow>
+            {LISTED_PRESETS.map(([label, days]) => {
+              const on = String(days) === (listedDays ?? "");
+              return (
+                <Preset key={label} label={label} on={on}
+                        onClick={() => filters.set({ listed_days: on ? null : days, page: null })} />
+              );
+            })}
+          </PresetRow>
+        </Group>
 
-        {showSpecs && (
-          <Group label="مشخصات" keys={["transmission", "fuel", "body_type", "condition"]}>
-            <Choice
-              label="گیربکس" anyLabel="همه"
-              value={filters.get("transmission")}
-              onChange={(v) => filters.set({ transmission: v, page: null })}
-              options={TRANSMISSIONS.map((t) => ({ value: t, label: t }))}
-            />
-            <Choice
-              label="سوخت" anyLabel="همه"
-              value={filters.get("fuel")}
-              onChange={(v) => filters.set({ fuel: v, page: null })}
-              options={FUELS.map((f) => ({ value: f, label: f }))}
-            />
-            <Choice
-              label="نوع بدنه" anyLabel="همه"
-              value={filters.get("body_type")}
-              onChange={(v) => filters.set({ body_type: v, page: null })}
-              options={BODY_TYPES.map((b) => ({ value: b, label: b }))}
-            />
-            {!isZeroKm(mileageMax) && <Choice
-              label="وضعیت بدنه" anyLabel="همه"
-              value={filters.get("condition")}
-              onChange={(v) => filters.set({ condition: v, page: null })}
-              options={[...CONDITION_BANDS]}
-            />}
-          </Group>
-        )}
+        <Group label="مشخصات" keys={["transmission", "fuel", "body_type", "condition"]}>
+          <Choice
+            label="گیربکس" anyLabel="همه"
+            value={filters.get("transmission")}
+            onChange={(v) => filters.set({ transmission: v, page: null })}
+            options={TRANSMISSIONS.map((t) => ({ value: t, label: t }))}
+          />
+          <Choice
+            label="سوخت" anyLabel="همه"
+            value={filters.get("fuel")}
+            onChange={(v) => filters.set({ fuel: v, page: null })}
+            options={FUELS.map((f) => ({ value: f, label: f }))}
+          />
+          <Choice
+            label="نوع بدنه" anyLabel="همه"
+            value={filters.get("body_type")}
+            onChange={(v) => filters.set({ body_type: v, page: null })}
+            options={BODY_TYPES.map((b) => ({ value: b, label: b }))}
+          />
+          {!isZeroKm(mileageMax) && <Choice
+            label="وضعیت بدنه" anyLabel="همه"
+            value={filters.get("condition")}
+            onChange={(v) => filters.set({ condition: v, page: null })}
+            options={[...CONDITION_BANDS]}
+          />}
+        </Group>
 
         {showConfidence && (
           <Group label="اعتبار محاسبه" keys={["confidence"]}>
@@ -635,7 +650,7 @@ export function FilterPanel({
         </div>
       </div>
 
-      <ActiveChips />
+      <ActiveChips showConfidence={showConfidence} />
     </section>
   );
 }
@@ -688,8 +703,6 @@ function chipLabel(key: string, value: string): string {
     case "year_min": return `از سال ${value}`;
     case "year_max": return `تا سال ${value}`;
     case "listed_days": return `ثبت در ${num(Number(value))} روز اخیر`;
-    case "mileage_min": return `کارکرد از ${num(Number(value))}`;
-    case "mileage_max": return `کارکرد زیر ${num(Number(value))}`;
     case "condition":
       return `بدنه: ${conditionLabel(value)}`;
     case "transmission": return `گیربکس: ${value}`;
@@ -702,15 +715,30 @@ function chipLabel(key: string, value: string): string {
   }
 }
 
+/** The mileage pair as one phrase; presets start "under" at 1 km. */
+export function mileageLabel(min?: string, max?: string): string | null {
+  const lo = min ? Number(min) : 0;
+  if (!max) return lo > 0 ? `کارکرد بالای ${num(lo)}` : null;
+  const hi = Number(max);
+  if (hi === 0) return "صفر کیلومتر";
+  return lo <= 1 ? `کارکرد زیر ${num(hi)}` : `کارکرد ${num(lo)} تا ${num(hi)}`;
+}
+
 /** Every active filter, individually removable. A single "clear all" made
  *  dropping one of five choices mean re-entering the other four. */
-function ActiveChips() {
+function ActiveChips({ showConfidence }: { showConfidence: boolean }) {
   const filters = useFilters();
   const cities = useCities();
-  const all = FILTER_KEYS.map((k) => [k, filters.get(k)] as const).filter(([, v]) => v);
+  // A chip for a filter this screen does not apply would claim a narrowing
+  // that is not happening.
+  const all = FILTER_KEYS.filter((k) => showConfidence || k !== "confidence")
+    .map((k) => [k, filters.get(k)] as const).filter(([, v]) => v);
   if (!all.length) return null;
-  // Picked cars get one chip each from `CarChips`.
-  const active = all.filter(([k]) => k !== "brand" && k !== "model");
+  // Picked cars get one chip each from `CarChips`; mileage is one chip for
+  // its pair, so 0 km is «صفر کیلومتر» and not "from 0" plus "under 0".
+  const active = all.filter(([k]) =>
+    k !== "brand" && k !== "model" && k !== "mileage_min" && k !== "mileage_max");
+  const mileage = mileageLabel(filters.get("mileage_min"), filters.get("mileage_max"));
 
   const clearAll = () => {
     const cleared: Record<string, null> = { page: null };
@@ -742,6 +770,18 @@ function ActiveChips() {
           </span>
         );
       })}
+      {mileage && (
+        <span className="chip">
+          <Fa>{mileage}</Fa>
+          <button
+            type="button"
+            aria-label={`حذف فیلتر ${mileage}`}
+            onClick={() => filters.set({ mileage_min: null, mileage_max: null, page: null })}
+          >
+            <X size={12} />
+          </button>
+        </span>
+      )}
       <Button variant="ghost" size="sm" onClick={clearAll}>پاک کردن همه</Button>
     </div>
   );

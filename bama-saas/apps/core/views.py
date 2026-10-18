@@ -718,6 +718,10 @@ def _deal_score_qs(*, now=None, by_freshness: bool = True):
 BANDS = ("top", "all", "review", "ml")
 
 
+DEAL_LISTING_FILTERS = ("transmission", "fuel", "body_type", "condition", "q",
+                        "seller_type", "listed_from")
+
+
 @api_view(["GET"])
 def deal_scores(request):
     """The board: three bands, freshest first, paginated.
@@ -826,6 +830,15 @@ def deal_scores(request):
     cars = car_scope_q(params.get("brand"), params.get("model"), prefix="ad__")
     if cars is not None:
         qs = qs.filter(cars)
+    # The listing filters the board shares a panel with. Delegated to the
+    # listings' own FilterSet so "manual", "contains X" or "painted" mean the
+    # same thing on both; the board used to show them as chips and ignore them.
+    shared = {k: params[k] for k in DEAL_LISTING_FILTERS if params.get(k)}
+    if shared:
+        listing = AdFilter(shared, queryset=Ad.objects.all())
+        if not listing.is_valid():
+            return Response(listing.errors, status=status.HTTP_400_BAD_REQUEST)
+        qs = qs.filter(ad__in=listing.qs.values("pk"))
 
     # peer_count and confidence live in the components JSON. Filtering
     # confidence by its peer-count threshold instead keeps it in SQL.

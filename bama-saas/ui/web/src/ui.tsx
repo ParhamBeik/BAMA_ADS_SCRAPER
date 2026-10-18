@@ -17,7 +17,7 @@ import { AlertTriangle, Database, ExternalLink, Heart, Info, X } from "lucide-re
 import { Link } from "react-router-dom";
 import { ApiError, api, type Envelope, type Paginated } from "./api";
 import { useAuth } from "./auth";
-import { fa, latinDigits, num, pct, since, toman } from "./format";
+import { fa, latinDigits, num, parseAmount, pct, since, toman } from "./format";
 
 /**
  * What a cohort flag means, in the language the rest of the page is in.
@@ -113,13 +113,25 @@ export function NumberInput({
     const next = latinDigits(el.value);
     if (next !== el.value) el.value = next;
   };
+  // «800 میلیون» becomes 800000000 when the field is left; a controlled parent
+  // hears it through `onChange` too, or its state would keep the words.
+  const toNumber = (el: HTMLInputElement) => {
+    if (!/[^\d.]/.test(el.value)) return false;
+    const n = parseAmount(el.value);
+    el.value = n == null ? "" : String(n);
+    return true;
+  };
   return (
     <input
       {...rest}
       type="text"
       inputMode="numeric"
       onChange={(e) => { toLatin(e.currentTarget); onChange?.(e); }}
-      onBlur={(e) => { toLatin(e.currentTarget); onBlur?.(e); }}
+      onBlur={(e) => {
+        toLatin(e.currentTarget);
+        if (toNumber(e.currentTarget)) onChange?.(e as unknown as React.ChangeEvent<HTMLInputElement>);
+        onBlur?.(e);
+      }}
     />
   );
 }

@@ -45,3 +45,12 @@ export function qs(values: Record<string, string | number | undefined | null>): 
   const s = params.toString();
   return s ? `?${s}` : "";
 }
+
+/** "Listed within N days" as the API's absolute `listed_from`. Floored to the
+ *  hour: it is part of the query key, and a millisecond-fresh timestamp would
+ *  make every render a new query. */
+export function listedFrom(days: number | null | undefined): string | null {
+  if (!days) return null;
+  const hour = Math.floor(Date.now() / 3_600_000) * 3_600_000;
+  return new Date(hour - days * 86_400_000).toISOString();
+}

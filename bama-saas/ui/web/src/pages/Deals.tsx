@@ -29,7 +29,7 @@ import { AlertTriangle, Bell } from "lucide-react";
 import { api } from "../api";
 import { useAuth, useMlEnabled } from "../auth";
 import { FilterPanel } from "@/components/FilterPanel";
-import { qs, useFilters } from "../filters";
+import { listedFrom, qs, useFilters } from "../filters";
 import { Async, BamaLink, Card, ConfidenceDots, Fa, HowWeKnow, ListingActions, NumberInput, Pager, Provenance, Table } from "../ui";
 import { fa, pct, toman } from "../format";
 import { DealCard, conditionNote, type Deal, type DealBoard } from "../components/DealCard";
@@ -319,6 +319,15 @@ export function Deals() {
     mileage_min: filters.get("mileage_min"),
     mileage_max: filters.get("mileage_max"),
     confidence: filters.get("confidence"),
+    // The same panel as the listings, so the same filters. These used to show
+    // as chips here and be ignored: 7 of 9 "automatic" deals were manual.
+    q: filters.get("q"),
+    listed_from: listedFrom(filters.getInt("listed_days")),
+    transmission: filters.get("transmission"),
+    fuel: filters.get("fuel"),
+    body_type: filters.get("body_type"),
+    condition: filters.get("condition"),
+    seller_type: filters.get("seller_type"),
   };
 
   const deals = useQuery({
@@ -351,7 +360,7 @@ export function Deals() {
       </div>
 
 
-      <FilterPanel showSpecs={false} showListed={false} showConfidence showSearch={false} />
+      <FilterPanel showConfidence />
 
       <Card action={<ViewToggle />}>
         <Async query={deals} empty="هنوز امتیازی محاسبه نشده است." shape="cards">

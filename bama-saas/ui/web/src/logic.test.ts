@@ -12,12 +12,28 @@ import { describe, expect, it } from "vitest";
 import { verdictNote } from "./components/DealCard";
 import { scopeKey } from "./components/FollowButton";
 import { qs } from "./filters";
-import { fa, modelYear, parseBudget, pct, toman, tomanRange } from "./format";
+import { mileageLabel } from "./components/FilterPanel";
+import { fa, modelYear, parseAmount, parseBudget, pct, toman, tomanRange } from "./format";
 
 it("parses Persian and Arabic-Indic budget input without dropping its digits", () => {
   expect(parseBudget("۱٬۲۰۰٬۰۰۰٬۰۰۰")).toBe(1_200_000_000);
   expect(parseBudget("١٢٠٠٠٠٠٠٠٠")).toBe(1_200_000_000);
   expect(parseBudget("abc")).toBeNull();
+});
+
+it("reads a price the way it is said", () => {
+  expect(parseAmount("۸۰۰ میلیون")).toBe(800_000_000);
+  expect(parseAmount("1٫5 میلیارد")).toBe(1_500_000_000);
+  expect(parseAmount("50 هزار")).toBe(50_000);
+  expect(parseAmount("12.5")).toBe(13);
+  expect(parseAmount("میلیون")).toBeNull();
+});
+
+it("names a mileage pair as one filter", () => {
+  expect(mileageLabel("0", "0")).toBe("صفر کیلومتر");
+  expect(mileageLabel("1", "5000")).toBe("کارکرد زیر 5,000");
+  expect(mileageLabel("100001", undefined)).toBe("کارکرد بالای 100,001");
+  expect(mileageLabel(undefined, undefined)).toBeNull();
 });
 
 /**
