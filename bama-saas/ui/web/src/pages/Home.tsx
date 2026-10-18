@@ -34,7 +34,7 @@ import { fa, num, pct } from "../format";
 import { Sparkline } from "../components/Sparkline";
 import { WindowPicker } from "../components/WindowPicker";
 import { ModelCombobox } from "../components/ModelCombobox";
-import { DealCard, type DealBoard } from "../components/DealCard";
+import { DealCard, onePerSeller, type DealBoard } from "../components/DealCard";
 import { Button } from "../components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 
@@ -42,6 +42,10 @@ const Chart = lazy(() => import("@/components/Chart").then((m) => ({ default: m.
 
 const DEFAULT_DAYS = 30;
 const SHORTLIST = 6;
+/** Fetched past the shortlist so one-per-seller still fills it. */
+const SHORTLIST_POOL = 30;
+
+
 
 interface OverviewData extends Envelope {
   active_listings: number;
@@ -557,7 +561,7 @@ function BestBuys() {
   const top = useQuery({
     queryKey: ["home-deals"],
     queryFn: ({ signal }) =>
-      api.get<DealBoard>(`/api/analytics/deal-scores/${qs({ limit: SHORTLIST })}`, signal),
+      api.get<DealBoard>(`/api/analytics/deal-scores/${qs({ limit: SHORTLIST_POOL })}`, signal),
   });
   // A quiet day can leave no verdict of "deal"; the strip then shows the
   // cheapest-against-peers cars instead of an empty box at the top of Home.
@@ -565,7 +569,7 @@ function BestBuys() {
     queryKey: ["home-deals", "all"],
     enabled: top.data?.results?.length === 0,
     queryFn: ({ signal }) =>
-      api.get<DealBoard>(`/api/analytics/deal-scores/${qs({ limit: SHORTLIST, band: "all" })}`, signal),
+      api.get<DealBoard>(`/api/analytics/deal-scores/${qs({ limit: SHORTLIST_POOL, band: "all" })}`, signal),
   });
   // Switch to the fallback as soon as top is known empty, so its loading and
   // error states render instead of top's definitive "nothing today".
@@ -574,7 +578,8 @@ function BestBuys() {
 
   return (
     <Card
-      title="بهترین خریدهای امروز"
+      // Prices here were set within two weeks, freshest first; "today" overclaimed.
+      title="بهترین خریدهای تازه"
       action={
         <Button asChild variant="ghost" size="sm">
           <Link to={usingFallback ? "/cars?deals=1&band=all" : "/cars?deals=1"}>همه معامله‌ها <ArrowLeft className="size-4" /></Link>
@@ -583,7 +588,7 @@ function BestBuys() {
     >
       <Async query={deals} shape="cards" empty="هنوز امتیازی محاسبه نشده است.">
         {(board) => {
-          const rows = board.results ?? [];
+          const rows = onePerSeller(board.results ?? [], SHORTLIST);
           if (!rows.length) {
             return <div className="state">امروز آگهی‌ای به این حد نرسیده است.</div>;
           }

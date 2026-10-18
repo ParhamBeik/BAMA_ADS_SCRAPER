@@ -463,7 +463,7 @@ export function Async<T>({
  */
 export function humanError(error: unknown): string {
   const status = error instanceof ApiError ? error.status : 0;
-  if (status === 404) return "این مورد پیدا نشد.";
+  if (status === 404) return "پیدا نشد — شاید حذف شده یا نشانی اشتباه است.";
   if (status === 400) return "درخواست نامعتبر بود.";
   if (status === 401 || status === 403) return "برای دیدن این بخش باید وارد شوید.";
   if (status === 409) return "این کار همین حالا در حال اجراست.";

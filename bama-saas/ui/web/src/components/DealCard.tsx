@@ -65,6 +65,8 @@ export interface Deal {
   year: number | null;
   mileage: number | null;
   city_name: string;
+  /** Null for a private seller. */
+  dealer_id: number | null;
   district?: string;
   body_status?: string;
   condition_band?: string | null;
@@ -200,4 +202,16 @@ export function DealCard({ deal, suspect }: { deal: Deal; suspect: boolean }) {
       </div>
     </div>
   );
+}
+
+/** At most one car per dealer. One dealer's 0 km listings took 4 of the 6
+ *  cards (twice the same L8), which is one seller's stock, not a market. */
+export function onePerSeller<T extends { dealer_id: number | null }>(rows: T[], n: number): T[] {
+  const seen = new Set<number>();
+  return rows.filter((r) => {
+    if (r.dealer_id == null) return true;
+    if (seen.has(r.dealer_id)) return false;
+    seen.add(r.dealer_id);
+    return true;
+  }).slice(0, n);
 }

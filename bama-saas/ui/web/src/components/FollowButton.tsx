@@ -97,7 +97,11 @@ export function FollowButton({ scope }: { scope: Scope }) {
   const key = scopeKey(scope);
   const existing = watchlist.data?.find((w) => w.scope_key === key);
 
-  const invalidate = () => {
+  // The answer goes into the cache at once and the refetch only confirms it.
+  // Waiting on the refetch left ~1.5 s where the button read "follow" again,
+  // and a second tap in that gap unfollowed.
+  const settle = (update: (rows: WatchlistEntry[]) => WatchlistEntry[]) => {
+    client.setQueryData<WatchlistEntry[]>(["watchlists"], (rows) => update(rows ?? []));
     client.invalidateQueries({ queryKey: ["watchlists"] });
   };
 
@@ -109,12 +113,12 @@ export function FollowButton({ scope }: { scope: Scope }) {
         variant: scope.variant ? Number(scope.variant) : null,
         year_jalali: scope.year ? Number(scope.year) : null,
       }),
-    onSuccess: invalidate,
+    onSuccess: (entry) => settle((rows) => [...rows.filter((w) => w.id !== entry.id), entry]),
   });
 
   const unfollow = useMutation({
     mutationFn: (id: number) => api.del(`/api/watchlists/${id}/`),
-    onSuccess: invalidate,
+    onSuccess: (_, id) => settle((rows) => rows.filter((w) => w.id !== id)),
   });
 
   // The whole market is not a thing to follow — every alert would match it, so
@@ -122,16 +126,18 @@ export function FollowButton({ scope }: { scope: Scope }) {
   if (key === "market") return null;
 
   const busy = follow.isPending || unfollow.isPending;
+  // Shows where the tap is going while it is on its way.
+  const on = follow.isPending || (!unfollow.isPending && Boolean(existing));
   return (
     <Button
-      variant={existing ? "secondary" : "outline"}
+      variant={on ? "secondary" : "outline"}
       size="sm"
       disabled={busy || watchlist.isLoading}
       onClick={() => (existing ? unfollow.mutate(existing.id) : follow.mutate())}
-      aria-pressed={Boolean(existing)}
+      aria-pressed={on}
     >
-      {existing ? <BellRing className="size-4" /> : <Bell className="size-4" />}
-      {existing ? "دنبال می‌کنید" : "دنبال کردن"}
+      {on ? <BellRing className="size-4" /> : <Bell className="size-4" />}
+      {on ? "دنبال می‌کنید" : "دنبال کردن"}
     </Button>
   );
 }
