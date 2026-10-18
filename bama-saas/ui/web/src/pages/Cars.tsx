@@ -21,9 +21,12 @@ export function Cars() {
         <Switch
           id={id}
           checked={dealsOnly}
-          // Page, ordering and band belong to one list and mean nothing in the other.
+          // Band and confidence exist only on the deal board, so leaving it
+          // drops them. The sort stays: the board ignores it, and the
+          // listings get it back when the switch flips off.
           onCheckedChange={(on) =>
-            filters.set({ deals: on ? "1" : null, page: null, ordering: null, band: null })}
+            filters.set(on ? { deals: "1", page: null }
+                           : { deals: null, page: null, band: null, confidence: null })}
         />
         <label htmlFor={id}>فقط معامله‌های خوب</label>
       </div>

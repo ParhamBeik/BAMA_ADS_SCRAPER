@@ -29,7 +29,8 @@ import { AlertTriangle, ArrowUpDown, Gauge, Wallet } from "lucide-react";
 import { api } from "../api";
 import type { Envelope, Paginated } from "../api";
 import { FilterPanel } from "@/components/FilterPanel";
-import { qs, useFilters } from "../filters";
+import { listedFrom, qs, useFilters } from "../filters";
+import { Button } from "../components/ui/button";
 import { Async, BamaLink, Card, FLAG_LABEL, Fa, ListingActions, Pager, PriceBar, Provenance, Sheet, Table, Thumb } from "../ui";
 import { conditionLabel, km, modelYear, num, toman } from "../format";
 import type { Distribution } from "../ui";
@@ -96,14 +97,6 @@ const COMPONENT_LABEL: Record<string, string> = {
 };
 
 
-/** "Listed within N days" as the API's absolute `listed_from`. Floored to the
- *  hour: it is part of the query key, and a millisecond-fresh timestamp would
- *  make every render a new query. */
-function listedFrom(days: number | null | undefined): string | null {
-  if (!days) return null;
-  const hour = Math.floor(Date.now() / 3_600_000) * 3_600_000;
-  return new Date(hour - days * 86_400_000).toISOString();
-}
 
 /** One-word badges for `Ad.cohort_flags`; the full sentence is the tooltip. */
 const FLAG_SHORT: Record<string, string> = {
@@ -249,7 +242,22 @@ export function Explorer() {
           empty="آگهی‌ای با این فیلترها پیدا نشد."
           shape={view === "cards" ? "cards" : "table"}
         >
-          {(data) => (
+          {(data) => !data.results.length ? (
+            // A page of nothing used to render a bare pager reading "0".
+            <div className="state">
+              <strong>آگهی‌ای با این فیلترها پیدا نشد.</strong>
+              <p className="empty-hint">
+                {page > 1
+                  ? "ممکن است این صفحه دیگر وجود نداشته باشد."
+                  : "یکی از فیلترها را بردارید یا بازه را بازتر کنید."}
+              </p>
+              {page > 1 && (
+                <Button variant="outline" size="sm" onClick={() => filters.set({ page: null })}>
+                  برگشت به صفحه‌ی اول
+                </Button>
+              )}
+            </div>
+          ) : (
             <>
               {view === "cards" ? (
                 <div className="card-grid">
