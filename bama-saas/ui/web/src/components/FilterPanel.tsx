@@ -19,7 +19,7 @@
  */
 import { useState } from "react";
 import { useBrands, useCities } from "@/catalogue";
-import { useQuery } from "@tanstack/react-query";
+import { useIsFetching, useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown, ChevronsUpDown, Search, SlidersHorizontal, X } from "lucide-react";
 import { api, type Variant } from "@/api";
 import { useFilters } from "@/filters";
@@ -378,6 +378,10 @@ function CarPicker() {
   const brands = listParam(filters.get("brand"));
   const models = listParam(filters.get("model"));
   const labels = useModelLabels(models);
+  // Until the picked models' brands are known, a brand pick cannot drop them,
+  // and a kept model narrows the brand straight back (`car_scope_q`). A shared
+  // link on a slow first load hit exactly that.
+  const labelsLoading = useIsFetching({ queryKey: ["models-by-id", models.join(",")] }) > 0;
   const full = brands.length + models.length >= MAX_CARS;
   const set = (nextBrands: string[], nextModels: string[]) =>
     filters.set({
@@ -403,7 +407,7 @@ function CarPicker() {
               }}
             />
           </Field>
-          <Choice
+          {!labelsLoading && <Choice
             label="یا همه‌ی مدل‌های یک برند"
             anyLabel="انتخاب برند"
             // "All of a brand" replaces that brand's single models. Kept beside
@@ -416,7 +420,7 @@ function CarPicker() {
             options={brandList
               .filter((b) => !brands.includes(b.slug) || labels.some((m) => m.brand_slug === b.slug))
               .map((b) => ({ value: b.slug, label: `${b.name_fa} (${num(b.ad_count)} آگهی)` }))}
-          />
+          />}
         </>
       )}
     </div>

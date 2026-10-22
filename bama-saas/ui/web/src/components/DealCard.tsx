@@ -106,6 +106,7 @@ export const DEAL_REASON: Record<string, string> = {
   beyond_spread: "بسیار ارزان‌تر از حد عادی",
   suspect_misfiled: "شاید در مدل یا سال اشتباه",
   red_flags: "نکته‌ای در متن آگهی",
+  not_new: "صفر کیلومتر ولی رنگ یا تعمیر دارد",
 };
 
 /** What the verdict stood on, in one line: the real comparison and how old the price is. */

@@ -709,6 +709,21 @@ def test_fair_price_explains_itself(catalog):
 
 
 @pytest.mark.django_db
+def test_the_ad_page_headline_is_the_cards_discount(catalog):
+    """One Tondar read 21% on its card (vs the peer median) and 19% on its own
+    page (vs a mileage-adjusted value). The page now headlines the card's gap."""
+    for i in range(20):
+        make_ad(catalog, f"peer{i:04d}", price=1_000_000_000 + i * 1_000_000,
+                mileage=40_000 + i * 1_000)
+    make_ad(catalog, "target01", price=900_000_000, mileage=150_000)
+
+    result = FP.fair_price("target01")
+    median = [c for c in result["components"] if c["name"] == "cohort_median"][0]["amount"]
+    assert result["median_gap_pct"] == round((900_000_000 - median) / median * 100, 1)
+    assert result["median_verdict"] == "below"
+
+
+@pytest.mark.django_db
 def test_fair_price_refuses_a_thin_cohort_rather_than_guessing(catalog):
     make_ad(catalog, "lonely01")
 
@@ -1156,6 +1171,18 @@ def test_an_explained_gap_goes_to_check_with_its_reason(row, reason):
 
 
 @pytest.mark.django_db
+def test_a_0km_car_with_paint_is_not_a_deal_against_new_cars(catalog):
+    """A 1405 Tara listed at 0 km, «سر شاسیها رنگ», reached the board at 14% off
+    new cars. Its paint explains the gap, so it goes to review."""
+    ad = make_ad(catalog, "x", mileage=0)
+    ad.body_status = "دو لکه رنگ"
+    ad.save(update_fields=["body_status"])
+
+    v = FP.assess_deals([*_market(), _row("x", 990_000_000)], now=NOW)["x"]
+    assert v["deal_status"] == "check" and "not_new" in v["deal_reasons"]
+
+
+@pytest.mark.django_db
 def test_stale_peers_are_not_the_yardstick():
     # Old asks are left out of the group, which leaves it too small to judge.
     peers = [{**r, "price_set_at": NOW - timedelta(days=60)} for r in _market()]
@@ -1169,7 +1196,7 @@ def test_cars_at_or_above_p25_are_not_judged():
 
 @pytest.mark.parametrize("text", [
     "خرج داره، از قیمت کم کردم", "پلاک منطقه آزاد", "موتور خراب", "ماشین تصادفی است",
-    "گیربکس تعویض شده", "موتور نیاز به تعمیر دارد",
+    "گیربکس تعویض شده", "موتور نیاز به تعمیر دارد", "نیمه فول، بدون سانروف",
 ])
 def test_red_flags_catch_what_explains_a_low_price(text):
     assert red_flags(title="", description=text, body_status="بدون رنگ")

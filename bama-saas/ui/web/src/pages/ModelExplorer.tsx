@@ -69,7 +69,9 @@ function PriceSummary({ title, summary, emphasis = false, children }: {
     <div className="price-answer">
       <div className="row between">
         <h2 className={emphasis ? "text-lg" : "text-base"}><Fa>{title}</Fa></h2>
-        <span className="muted">{num(summary.count)} آگهی</span>
+        {/* Prices the range is built from (extremes left out), so «قیمت» and
+            not «آگهی»: the Cars list counts listings and keeps the cheap ones. */}
+        <span className="muted">از {num(summary.count)} قیمت</span>
       </div>
       {r ? (
         <>
@@ -172,7 +174,7 @@ function CompareCard({ ids, params, onAdd, onRemove }: {
               </span>
               <span className="stat-sub">
                 {r && <>میانه <bdi>{toman(r.median)}</bdi> · </>}
-                {summary && <>{num(summary.count)} آگهی</>}
+                {summary && <>از {num(summary.count)} قیمت</>}
               </span>
               {ids.length > 1 && (
                 <button type="button" className="compare-remove" aria-label="حذف از مقایسه"
@@ -381,7 +383,7 @@ export function ModelExplorer() {
               <Card title={useSelected ? "قیمت انتخاب شما" : "قیمت در بازار"}>
                 {thinSelection && (
                   <span className="badge warn">
-                    انتخاب شما: {num(data.selected.count)} آگهی، کم برای بازه
+                    انتخاب شما: {num(data.selected.count)} قیمت، کم برای بازه
                   </span>
                 )}
                 <PriceSummary
@@ -393,7 +395,7 @@ export function ModelExplorer() {
 
               {/* The cars behind the range, straight under it. */}
               <Card
-                title={`آگهی‌ها (${num(data.selected.count)})`}
+                title="آگهی‌ها"
                 action={
                   <Link to={toListings} className="btn">
                     همه

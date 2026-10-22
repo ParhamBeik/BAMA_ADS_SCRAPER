@@ -43,6 +43,7 @@ from apps.common.verify import MAX_PLAUSIBLE_MILEAGE, MIN_PLAUSIBLE_PRICE
 from apps.core.locks import DEAL_SCORES_REBUILD, rebuild_lock
 from apps.core.models import Ad, DealScoreCache, MarketIndex, PriceObservation
 from apps.core.quality import (
+    CLEAN,
     COHORT_FLAGS,
     CONDITION_BANDS,
     FLAG_OUTLIER_HIGH,
@@ -649,6 +650,16 @@ def fair_price(code: str) -> dict:
         # the peers support, so this is the one field a reader can act on
         # without reading anything else on the panel.
         "verdict": price_verdict(gap_pct, spread),
+        # The same gap the deal board's badge prints: against the plain peer
+        # median, which is what "below normal for N similar ads" says. The ad
+        # page headlined `gap_pct` (mileage-adjusted) under that wording, so
+        # one Tondar read 21% on its card and 19% on its own page.
+        "median_gap_pct": round((ad.current_price - baseline.base) / baseline.base * 100, 1)
+        if baseline.base else None,
+        "median_verdict": price_verdict(
+            (ad.current_price - baseline.base) / baseline.base * 100 if baseline.base else None,
+            spread,
+        ),
         # Which comparison produced all of the above. `exact` is like-for-like;
         # anything else widened the net and the screen has to say so.
         "basis": basis,
@@ -1099,10 +1110,15 @@ def assess_deals(rows: list[dict], *, now, market=None) -> dict[str, dict]:
             }
     # Text last, and only for the few candidates.
     texts = Ad.objects.filter(code__in=out).values_list(
-        "code", "title", "description", "body_status")
-    for code, title, description, status in texts:
+        "code", "title", "description", "body_status", "mileage")
+    for code, title, description, status, mileage in texts:
         if red_flags(title=title, description=description, body_status=status):
             out[code]["deal_reasons"].append("red_flags")
+        # Priced against new cars (`peer_band` is "new" at 0 km) while the ad
+        # reports paint or panel work: 13 of 5,455 live 0 km ads on 2026-10-22,
+        # and one 1405 Tara reached the top board at 14% off for exactly that.
+        if mileage == 0 and condition_band(status) not in (None, CLEAN):
+            out[code]["deal_reasons"].append("not_new")
     for verdict in out.values():
         verdict["deal_status"] = "check" if verdict["deal_reasons"] else "deal"
     return out

@@ -29,6 +29,7 @@ from apps.core.models import (
 )
 from apps.core.research import (
     BASE_VALUE,
+    MAX_TURNOVER_WINDOW_DAYS,
     MIN_COHORT_ADS,
     MIN_DISTRIBUTION_ADS,
     MOVER_MIN_DAYS,
@@ -593,8 +594,22 @@ def test_turnover_excludes_departures_after_the_window(episode_model):
         _episode(ad, started=now - timedelta(days=90), ended=now - timedelta(days=45))
 
     assert turnover(days=30)["fastest"][0]["left_pct"] == pytest.approx(0.0)
-    # The same listings, measured over a window they do fit inside.
-    assert turnover(days=60)["fastest"][0]["left_pct"] == pytest.approx(100.0)
+
+
+@pytest.mark.django_db
+def test_turnover_does_not_count_bamas_30_day_expiry_as_an_exit(episode_model):
+    """Bama expires every listing at 30 days, so a 30-day window read 100% for
+    every model. The window stops at 21 days, clear of the expiry."""
+    model, brand = episode_model
+    now = timezone.now()
+    for i in range(20):
+        ad = _ad(model, f"expired{i}", brand=brand)
+        _episode(ad, started=now - timedelta(days=40), ended=now - timedelta(days=11))
+
+    result = turnover(days=60)
+    assert result["window_days"] == MAX_TURNOVER_WINDOW_DAYS
+    assert result["clamped"] is True
+    assert result["fastest"][0]["left_pct"] == pytest.approx(0.0)
 
 
 @pytest.mark.django_db
@@ -818,7 +833,26 @@ def test_arrivals_sums_new_but_never_sums_inventory(cohorts):
     assert result["available"] is True
     row = result["models"][0]
     assert row["new_listings"] == 15          # 3 a day for five days
-    assert row["listed_now"] == 20            # the latest level, not 100
+
+
+@pytest.mark.django_db
+def test_arrivals_on_the_market_now_is_the_cars_list_count(cohorts):
+    """Home said 1,971 for a 206 while the Cars list said 1,955: one was a
+    day-old snapshot. "On the market now" is the list's own population."""
+    brand, model, cheap = cohorts["brand"], cohorts["model"], cohorts["cheap"]
+    DailyInventorySnapshot.objects.create(
+        model=model, variant=cheap, year_jalali=1399, date=timezone.now().date(),
+        ad_count=99, new_count=3, median_price=500_000_000,
+        mean_price=500_000_000, min_price=500_000_000, max_price=500_000_000,
+    )
+    _priced(brand, model, cheap, [700_000_000] * 6)
+
+    from apps.core.pricing import scorable_rows
+    from apps.core.quality import without_high_outliers
+
+    row = arrivals(days=30)["models"][0]
+    assert row["listed_now"] == without_high_outliers(scorable_rows()).filter(model=model).count()
+    assert row["listed_now"] == 6
 
 
 @pytest.mark.django_db
@@ -1133,7 +1167,7 @@ def test_affordable_ranks_by_reach_not_by_cheapness(cohorts):
     # Fully within a 1B budget.
     _priced(brand, model, cheap, [700_000_000] * 8, year=1399)
     # Only the bottom of this one is reachable.
-    _priced(brand, model, dear, [900_000_000] * 4 + [3_000_000_000] * 20, year=1400)
+    _priced(brand, model, dear, [900_000_000] * 4 + [1_600_000_000] * 20, year=1400)
 
     result = R.affordable(1_000_000_000, tolerance_pct=0)
 
@@ -1165,7 +1199,7 @@ def test_affordable_lists_a_car_once_at_its_newest_reachable_year(cohorts):
     _priced(brand, model, cheap, [600_000_000] * 5, year=1395)
     _priced(brand, model, cheap, [800_000_000] * 5, year=1398)
     # The bottom of 1400 only: not what the budget buys.
-    _priced(brand, model, cheap, [950_000_000] * 5 + [2_000_000_000] * 20, year=1400)
+    _priced(brand, model, cheap, [950_000_000] * 5 + [1_800_000_000] * 20, year=1400)
 
     result = R.affordable(1_000_000_000, tolerance_pct=0)
 
@@ -1174,6 +1208,18 @@ def test_affordable_lists_a_car_once_at_its_newest_reachable_year(cohorts):
     assert (row["year_min"], row["year_max"]) == (1395, 1400)
     assert row["n"] == 15
     assert result["cohorts_matched"] == 1
+
+
+@pytest.mark.django_db
+def test_affordable_leaves_out_prices_under_half_the_cars_median(cohorts):
+    """A 1405 Quick S showed «cheapest 362M» beside a 1.53B median: a deposit.
+    The deal board's floor (half the cohort median) applies here too."""
+    brand, model, cheap_ = cohorts["brand"], cohorts["model"], cohorts["cheap"]
+    _priced(brand, model, cheap_, [360_000_000] + [1_400_000_000] * 10, year=1405)
+
+    [row] = R.affordable(1_500_000_000, tolerance_pct=0)["options"]
+    assert row["cheapest"] == 1_400_000_000
+    assert row["n"] == 10
 
 
 @pytest.mark.django_db

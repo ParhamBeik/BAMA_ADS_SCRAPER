@@ -158,7 +158,11 @@ INSTALLMENT_WORDS_RE = re.compile(r"اقساط|قسط|لیزینگ|وام")
 # شده" 0%, bare تصادف / ایراد / تعمیر / صافکاری / "به شرط" / تعویض پلاک / پلاک
 # ملی (all within 2% of their peers). حواله, پیش‌فروش and the like are absent
 # here because FINANCE already removes those ads.
-RED_FLAGS = r"منطقه.?آزاد|مناطق.?آزاد|پلاک.?(منطقه|موقت)|گمرک|اسقاط|اوراق|خرج.?(داره|دارد)"
+# Added 2026-10-22: "نیمه فول" (a lower trim than the variant's peers) sat
+# 11.6% under its peers against -0.9% overall, 55% more than 10% under against
+# 16% (n=11). "بدون سقف"/"بدون آپشن"/"ساده" measured as noise and stay out.
+RED_FLAGS = (r"منطقه.?آزاد|مناطق.?آزاد|پلاک.?(منطقه|موقت)|گمرک|اسقاط|اوراق"
+             r"|خرج.?(داره|دارد)|نیمه.?فول")
 _RED_FLAGS_RE = re.compile(RED_FLAGS)
 # Damage stated as a fact, after denials are removed. "روغن موتور/گیربکس
 # تعویض" is an oil change, not a new engine.
