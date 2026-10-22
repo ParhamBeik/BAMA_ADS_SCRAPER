@@ -63,6 +63,9 @@ type FairPrice = {
   asking?: number | null;
   gap_pct?: number | null;
   verdict?: Verdict;
+  /** Against the plain peer median, like the deal card's badge. */
+  median_gap_pct?: number | null;
+  median_verdict?: Verdict;
   basis?: Basis;
   confidence?: string;
   position_pct?: number | null;
@@ -355,8 +358,10 @@ export function ListingDetail() {
             <>
               {/* The one line a reader can act on, before any arithmetic. */}
               <PriceVerdict
-                verdict={fp.verdict}
-                gapPct={fp.gap_pct}
+                // The card's number, so one ad never reads two discounts. The
+                // mileage-adjusted fair value stays behind the tap below.
+                verdict={fp.median_verdict ?? fp.verdict}
+                gapPct={fp.median_gap_pct ?? fp.gap_pct}
                 basis={fp.basis}
                 peerCount={fp.peer_count}
                 confidence={fp.confidence}
@@ -403,7 +408,7 @@ export function ListingDetail() {
           way to tell whether the board had picked this car out at all. A 404
           is the ordinary case (most listings are not on the board), so it
           renders nothing rather than an error. */}
-      <DealVerdict code={code} fairVerdict={fair.data?.verdict} />
+      <DealVerdict code={code} fairVerdict={fair.data?.median_verdict ?? fair.data?.verdict} />
 
       {/* The learned estimate, deliberately *below* the statistical one and
           never in place of it. Two independent accounts of the same car, and

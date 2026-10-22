@@ -42,6 +42,7 @@ from apps.core.quality import (
     verified,
     verified_by_ad,
     without_cohort_outliers,
+    without_high_outliers,
 )
 
 # ---------------------------------------------------------------------------
@@ -924,6 +925,11 @@ TURNOVER_MIN_EPISODES = 15
 # when a month was asked for would be worse than saying there is no history yet.
 # It does not bound what a caller may ask for explicitly.
 MIN_TURNOVER_WINDOW_DAYS = 7
+# Bama expires a listing after 30 days: 18.5k of the clean episodes end at
+# exactly 29-30 days (2026-10-22). A 30-day exit window therefore counts the
+# expiry, not the market, and every model read 100%. At 21 days the models
+# spread from ~18% to ~68% and none tie at the top.
+MAX_TURNOVER_WINDOW_DAYS = 21
 
 
 def _turnover_tally(days: int, cutoff) -> tuple[dict, dict]:
@@ -965,7 +971,7 @@ def turnover_rates(*, days: int = 30) -> dict[int, dict]:
     """
     now = timezone.now()
     clean_days = max(0, (now - clean_start()).days)
-    days = min(days, clean_days // 2)
+    days = min(days, clean_days // 2, MAX_TURNOVER_WINDOW_DAYS)
     if days < MIN_TURNOVER_WINDOW_DAYS:
         return {}
     tally, _ = _turnover_tally(days, now - timedelta(days=days))
@@ -1014,7 +1020,7 @@ def turnover(*, days: int = 30, limit: int = 10) -> dict:
     # listings to watch close in it.
     clean_days = max(0, (now - clean_start()).days)
     requested_days = days
-    days = min(days, clean_days // 2)
+    days = min(days, clean_days // 2, MAX_TURNOVER_WINDOW_DAYS)
     # The floor applies only to a window we shortened. A caller asking for three
     # days is asking a narrow question and is entitled to the narrow answer;
     # what must not happen is *silently* answering a three-day question when
@@ -1083,22 +1089,12 @@ def arrivals(*, days: int = 30, limit: int = 10) -> dict:
         new_by_model[model_id] += new_count or 0
         meta.setdefault(model_id, (model_name, brand_name))
 
-    # Inventory is a level, not a total: summing ad_count over the window would
-    # count the same standing car once per day it stayed listed. Only the most
-    # recent snapshot date describes what is on the market now.
-    listed_now: dict[int, int] = defaultdict(int)
-    for model_id, ad_count in snapshots.filter(date=latest_date).values_list(
-        "model_id", "ad_count"
-    ):
-        listed_now[model_id] += ad_count
-
     ranked = [
         {
             "model_id": model_id,
             "name": meta[model_id][0],
             "brand_name": meta[model_id][1],
             "new_listings": total_new,
-            "listed_now": listed_now.get(model_id, 0),
         }
         for model_id, total_new in new_by_model.items()
         if total_new > 0
@@ -1107,7 +1103,19 @@ def arrivals(*, days: int = 30, limit: int = 10) -> dict:
         return {"available": False, "reason": "insufficient_listings",
                 "window_days": days}
     ranked.sort(key=lambda r: r["new_listings"], reverse=True)
-    return {"available": True, "window_days": days, "models": ranked[:limit]}
+    ranked = ranked[:limit]
+    # "On the market now" is the Cars list's own count, the same population
+    # the reader lands on when they tap through. It used to be the last daily
+    # snapshot: a day old and a different filter, so a 206 read 1,971 here and
+    # 1,955 in the list.
+    listed_now = dict(
+        without_high_outliers(pricing.scorable_rows())
+        .filter(model_id__in=[r["model_id"] for r in ranked])
+        .values_list("model_id").annotate(n=Count("code")).values_list("model_id", "n")
+    )
+    for row in ranked:
+        row["listed_now"] = listed_now.get(row["model_id"], 0)
+    return {"available": True, "window_days": days, "models": ranked}
 
 
 # ---------------------------------------------------------------------------
@@ -1469,52 +1477,54 @@ def affordable(
         "variant__name_fa",
     )
 
-    grouped: dict[tuple, dict] = defaultdict(
-        lambda: {"prices": [], "mileages": [], "within": 0}
-    )
+    grouped: dict[tuple, list[tuple[int, int | None]]] = defaultdict(list)
     meta: dict[tuple, tuple] = {}
     for (model_id, variant_id, year, price, mileage,
          model_name, brand_name, brand_slug, variant_name) in rows.iterator():
         key = (model_id, variant_id, year)
-        entry = grouped[key]
-        entry["prices"].append(price)
-        if mileage is not None:
-            entry["mileages"].append(mileage)
-        # Inside the budget proper, as opposed to inside the tolerance. Both are
-        # reported: "3 of these are actually at or under what you said" is a
-        # different fact from "17 are within 10% of it".
-        if price <= budget:
-            entry["within"] += 1
+        grouped[key].append((price, mileage))
         meta.setdefault(key, (model_name, brand_name, brand_slug, variant_name))
 
     # Cohort sizes for every candidate in one grouped query. Called per cohort
     # this was an N+1 — one scan of the ad table for each of the hundreds of
     # cohorts a broad budget matches — and it would have been the slowest
     # endpoint in the app by an order of magnitude.
-    candidates = [k for k, e in grouped.items() if len(e["prices"]) >= MIN_AFFORDABLE_ADS]
-    cohort_totals: dict[tuple, int] = {}
+    candidates = [k for k, e in grouped.items() if len(e) >= MIN_AFFORDABLE_ADS]
+    cohort_prices: dict[tuple, list[int]] = defaultdict(list)
     if candidates:
+        wanted = set(candidates)
         totals_qs = without_cohort_outliers(pricing.scorable_rows()).filter(
             model_id__in={k[0] for k in candidates},
             year_jalali__in={k[2] for k in candidates},
         )
-        for model_id, variant_id, year, n in (
-            totals_qs.values_list("model_id", "variant_id", "year_jalali")
-            .annotate(n=Count("code")).values_list("model_id", "variant_id",
-                                                   "year_jalali", "n")
-        ):
-            cohort_totals[(model_id, variant_id, year)] = n
+        for model_id, variant_id, year, price in totals_qs.values_list(
+            "model_id", "variant_id", "year_jalali", "current_price",
+        ).iterator():
+            if (model_id, variant_id, year) in wanted:
+                cohort_prices[(model_id, variant_id, year)].append(price)
 
     options = []
     for key in candidates:
-        entry = grouped[key]
-        prices = entry["prices"]
+        # Under half the cohort's own median is a deposit or a dropped zero,
+        # not a car: the deal board's floor (`MIN_ASK_VS_MEDIAN`). Without it
+        # a 1405 Quick S showed «cheapest 362M» beside a 1.53B median.
+        whole = cohort_prices.get(key)
+        floor = pricing.MIN_ASK_VS_MEDIAN * statistics.median(whole) if whole else 0
+        kept = [(p, m) for p, m in grouped[key] if p >= floor]
+        if len(kept) < MIN_AFFORDABLE_ADS:
+            continue
+        prices = [p for p, _ in kept]
+        mileages = [m for _, m in kept if m is not None]
+        # Inside the budget proper, as opposed to inside the tolerance. Both are
+        # reported: "3 of these are actually at or under what you said" is a
+        # different fact from "17 are within 10% of it".
+        within = sum(1 for p in prices if p <= budget)
         model_id, variant_id, year = key
         model_name, brand_name, brand_slug, variant_name = meta[key]
         # How much of this cohort the budget reaches, measured against the
         # cohort's *whole* live population rather than the slice already under
         # the ceiling — otherwise every cohort reports 100% by construction.
-        total_n = cohort_totals.get(key) or len(prices)
+        total_n = len(whole) if whole else len(prices)
         reach_pct = round(min(100.0, len(prices) / total_n * 100), 1)
         options.append({
             "model_id": model_id,
@@ -1525,13 +1535,13 @@ def affordable(
             "brand_slug": brand_slug,
             "variant_name": variant_name or "",
             "n": len(prices),
-            "within_budget": entry["within"],
+            "within_budget": within,
             "cohort_size": total_n,
             "reach_pct": reach_pct,
             "median_price": int(statistics.median(prices)),
             "cheapest": min(prices),
             "median_mileage": (
-                int(statistics.median(entry["mileages"])) if entry["mileages"] else None
+                int(statistics.median(mileages)) if mileages else None
             ),
         })
 

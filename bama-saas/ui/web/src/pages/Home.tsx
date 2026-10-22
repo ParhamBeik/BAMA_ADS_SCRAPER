@@ -768,11 +768,14 @@ export function Home() {
                 <tr key={b.brand__name_fa}>
                   <td><Fa>{b.brand__name_fa}</Fa></td>
                   <td className="num">{num(b.n)}</td>
+                  {/* Of the whole market, not of the biggest row: scaled to
+                      Peugeot, Peugeot's ~19% drew as a full bar. */}
                   <td style={{ width: "45%" }}>
                     <span
                       className="bar"
-                      style={{ width: `${(b.n / data.top_brands[0].n) * 100}%` }}
+                      style={{ width: `${(b.n / Math.max(data.active_listings, 1)) * 100}%` }}
                     />
+                    <span className="stat-sub"> {pct((b.n / Math.max(data.active_listings, 1)) * 100, 0)}</span>
                   </td>
                 </tr>
               ))}
