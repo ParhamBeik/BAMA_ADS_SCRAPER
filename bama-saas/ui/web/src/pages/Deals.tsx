@@ -180,7 +180,7 @@ function NotifierPanel() {
           <NumberField
             label="کمترین آگهی مشابه"
             value={form.min_peers}
-            hint="کمتر از 8 پذیرفته نمی‌شود"
+            hint="حداقل ۸ آگهی مشابه لازم است"
             onChange={(raw) => set({ min_peers: Number(raw) })}
           />
           <NumberField
@@ -223,8 +223,7 @@ function NotifierPanel() {
         {/* Not a validation nicety: a median built from fewer peers is not a
             reliable basis for interrupting someone. */}
         <p className="text-muted-foreground text-[11px]">
-          تعداد آگهی مشابه کمتر از 8 پذیرفته نمی‌شود — میانه‌ای که از آگهی‌های کمتر
-          ساخته شود، مبنای قابل اتکایی برای اعلان نیست.
+          با کمتر از ۸ آگهی مشابه، قیمت مرجع قابل اتکا نیست و برای اعلان کافی نمی‌دانیم.
         </p>
       </PopoverContent>
     </Popover>

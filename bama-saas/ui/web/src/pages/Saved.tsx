@@ -14,6 +14,7 @@
  * a drop had genuinely been recorded.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
 import { Trash2, TrendingDown } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
@@ -74,15 +75,43 @@ export function Saved() {
       api.get<{ results: Followed[] }>("/api/watchlists/digest/", signal),
   });
 
+  // One mis-tap used to lose a saved ad or a followed car for good. The row
+  // goes at once; for a few seconds the bar below puts it back.
+  const [undo, setUndo] = useState<{ label: string; restore: () => Promise<unknown> } | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const offer = (label: string, restore: () => Promise<unknown>) => {
+    clearTimeout(timer.current);
+    setUndo({ label, restore });
+    timer.current = setTimeout(() => setUndo(null), 7000);
+  };
+  useEffect(() => () => clearTimeout(timer.current), []);
+
   const remove = useMutation({
-    mutationFn: (code: string) => api.del(`/api/favorites/${code}/`),
-    onSuccess: () => client.invalidateQueries({ queryKey: ["favorites"] }),
+    mutationFn: (row: SavedAd) => api.del(`/api/favorites/${row.code}/`),
+    onSuccess: (_, row) => {
+      client.invalidateQueries({ queryKey: ["favorites"] });
+      offer("آگهی از ذخیره‌شده‌ها حذف شد", async () => {
+        await api.post("/api/favorites/", { code: row.code });
+        client.invalidateQueries({ queryKey: ["favorites"] });
+      });
+    },
   });
 
   const unfollow = useMutation({
-    mutationFn: (id: number) => api.del(`/api/watchlists/${id}/`),
-    onSuccess: () => {
+    mutationFn: (row: Followed) => api.del(`/api/watchlists/${row.id}/`),
+    onSuccess: (_, row) => {
       client.invalidateQueries({ queryKey: ["watchlists"] });
+      // The digest row carries the car as a /price link; follow it back from that.
+      const q = new URLSearchParams(row.analyse_path.split("?")[1] ?? "");
+      offer("دنبال کردن متوقف شد", async () => {
+        await api.post("/api/watchlists/", {
+          brand_slug: "",
+          model: q.get("model") ? Number(q.get("model")) : null,
+          variant: q.get("variant") ? Number(q.get("variant")) : null,
+          year_jalali: q.get("year") ? Number(q.get("year")) : null,
+        });
+        client.invalidateQueries({ queryKey: ["watchlists"] });
+      });
     },
   });
 
@@ -118,7 +147,7 @@ export function Saved() {
                       </td>
                       <td className="num">
                         <button
-                          onClick={() => unfollow.mutate(row.id)}
+                          onClick={() => unfollow.mutate(row)}
                           aria-label="توقف دنبال کردن"
                         >
                           <Trash2 size={13} />
@@ -159,7 +188,7 @@ export function Saved() {
                       </td>
                       <td className="num">{toman(row.ad_price ?? null)}</td>
                       <td className="num">
-                        <button onClick={() => remove.mutate(row.code)} aria-label="حذف">
+                        <button onClick={() => remove.mutate(row)} aria-label="حذف">
                           <Trash2 size={13} />
                         </button>
                       </td>
@@ -237,6 +266,17 @@ export function Saved() {
           </Async>
         </Card>
       </div>
+      {undo && (
+        <div role="status" className="undo-bar">
+          <span>{undo.label}</span>
+          <button
+            type="button"
+            onClick={() => { const u = undo; setUndo(null); void u.restore(); }}
+          >
+            بازگردانی
+          </button>
+        </div>
+      )}
     </div>
   );
 }

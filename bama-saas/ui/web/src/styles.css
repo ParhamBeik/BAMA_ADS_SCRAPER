@@ -1407,3 +1407,45 @@ main:focus { outline: none; }
   position: absolute; inset-inline-end: 6px; top: 6px; width: 32px; height: 32px;
   display: grid; place-items: center; border-radius: 8px; color: var(--muted);
 }
+
+
+/* --- final pass: touch targets, scroll hints, movers on a phone, undo ------- */
+
+/* The undo bar sits above the bottom tab bar on a phone. */
+.undo-bar {
+  position: fixed; inset-inline: 12px; bottom: 76px; z-index: 40;
+  max-width: 420px; margin-inline: auto;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 14px; border-radius: 12px;
+  background: var(--panel); color: var(--fg);
+  border: 1px solid var(--border); box-shadow: 0 6px 24px rgb(0 0 0 / 16%);
+  font-size: 14px;
+}
+.undo-bar button {
+  min-height: 44px; padding: 0 12px; border: 0; background: transparent;
+  color: var(--accent); font: inherit; font-weight: 700; cursor: pointer;
+}
+
+/* A chip's remove button stays 17px to look right and gets a 44px hit area. */
+.chip button { position: relative; }
+.chip button::after { content: ""; position: absolute; inset: -14px; }
+
+@media (pointer: coarse) {
+  a.above-stretch, .provenance a, .compare-remove, .how-we-know summary,
+  td button { min-height: 44px; min-width: 44px; display: inline-flex; align-items: center; justify-content: center; }
+  .provenance a { min-width: 0; }
+}
+
+/* Rows that scroll sideways say so: the cut-off end fades out. */
+@media (max-width: 640px) {
+  .scroll-hint, .brand-strip {
+    padding-inline: 18px; margin-inline: -18px;
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 18px, #000 calc(100% - 18px), transparent);
+    mask-image: linear-gradient(to right, transparent, #000 18px, #000 calc(100% - 18px), transparent);
+  }
+  /* Price movers: the pill repeats the sign, the sparkline and cohort count are
+     detail. Name, change and ads are what fits 309px. */
+  .movers th:nth-child(3), .movers td:nth-child(3),
+  .movers th:nth-child(4), .movers td:nth-child(4),
+  .movers th:nth-child(6), .movers td:nth-child(6) { display: none; }
+}

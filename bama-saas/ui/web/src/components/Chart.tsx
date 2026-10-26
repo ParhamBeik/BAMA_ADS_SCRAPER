@@ -145,6 +145,9 @@ export function Chart({
           // else; one chart axis in the other calendar makes the two
           // uncomparable by eye.
           formatter: xType === "time" ? (v: number) => axisDate(v) : undefined,
+          // Drop the labels that would run into their neighbour: at phone width
+          // the dates overlapped into one smear.
+          hideOverlap: true,
         },
         axisTick: { show: false },
       },

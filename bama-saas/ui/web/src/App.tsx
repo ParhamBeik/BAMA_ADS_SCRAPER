@@ -145,7 +145,7 @@ function AuthRoutes() {
           element={
             <>
               <AuthHeader to="/login" label="ورود" />
-              <main className="mx-auto max-w-[1600px] px-4 pt-20 pb-24 sm:px-6 lg:pb-16">
+              <main className="mx-auto max-w-[1280px] px-4 pt-20 pb-24 sm:px-6 lg:pb-16">
                 <Lazy><Methodology /></Lazy>
               </main>
             </>

@@ -13,7 +13,7 @@ import { onePerSeller, verdictNote } from "./components/DealCard";
 import { scopeKey } from "./components/FollowButton";
 import { qs } from "./filters";
 import { mileageLabel } from "./components/FilterPanel";
-import { carName, fa, modelYear, parseAmount, parseBudget, pct, toman, tomanRange } from "./format";
+import { carName, fa, modelYear, parseAmount, parseBudget, pct, toman, tomanRange, trimNote } from "./format";
 
 it("parses Persian and Arabic-Indic budget input without dropping its digits", () => {
   expect(parseBudget("۱٬۲۰۰٬۰۰۰٬۰۰۰")).toBe(1_200_000_000);
@@ -152,7 +152,7 @@ describe("qs", () => {
 describe("modelYear", () => {
   it("shows both calendars, the ad's own first", () => {
     expect(modelYear(1402)).toBe("1402 · 2023");
-    expect(modelYear(1402, "gregorian")).toBe("2023 · 1402");
+    expect(modelYear(1402, "gregorian")).toBe("1402 · 2023");
     expect(modelYear(null)).toBe("—");
   });
 });
@@ -195,4 +195,13 @@ it("keeps one car per dealer on a shortlist, and every private seller", () => {
   ];
   expect(onePerSeller(rows, 6).map((r) => r.code)).toEqual(["a", "c", "d", "e"]);
   expect(onePerSeller(rows, 2).map((r) => r.code)).toEqual(["a", "c"]);
+});
+
+describe("final pass", () => {
+  it("parseAmount reads grouped digits as one number", () => {
+    expect(parseAmount("1,500,000,000")).toBe(1500000000);
+  });
+  it("trimNote hides a trim the title already names", () => {
+    expect(trimNote("پژو 206 تیپ 2", "تیپ 2")).toBe("");
+  });
 });

@@ -96,7 +96,7 @@ class AdFilter(django_filters.FilterSet):
     def filter_q(self, queryset, name, value):
         if not value:
             return queryset
-        from apps.core.normalization import search_tokens
+        from apps.core.normalization import search_tokens, token_variants
 
         tokens = search_tokens(value)
         if not tokens:
@@ -104,7 +104,10 @@ class AdFilter(django_filters.FilterSet):
 
         combined_q = Q()
         for t in tokens:
-            combined_q &= Q(search_text__icontains=t)
+            word_q = Q()
+            for variant in token_variants(t):
+                word_q |= Q(search_text__icontains=variant)
+            combined_q &= word_q
 
         return queryset.filter(combined_q)
 

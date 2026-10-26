@@ -81,7 +81,7 @@ export function Thumb({ src, children }: { src?: string; children?: ReactNode })
   return (
     <div className="thumb">
       {src && !failed ? (
-        <img src={src} alt="" loading="lazy" onError={() => setFailed(true)} />
+        <img src={src} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} />
       ) : (
         <div className="thumb-fallback">بدون تصویر</div>
       )}
@@ -292,8 +292,8 @@ function MethodologyLink({ version }: { version: number }) {
   return (
     <span>
       ·{" "}
-      <Link to="/methodology" title="روش محاسبه اعداد این صفحه">
-        روش محاسبه نسخه {version}
+      <Link to="/methodology" title={`روش محاسبه اعداد این صفحه (نسخه ${version})`}>
+        روش محاسبه
       </Link>
     </span>
   );

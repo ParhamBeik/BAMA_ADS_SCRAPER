@@ -178,16 +178,16 @@ def model_search(request):
                 normalize_text,
                 search_tokens,
                 to_persian_digits,
+                token_variants,
             )
 
             tokens = search_tokens(q)
             if tokens:
                 for t in tokens:
-                    token_q = (
-                        Q(name_fa__icontains=t)
-                        | Q(brand__name_fa__icontains=t)
-                        | Q(brand__slug__icontains=t)
-                    )
+                    token_q = Q(brand__slug__icontains=t)
+                    for variant in token_variants(t):
+                        token_q |= (Q(name_fa__icontains=variant)
+                                    | Q(brand__name_fa__icontains=variant))
                     persian_t = to_persian_digits(t)
                     if persian_t != t:
                         token_q |= Q(name_fa__icontains=persian_t)
@@ -624,6 +624,7 @@ def _deal_score_row(obj, *, now=None):
         "brand_name": getattr(obj, "brand_name", None),
         "image_url": images.ad_image_paths(obj.ad)[0],
         "city_name": obj.ad.city.name_fa if obj.ad.city_id else "",
+        "variant_name": obj.ad.variant.name_fa if obj.ad.variant_id else "",
         # Bama's own dealer id, so a shortlist can hold one car per seller.
         "dealer_id": obj.ad.dealer_id,
         # The listing's own explanation for being cheap. Not a reason to hide it,
@@ -703,7 +704,9 @@ def _deal_score_qs(*, now=None, by_freshness: bool = True):
         # `ad__ml` in the same select_related: without it, rendering 50 rows
         # each reaching for its prediction is 50 extra queries — the N+1 this
         # board already pays `ad__city` to avoid.
-        verified_by_ad(DealScoreCache.objects.select_related("ad", "ad__city", "ad__ml"))
+        verified_by_ad(
+            DealScoreCache.objects.select_related("ad", "ad__city", "ad__variant", "ad__ml")
+        )
         .annotate(model_name=F("ad__model__name_fa"), brand_name=F("ad__brand__name_fa"))
     )
     # Tie-break on ad_id in both orders: hundreds of rows share a score to one
