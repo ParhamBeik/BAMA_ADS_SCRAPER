@@ -37,6 +37,8 @@ import {
 } from "@/components/ui/select";
 
 const TRANSMISSIONS = ["اتوماتیک", "دنده ای"];
+/** Bama's own colour names, most listed first. */
+const COLORS = ["سفید", "مشکی", "خاکستری", "نقره ای", "نوک مدادی", "سفید صدفی", "آبی", "تیتانیوم", "سرمه ای", "قهوه ای", "بژ", "قرمز", "طوسی", "یشمی"];
 const FUELS = ["بنزینی", "هیبریدی", "برقی", "دوگانه سوز", "پلاگین هیبرید", "بردافزا", "هیبرید ملایم", "دیزلی"];
 const BODY_TYPES = ["سدان", "کراس اور", "هاچبک", "وانت", "شاسی بلند‌", "ون", "کوپه", "کروک"];
 
@@ -132,7 +134,7 @@ export function MileageField() {
 
 export const FILTER_KEYS = [
   "brand", "model", "variant", "city", "q", "price_min", "price_max",
-  "year_min", "year_max", "listed_days", "mileage_min", "mileage_max", "transmission", "fuel",
+  "year_min", "year_max", "listed_days", "mileage_min", "mileage_max", "transmission", "fuel", "color",
   "body_type", "condition", "seller_type", "confidence",
 ];
 
@@ -452,6 +454,11 @@ function CarPicker() {
                   set(brands, [...models, String(picked.id)]);
                 }
               }}
+              onSelectMany={(picked) => {
+                const room = MAX_CARS - brands.length - models.length;
+                const fresh = picked.map((m) => String(m.id)).filter((id) => !models.includes(id));
+                set(brands, [...models, ...fresh.slice(0, Math.max(room, 0))]);
+              }}
             />
           </Field>
           {!labelsLoading && <BrandPicker
@@ -652,12 +659,18 @@ export function FilterPanel({ showConfidence = false }: FilterOptions) {
           </PresetRow>
         </Group>
 
-        <Group label="مشخصات" keys={["transmission", "fuel", "body_type", "condition"]}>
+        <Group label="مشخصات" keys={["transmission", "fuel", "color", "body_type", "condition"]}>
           <Choice
             label="گیربکس" anyLabel="همه"
             value={filters.get("transmission")}
             onChange={(v) => filters.set({ transmission: v, page: null })}
             options={TRANSMISSIONS.map((t) => ({ value: t, label: t }))}
+          />
+          <Choice
+            label="رنگ" anyLabel="همه"
+            value={filters.get("color")}
+            onChange={(v) => filters.set({ color: v, page: null })}
+            options={COLORS.map((c) => ({ value: c, label: c }))}
           />
           <Choice
             label="سوخت" anyLabel="همه"
@@ -754,6 +767,7 @@ function chipLabel(key: string, value: string): string {
       return `بدنه: ${conditionLabel(value)}`;
     case "transmission": return `گیربکس: ${value}`;
     case "fuel": return `سوخت: ${value}`;
+    case "color": return `رنگ: ${value}`;
     case "body_type": return `بدنه: ${value}`;
     case "seller_type": return value === "dealer" ? "نمایشگاه" : "فروشنده شخصی";
     case "confidence":

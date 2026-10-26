@@ -14,6 +14,7 @@ import { scopeKey } from "./components/FollowButton";
 import { qs } from "./filters";
 import { mileageLabel } from "./components/FilterPanel";
 import { carName, fa, modelYear, parseAmount, parseBudget, pct, toman, tomanRange, trimNote } from "./format";
+import { modelFamilies } from "./components/ModelCombobox";
 
 it("parses Persian and Arabic-Indic budget input without dropping its digits", () => {
   expect(parseBudget("۱٬۲۰۰٬۰۰۰٬۰۰۰")).toBe(1_200_000_000);
@@ -203,5 +204,15 @@ describe("final pass", () => {
   });
   it("trimNote hides a trim the title already names", () => {
     expect(trimNote("پژو 206 تیپ 2", "تیپ 2")).toBe("");
+  });
+});
+
+describe("modelFamilies", () => {
+  const row = (id: number, name: string, brand = "پژو") =>
+    ({ id, name_fa: name, brand_slug: brand, brand_name: brand, ad_count: 1 });
+  it("groups models by brand and first word, dropping singletons", () => {
+    const fams = modelFamilies([row(1, "207 TU5"), row(2, "207 اتوماتیک"), row(3, "405 دنده ای")] as never);
+    expect(fams).toHaveLength(1);
+    expect(fams[0].models.map((m) => m.id)).toEqual([1, 2]);
   });
 });

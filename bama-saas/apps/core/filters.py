@@ -63,6 +63,7 @@ class AdFilter(django_filters.FilterSet):
     transmission = django_filters.CharFilter(field_name="transmission")
     body_type = django_filters.CharFilter(field_name="body_type", lookup_expr="iexact")
     fuel = django_filters.CharFilter(field_name="fuel", lookup_expr="iexact")
+    color = django_filters.CharFilter(field_name="body_color", lookup_expr="iexact")
     status = django_filters.CharFilter(field_name="status")
     seller_authenticated = django_filters.BooleanFilter(field_name="seller_authenticated")
     publish_from = django_filters.DateTimeFilter(field_name="publish_at", lookup_expr="gte")
