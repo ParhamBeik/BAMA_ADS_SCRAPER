@@ -723,7 +723,7 @@ def _deal_score_qs(*, now=None, by_freshness: bool = True):
 BANDS = ("top", "all", "review", "ml")
 
 
-DEAL_LISTING_FILTERS = ("transmission", "fuel", "body_type", "condition", "q",
+DEAL_LISTING_FILTERS = ("transmission", "fuel", "color", "body_type", "condition", "q",
                         "seller_type", "listed_from")
 
 

@@ -2513,3 +2513,13 @@ def test_a_cached_answer_keeps_the_time_it_was_computed(catalog, api_client):
     with patch("apps.core.api.timezone.now", return_value=later):
         again = api_client.get("/api/analytics/overview/").json()["as_of"]
     assert again == first
+
+
+@pytest.mark.django_db
+def test_ads_list_filters_by_body_color(exposure_catalog, api_client):
+    make_ad(exposure_catalog, "color001", body_color="سفید")
+    make_ad(exposure_catalog, "color002", body_color="مشکی")
+
+    body = api_client.get("/api/ads/", {"color": "مشکی"}).json()
+
+    assert [r["code"] for r in body["results"]] == ["color002"]

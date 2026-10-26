@@ -74,10 +74,25 @@ export function normalizePersianInput(input: string): string {
   return input.replace(/[۰-۹٠-٩يك\u200c،]/g, (ch) => digits[ch] ?? ch).trim();
 }
 
+/** Catalogue entries that are one car: same brand, same first word. */
+export function modelFamilies(rows: ModelRow[]) {
+  const groups = new Map<string, { key: string; word: string; models: ModelRow[] }>();
+  for (const m of rows) {
+    const word = m.name_fa.trim().split(/\s+/)[0];
+    const key = `${m.brand_slug}/${word}`;
+    const g = groups.get(key) ?? { key, word, models: [] };
+    g.models.push(m);
+    groups.set(key, g);
+  }
+  return [...groups.values()].filter((g) => g.models.length > 1)
+    .sort((a, b) => b.models.length - a.models.length).slice(0, 3);
+}
+
 export function ModelCombobox({
   value,
   brand,
   onSelect,
+  onSelectMany,
   placeholder = "نام مدل را بنویسید…",
   className,
 }: {
@@ -87,6 +102,9 @@ export function ModelCombobox({
   brand?: string;
   /** `null` means "all models". */
   onSelect: (model: ModelRow | null) => void;
+  /** When given, models sharing a brand and first word ("207 TU5", "207 اتوماتیک")
+   *  also offer one "whole family" entry that picks them all. */
+  onSelectMany?: (models: ModelRow[]) => void;
   placeholder?: string;
   className?: string;
 }) {
@@ -105,6 +123,8 @@ export function ModelCombobox({
     queryFn: ({ signal }) =>
       api.get<ModelRow[]>(`/api/models/${qs({ q: term, brand })}`, signal),
   });
+
+  const families = onSelectMany && term ? modelFamilies(models.data ?? []) : [];
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -156,6 +176,20 @@ export function ModelCombobox({
                   همه مدل‌ها
                 </CommandItem>
               )}
+              {families.map((f) => (
+                <CommandItem
+                  key={`family-${f.key}`}
+                  value={`family-${f.key}`}
+                  onSelect={() => { onSelectMany?.(f.models); setDraft(""); setOpen(false); }}
+                >
+                  <span className="truncate">
+                    <Fa>همه‌ی {f.models[0].brand_name} {f.word} ({num(f.models.length)} مدل)</Fa>
+                  </span>
+                  <span className="text-muted-foreground ms-auto font-mono text-[11.5px]">
+                    {num(f.models.reduce((n, m) => n + m.ad_count, 0))}
+                  </span>
+                </CommandItem>
+              ))}
               {models.data?.map((model) => (
                 <CommandItem
                   key={model.id}
