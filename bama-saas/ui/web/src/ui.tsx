@@ -687,7 +687,7 @@ interface Favorite {
 }
 
 /** Save / unsave one ad. Saving is the only write the product has left. */
-export function ListingActions({ code, compact = false }: { code: string; compact?: boolean }) {
+export function ListingActions({ code, compact = false, name }: { code: string; compact?: boolean; name?: string }) {
   const client = useQueryClient();
   const { logout } = useAuth();
   const favorites = useQuery({
@@ -724,7 +724,7 @@ export function ListingActions({ code, compact = false }: { code: string; compac
         onClick={(e) => { e.stopPropagation(); e.preventDefault(); toggle.mutate(); }}
         disabled={toggle.isPending}
         aria-pressed={saved}
-        aria-label={saved ? "حذف از فهرست من" : "ذخیره در فهرست من"}
+        aria-label={`${saved ? "حذف از فهرست من" : "ذخیره در فهرست من"}${name ? ` — ${name}` : ""}`}
         title={saved ? "حذف از فهرست من" : "ذخیره در فهرست من"}
       >
         <Heart size={15} fill={saved ? "currentColor" : "none"} aria-hidden />
