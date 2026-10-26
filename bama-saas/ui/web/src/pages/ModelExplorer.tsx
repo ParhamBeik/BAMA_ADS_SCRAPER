@@ -417,7 +417,7 @@ export function ModelExplorer() {
                     {data.ads.map((ad) => (
                       <div key={ad.code} className="listing-card stretch-host">
                         <Thumb src={ad.image_url}>
-                          <ListingActions code={ad.code} compact />
+                          <ListingActions code={ad.code} compact name={ad.title} />
                         </Thumb>
                         <div className="listing-meta">
                           <strong>

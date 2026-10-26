@@ -282,7 +282,7 @@ export function Explorer() {
                         <span className="card-badges">
                           <AdWarnings ad={ad} />
                         </span>
-                        <ListingActions code={ad.code} compact />
+                        <ListingActions code={ad.code} compact name={ad.title || ad.model_name} />
                       </Thumb>
                       {/* Title, price, one facts line, one action line. It was
                           six rows, three of them for a city and two links, which
