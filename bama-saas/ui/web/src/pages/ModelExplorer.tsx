@@ -81,7 +81,7 @@ function PriceSummary({ title, summary, emphasis = false, children }: {
           <p className="stat-sub">
             میانه <bdi>{toman(r.median)}</bdi>{" · "}80% آگهی‌ها <bdi>{tomanRange(r.p10, r.p90)}</bdi>
           </p>
-          {summary.strict === false && <span className="badge">بازه‌ی ترکیبی</span>}
+          {summary.strict === false && <span className="badge" title="آگهی کافی برای گروه دقیق نبود؛ گروه گسترده‌تری سنجیده شده">گروه گسترده‌تر</span>}
           <RangeNotes distribution={{ ...r, count: summary.count, thin: summary.thin } as Distribution}>
             {summary.strict === false && (
               <p>
@@ -175,9 +175,16 @@ function CompareCard({ ids, params, onAdd, onRemove }: {
               <span className="stat-sub">
                 {r && <>میانه <bdi>{toman(r.median)}</bdi> · </>}
                 {summary && <>از {num(summary.count)} قیمت</>}
+                {/* Which question this row answered: a link can carry filters
+                    that a thin car cannot honour, and then it shows the whole
+                    market. Saying nothing made the rows look comparable. */}
+                {data && refined && (data.selected.asking_range
+                  ? " · با شرط‌های انتخاب‌شده"
+                  : " · نمونه‌ی کم؛ کل بازار")}
               </span>
               {ids.length > 1 && (
-                <button type="button" className="compare-remove" aria-label="حذف از مقایسه"
+                <button type="button" className="compare-remove"
+                        aria-label={`حذف ${data ? `${data.model.brand} ${data.model.name}` : "این خودرو"} از مقایسه`}
                         onClick={() => onRemove(id)}>
                   <X className="size-4" />
                 </button>
@@ -232,7 +239,9 @@ export function ModelExplorer() {
   const filters = useFilters();
   const model = filters.get("model");
   const mode = filters.get("mode");
-  const compare = (filters.get("compare") ?? "").split(",").filter((x) => x && x !== model);
+  // At most MAX_COMPARE cars in all: a shared link could carry any number.
+  const compare = [...new Set((filters.get("compare") ?? "").split(",").filter((x) => x && x !== model))]
+    .slice(0, MAX_COMPARE - 1);
   const [comparing, setComparing] = useState(false);
   const days = filters.getInt("days") ?? DEFAULT_DAYS;
   const params = {

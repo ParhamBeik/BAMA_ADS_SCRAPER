@@ -63,6 +63,28 @@ def search_tokens(text: str | None) -> list[str]:
     return [token for token in norm.split(" ") if token]
 
 
+# What buyers type for a car the catalogue spells another way: Latin names, and
+# «پرشیا» (the 405 sedan, which Bama files under 405). Each word is searched as
+# itself *or* as any of these, so «Corolla» and «پرشیا» find cars. Lower-case keys.
+SEARCH_ALIASES: dict[str, list[str]] = {
+    "پرشیا": ["405"], "persia": ["405"],
+    "corolla": ["کرولا"], "camry": ["کمری"], "prius": ["پریوس"], "yaris": ["یاریس"],
+    "pride": ["پراید"], "tiba": ["تیبا"], "saina": ["ساینا"], "quick": ["کوییک", "کوئیک"],
+    "dena": ["دنا"], "tara": ["تارا"], "shahin": ["شاهین"], "samand": ["سمند"],
+    "tondar": ["تندر"], "peugeot": ["پژو"], "renault": ["رنو"], "toyota": ["تویوتا"],
+    "kia": ["کیا"], "hyundai": ["هیوندای"], "mazda": ["مزدا"], "nissan": ["نیسان"],
+    "bmw": ["ب ام و"], "mercedes": ["بنز"], "benz": ["بنز"], "audi": ["آئودی", "اودی"],
+    "haval": ["هاوال"], "chery": ["چری"], "jac": ["جک"], "lifan": ["لیفان"],
+    "geely": ["جیلی"], "changan": ["چانگان"], "byd": ["بی وای دی"], "mvm": ["ام وی ام"],
+    "volkswagen": ["فولکس"], "honda": ["هوندا"], "suzuki": ["سوزوکی"],
+}
+
+
+def token_variants(token: str) -> list[str]:
+    """The word as typed, plus what the catalogue may call it."""
+    return [token, *SEARCH_ALIASES.get(token.lower(), [])]
+
+
 # Assembler / Marque aliases in Iran
 ASSEMBLER_BRAND_SLUGS: dict[str, list[str]] = {
     "مدیران": ["ام-وی-ام", "فونیکس", "چری", "اکستریم", "لوکانو"],

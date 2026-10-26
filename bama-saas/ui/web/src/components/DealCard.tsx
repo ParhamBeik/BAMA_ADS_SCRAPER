@@ -14,7 +14,7 @@ import { Link } from "react-router-dom";
 import { AlertTriangle, BadgeCheck } from "lucide-react";
 import type { Envelope } from "@/api";
 import { Fa, Thumb } from "@/ui";
-import { fa, km, modelYear, pct, toman } from "@/format";
+import { fa, km, modelYear, pct, toman, trimNote } from "@/format";
 
 /**
  * The thresholds the deal board is standing on, so a screen can state them
@@ -65,6 +65,7 @@ export interface Deal {
   year: number | null;
   mileage: number | null;
   city_name: string;
+  variant_name?: string;
   /** Null for a private seller. */
   dealer_id: number | null;
   district?: string;
@@ -181,6 +182,9 @@ export function DealCard({ deal, suspect }: { deal: Deal; suspect: boolean }) {
             <Fa>{deal.title || deal.code}</Fa>
           </Link>
         </strong>
+        {trimNote(deal.title, deal.variant_name) && (
+          <span className="stat-sub"><Fa>{trimNote(deal.title, deal.variant_name)}</Fa></span>
+        )}
         <div className="row">
           <span className="deal-price">{toman(deal.price)}</span>
           <span>{km(deal.mileage)}</span>

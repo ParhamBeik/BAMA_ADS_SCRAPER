@@ -32,7 +32,7 @@ import { FilterPanel } from "@/components/FilterPanel";
 import { listedFrom, qs, useFilters } from "../filters";
 import { Button } from "../components/ui/button";
 import { Async, BamaLink, Card, FLAG_LABEL, Fa, ListingActions, Pager, PriceBar, Provenance, Sheet, Table, Thumb } from "../ui";
-import { conditionLabel, km, modelYear, num, toman } from "../format";
+import { conditionLabel, km, modelYear, num, toman, trimNote } from "../format";
 import type { Distribution } from "../ui";
 import { ViewToggle, useListView } from "../components/ViewToggle";
 import { conditionNote } from "../components/DealCard";
@@ -60,6 +60,7 @@ interface AdRow {
   model_id: number | null;
   year: number | null;
   year_jalali?: number | null;
+  variant_name?: string;
   year_calendar?: string;
   mileage: number | null;
   current_price: number | null;
@@ -296,6 +297,9 @@ export function Explorer() {
                             <Fa>{ad.title}</Fa>
                           </button>
                         </strong>
+                        {trimNote(ad.title, ad.variant_name) && (
+                          <span className="stat-sub"><Fa>{trimNote(ad.title, ad.variant_name)}</Fa></span>
+                        )}
                         <span className="deal-price">{toman(ad.current_price)}</span>
                         <div className="row card-facts">
                           <span>{modelYear(ad.year_jalali, ad.year_calendar)}</span>
@@ -337,7 +341,7 @@ export function Explorer() {
                       <td className="num">
                         {ad.mileage == null ? "—" : (
                           <span className={ad.mileage_implausible ? "warn" : undefined}>
-                            {num(ad.mileage)} km
+                            {km(ad.mileage)}
                             {ad.mileage_implausible && "؟"}
                           </span>
                         )}

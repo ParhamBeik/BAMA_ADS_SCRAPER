@@ -26,7 +26,7 @@ export function latinDigits(input: string): string {
 const MAGNITUDES: [RegExp, number][] = [[/میلیارد/, 1e9], [/میلیون/, 1e6], [/هزار/, 1e3]];
 
 export function parseAmount(input: string): number | null {
-  const text = latinDigits(input).replace(/٫/g, ".");
+  const text = latinDigits(input).replace(/٫/g, ".").replace(/(\d)[,٬](?=\d{3})/g, "$1");
   const digits = text.match(/\d+(?:\.\d+)?/);
   if (!digits) return null;
   const scale = MAGNITUDES.find(([word]) => word.test(text))?.[1] ?? 1;
@@ -169,8 +169,10 @@ const JALALI_GREGORIAN_OFFSET = 621;
  */
 export function modelYear(jalali: number | null | undefined, calendar?: string | null): string {
   if (jalali == null) return "—";
-  const both = [String(jalali), String(jalali + JALALI_GREGORIAN_OFFSET)];
-  return (calendar === "gregorian" ? both.reverse() : both).join(" · ");
+  // Jalali first on every card. It used to follow the ad's own calendar, so
+  // neighbouring cards read «1402 · 2023» and «2025 · 1404».
+  void calendar;
+  return `${jalali} · ${jalali + JALALI_GREGORIAN_OFFSET}`;
 }
 
 /** A date in both calendars: "1405/7/12 · 4 Oct 2026". */
@@ -180,6 +182,12 @@ export function bothDates(value: string | null | undefined): string {
   if (Number.isNaN(date.getTime())) return String(value);
   const gregorian = date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
   return `${faDate(date)} · ${gregorian}`;
+}
+
+/** The trim, when the card title does not already say it. */
+export function trimNote(title: string | null | undefined, trim: string | null | undefined): string {
+  const t = (trim ?? "").trim();
+  return t && !(title ?? "").includes(t) ? t : "";
 }
 
 /** Brand, model and trim as one name, without the words the trim repeats.

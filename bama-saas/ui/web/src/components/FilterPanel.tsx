@@ -193,6 +193,9 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 /** A labelled min/max pair. Committed on blur or Enter, like the rest of the
  *  app — filtering per keystroke would refetch on every digit of a price. A
  *  pair typed backwards is swapped rather than silently matching nothing. */
+/** 1500000000 → "1,500,000,000": a ten-digit number is unreadable without commas. */
+const grouped = (v?: string) => (v && /^\d+$/.test(v) ? Number(v).toLocaleString("en-US") : (v ?? ""));
+
 function RangeField({
   label, minKey, maxKey, placeholderMin, placeholderMax,
 }: {
@@ -233,7 +236,7 @@ function RangeField({
           className={input}
           aria-label={`${label} از`}
           placeholder={placeholderMin}
-          defaultValue={min ?? ""}
+          defaultValue={grouped(min)}
           onKeyDown={onEnter}
           onBlur={(e) => commit(minKey, e.target.value)}
         />
@@ -243,7 +246,7 @@ function RangeField({
           className={input}
           aria-label={`${label} تا`}
           placeholder={placeholderMax}
-          defaultValue={max ?? ""}
+          defaultValue={grouped(max)}
           onKeyDown={onEnter}
           onBlur={(e) => commit(maxKey, e.target.value)}
         />
@@ -361,6 +364,50 @@ function CityPicker() {
   );
 }
 
+/** 147 brands: a plain select cannot be searched, so this is the city picker's twin. */
+function BrandPicker({
+  options, onPick,
+}: {
+  options: { value: string; label: string; count: number }[];
+  onPick: (slug: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [term, setTerm] = useState("");
+  const needle = normalizePersianInput(term);
+  const shown = options.filter((o) => !needle || o.label.includes(needle));
+  return (
+    <Field label="یا همه‌ی مدل‌های یک برند">
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <Button variant="outline" role="combobox" aria-expanded={open} className="w-full justify-between font-normal">
+            <span className="text-muted-foreground">انتخاب برند</span>
+            <ChevronsUpDown className="size-4 flex-none opacity-50" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="start" collisionPadding={8} className="w-[min(18rem,90vw)] p-0">
+          <Command shouldFilter={false}>
+            <CommandInput placeholder="جست‌وجوی برند…" value={term} onValueChange={setTerm} />
+            <CommandList>
+              <CommandEmpty>برندی پیدا نشد</CommandEmpty>
+              <CommandGroup>
+                {shown.map((o) => (
+                  <CommandItem
+                    key={o.value} value={o.value}
+                    onSelect={() => { onPick(o.value); setTerm(""); setOpen(false); }}
+                  >
+                    <span className="truncate"><Fa>{o.label}</Fa></span>
+                    <span className="text-muted-foreground ms-auto font-mono text-[11.5px]">{num(o.count)}</span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
+    </Field>
+  );
+}
+
 /** Comma-separated URL list, e.g. `model=12,40`. */
 export const listParam = (raw?: string) => (raw ? raw.split(",").filter(Boolean) : []);
 const MAX_CARS = 10;
@@ -407,19 +454,15 @@ function CarPicker() {
               }}
             />
           </Field>
-          {!labelsLoading && <Choice
-            label="یا همه‌ی مدل‌های یک برند"
-            anyLabel="انتخاب برند"
+          {!labelsLoading && <BrandPicker
             // "All of a brand" replaces that brand's single models. Kept beside
             // them, the models narrowed the brand back down and the pick did
             // nothing (`car_scope_q`).
-            onChange={(v) => {
-              if (v) set([...brands.filter((b) => b !== v), v],
-                         models.filter((id) => labels.find((m) => String(m.id) === id)?.brand_slug !== v));
-            }}
+            onPick={(v) => set([...brands.filter((b) => b !== v), v],
+                               models.filter((id) => labels.find((m) => String(m.id) === id)?.brand_slug !== v))}
             options={brandList
               .filter((b) => !brands.includes(b.slug) || labels.some((m) => m.brand_slug === b.slug))
-              .map((b) => ({ value: b.slug, label: `${b.name_fa} (${num(b.ad_count)} آگهی)` }))}
+              .map((b) => ({ value: b.slug, label: b.name_fa, count: b.ad_count }))}
           />}
         </>
       )}
@@ -537,7 +580,7 @@ export function FilterPanel({ showConfidence = false }: FilterOptions) {
 
         <SearchBox key={filters.get("q") ?? ""} />
 
-        <div className="-mx-1 flex min-w-0 basis-full items-center gap-2 overflow-x-auto px-1 pb-0.5 [scrollbar-width:none] sm:mx-0 sm:basis-auto sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
+        <div className="scroll-hint flex min-w-0 basis-full items-center gap-2 overflow-x-auto pb-0.5 [scrollbar-width:none] sm:mx-0 sm:basis-auto sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
         <Group label="خودرو" keys={["brand", "model", "variant"]} count={carCount}>
           <CarPicker />
           <TrimPicker />
@@ -637,7 +680,7 @@ export function FilterPanel({ showConfidence = false }: FilterOptions) {
         </Group>
 
         {showConfidence && (
-          <Group label="اعتبار محاسبه" keys={["confidence"]}>
+          <Group label="میزان اطمینان قیمت" keys={["confidence"]}>
             <Choice
               label="بر پایه تعداد آگهی‌های مشابه"
               anyLabel="هر اعتباری"

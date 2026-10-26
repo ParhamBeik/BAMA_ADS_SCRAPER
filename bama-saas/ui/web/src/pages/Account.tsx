@@ -160,7 +160,7 @@ export function Account() {
         <p className="stat-sub" dir="rtl">
           وارد شده با <span dir="ltr" className="font-mono">{user?.email}</span>
         </p>
-        <HowWeKnow><p>
+        <HowWeKnow label="این دکمه چه می‌کند؟"><p>
           خروج از همه دستگاه‌ها نشست‌های دیگر را می‌بندد. این دستگاه هم خارج
           می‌شود و باید دوباره وارد شوید.
         </p></HowWeKnow>

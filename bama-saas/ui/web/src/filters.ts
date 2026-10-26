@@ -19,7 +19,9 @@ export function useFilters() {
         if (value === null || value === undefined || value === "") merged.delete(key);
         else merged.set(key, String(value));
       }
-      setParams(merged, { replace: true });
+      // Back undoes a filter change; typing and paging only refine the same view.
+      const quiet = Object.keys(next).every((k) => k === "page" || k === "q");
+      setParams(merged, { replace: quiet });
     },
     [params, setParams],
   );

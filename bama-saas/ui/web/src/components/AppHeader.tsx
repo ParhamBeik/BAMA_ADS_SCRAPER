@@ -140,7 +140,7 @@ function Brand() {
   return (
     <span className="text-accent flex flex-none items-center gap-2 font-extrabold tracking-tight">
       <BrandMark size={22} />
-      <span className="hidden text-[15px] md:inline">بازار خودرو باما</span>
+      <span className="text-[15px]">بازار خودرو باما</span>
     </span>
   );
 }
@@ -151,7 +151,7 @@ function HeaderShell({ children }: { children: React.ReactNode }) {
     <header className="sticky top-0 z-30 px-3 pt-3 pb-1">
       <div
         className={
-          "border-border bg-panel/80 mx-auto flex h-14 max-w-[1600px] items-center " +
+          "border-border bg-panel/80 mx-auto flex h-14 max-w-[1280px] items-center " +
           "gap-2 rounded-2xl border px-3 shadow-sm backdrop-blur-md sm:px-4"
         }
       >
