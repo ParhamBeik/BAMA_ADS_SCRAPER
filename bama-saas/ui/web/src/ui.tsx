@@ -136,10 +136,13 @@ export function NumberInput({
   );
 }
 
-/** Persian source text inside English chrome. */
+/** Scraped text, isolated from its neighbours. Any Persian letter makes it RTL:
+ *  `dir="auto"` reads only the first strong letter, so «207 TU5 دنده ای» came out
+ *  left-to-right and in a different word order from «206 دنده ای» beside it. */
 export function Fa({ children }: { children: ReactNode }) {
+  const text = [children].flat().filter((c) => typeof c === "string" || typeof c === "number").join(" ");
   return (
-    <span className="fa" dir="auto">
+    <span className="fa" dir={/[\u0600-\u06FF]/.test(text) ? "rtl" : "auto"}>
       {children}
     </span>
   );
@@ -425,7 +428,7 @@ export function Async<T>({
     if (shape === "cards") {
       return (
         <div className="card-grid" aria-busy="true">
-          {Array.from({ length: 3 }, (_, i) => (
+          {Array.from({ length: 4 }, (_, i) => (
             <div key={i} className="skeleton" style={{ height: 210 }} />
           ))}
         </div>

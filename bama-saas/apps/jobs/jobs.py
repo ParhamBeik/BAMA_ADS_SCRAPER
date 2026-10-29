@@ -525,9 +525,13 @@ def warm_pulse() -> dict:
     Runs after ``market_index``: movers, turnover, arrivals and the market read
     are all arithmetic over what the warm tick just wrote.
     """
-    from apps.core import pulse
+    from apps.core import pulse, views
     from apps.core.api import refresh_answers
 
+    # The pickers' lists too: a cold miss on brands took 5.6 s (2026-10-29).
+    cache.set("catalog:brands", views.brand_rows(), views.CATALOG_CACHE_SECONDS)
+    cache.set("catalog:cities", views.city_rows(), views.CATALOG_CACHE_SECONDS)
+    cache.set(views.models_cache_key(), views.browse_models(), views.CATALOG_CACHE_SECONDS)
     return {"answers": refresh_answers(pulse.default_answers(), pulse.PULSE_CACHE_SECONDS)}
 
 

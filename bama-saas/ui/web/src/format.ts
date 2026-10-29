@@ -175,13 +175,15 @@ export function modelYear(jalali: number | null | undefined, calendar?: string |
   return `${jalali} · ${jalali + JALALI_GREGORIAN_OFFSET}`;
 }
 
-/** A date in both calendars: "1405/7/12 · 4 Oct 2026". */
-export function bothDates(value: string | null | undefined): string {
+/** A Jalali date and how long ago it was: "1405/8/7 · 3 روز پیش". The English
+ *  month that sat here broke the line mid-date in RTL and helped no reader. */
+export function bothDates(value: string | null | undefined, now: Date = new Date()): string {
   if (!value) return "—";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
-  const gregorian = date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
-  return `${faDate(date)} · ${gregorian}`;
+  const days = Math.floor((now.getTime() - date.getTime()) / 86_400_000);
+  const ago = days <= 0 ? "امروز" : days === 1 ? "دیروز" : `${num(days)} روز پیش`;
+  return `${faDate(date)} · ${ago}`;
 }
 
 /** The trim, when the card title does not already say it. */

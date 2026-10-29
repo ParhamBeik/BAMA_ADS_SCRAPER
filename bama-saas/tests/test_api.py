@@ -2523,3 +2523,31 @@ def test_ads_list_filters_by_body_color(exposure_catalog, api_client):
     body = api_client.get("/api/ads/", {"color": "مشکی"}).json()
 
     assert [r["code"] for r in body["results"]] == ["color002"]
+
+
+@pytest.mark.django_db
+def test_list_rows_do_not_load_the_scraped_record(exposure_catalog, api_client):
+    from apps.core.views import _deal_score_qs
+
+    for i in range(3):
+        make_ad(exposure_catalog, f"lean000{i}")
+    with CaptureQueriesContext(connection) as queries:
+        assert api_client.get("/api/ads/").status_code == 200
+    assert not any("raw_payload" in q["sql"] for q in queries)
+    assert "raw_payload" not in str(_deal_score_qs().query)
+
+
+@pytest.mark.django_db
+def test_warm_tick_prebuilds_the_picker_lists(exposure_catalog, api_client):
+    """A cold brands miss took 5.6 s on the VPS; the warm tick fills it first."""
+    from apps.jobs import jobs
+
+    make_ad(exposure_catalog, "warm0001")
+    jobs.warm_pulse()
+    with patch("apps.core.views.brand_rows") as brands, \
+         patch("apps.core.views.city_rows") as cities, \
+         patch("apps.core.views.browse_models") as models:
+        assert api_client.get("/api/brands/").status_code == 200
+        assert api_client.get("/api/cities/").status_code == 200
+        assert api_client.get("/api/models/").status_code == 200
+    assert brands.call_count == cities.call_count == models.call_count == 0

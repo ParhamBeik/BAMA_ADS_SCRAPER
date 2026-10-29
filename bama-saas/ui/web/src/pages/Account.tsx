@@ -107,6 +107,19 @@ export function Account() {
 
   return (
     <div className="grid cols-2">
+      <Card title="نشست‌ها">
+        <p className="stat-sub" dir="rtl">
+          وارد شده با <span dir="ltr" className="font-mono">{user?.email}</span>
+        </p>
+        <HowWeKnow label="این دکمه چه می‌کند؟"><p>
+          خروج از همه دستگاه‌ها نشست‌های دیگر را می‌بندد. این دستگاه هم خارج
+          می‌شود و باید دوباره وارد شوید.
+        </p></HowWeKnow>
+        <Button variant="outline" onClick={() => setConfirmOpen(true)}>
+          خروج از همه دستگاه‌ها
+        </Button>
+      </Card>
+
       <Card title="گذرواژه">
         <form className="auth-form" onSubmit={onSubmit} noValidate>
           <FormError message={error} />
@@ -154,19 +167,6 @@ export function Account() {
             {submitting ? "در حال ذخیره…" : "تغییر گذرواژه"}
           </Button>
         </form>
-      </Card>
-
-      <Card title="نشست‌ها">
-        <p className="stat-sub" dir="rtl">
-          وارد شده با <span dir="ltr" className="font-mono">{user?.email}</span>
-        </p>
-        <HowWeKnow label="این دکمه چه می‌کند؟"><p>
-          خروج از همه دستگاه‌ها نشست‌های دیگر را می‌بندد. این دستگاه هم خارج
-          می‌شود و باید دوباره وارد شوید.
-        </p></HowWeKnow>
-        <Button variant="outline" onClick={() => setConfirmOpen(true)}>
-          خروج از همه دستگاه‌ها
-        </Button>
       </Card>
 
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>

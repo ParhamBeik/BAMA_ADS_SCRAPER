@@ -376,6 +376,17 @@ export function Alerts() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [unread]);
 
+  // Same key as `Rules`, so this is the one request both read.
+  const rules = useQuery({
+    queryKey: ["alert-rules"],
+    queryFn: ({ signal }) => api.get<Paginated<Rule>>("/api/alert-rules/", signal),
+  });
+  // No rule and nothing received: the empty inbox said only "make a rule
+  // below", so the rule maker comes first and stands alone.
+  if (rules.data?.results.length === 0 && feed.data?.results.length === 0) {
+    return <div className="stack"><Rules /></div>;
+  }
+
   return (
     <div className="stack">
       <Card title="آگهی‌های رسیده">

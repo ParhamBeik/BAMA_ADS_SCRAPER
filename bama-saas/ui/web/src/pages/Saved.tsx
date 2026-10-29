@@ -164,6 +164,7 @@ export function Saved() {
                   در «قیمت» یا صفحه‌ی هر آگهی روی «دنبال کردن» بزنید تا روند قیمت همان
                   خودرو اینجا دیده شود.
                 </p>
+                <Link to="/price" className="empty-action">رفتن به «قیمت»</Link>
               </div>
             )
           }
@@ -202,13 +203,16 @@ export function Saved() {
                     در «خودروها» روی «ذخیره» بزنید تا تغییر
                     قیمت آن آگهی اینجا دنبال شود.
                   </p>
+                  <Link to="/cars" className="empty-action">رفتن به «خودروها»</Link>
                 </div>
               )
             }
           </Async>
         </Card>
 
-        <Card title="کاهش قیمت‌ها">
+        {/* Nothing saved means nothing can get cheaper: a second empty box said
+            the same thing twice. */}
+        {!!saved.data?.results.length && <Card title="کاهش قیمت‌ها">
           <Async query={saved} empty="کاهش قیمتی ثبت نشده است." shape="table">
             {(data) => {
               const drops = data.results
@@ -264,7 +268,7 @@ export function Saved() {
               );
             }}
           </Async>
-        </Card>
+        </Card>}
       </div>
       {undo && (
         <div role="status" className="undo-bar">
