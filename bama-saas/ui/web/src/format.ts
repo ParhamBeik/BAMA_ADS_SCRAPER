@@ -99,6 +99,15 @@ export function num(value: number | null | undefined): string {
  * An invalid date renders as the original value rather than "Invalid Date",
  * matching what the call sites did by guarding on a truthy input.
  */
+/** "1405/8/7، 16:35": date and minute, Persian comma, no seconds. */
+export function faDateTime(value: string | number | Date | null | undefined): string {
+  if (value == null || value === "") return "—";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  const time = date.toLocaleTimeString("fa-IR-u-nu-latn", { hour: "2-digit", minute: "2-digit" });
+  return `${faDate(date)}، ${time}`;
+}
+
 export function faDate(value: string | number | Date | null | undefined): string {
   if (!value) return "—";
   const date = value instanceof Date ? value : new Date(value);

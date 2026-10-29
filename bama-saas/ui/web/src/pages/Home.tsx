@@ -612,7 +612,7 @@ function BestBuys() {
           const ceiling = board.window?.ceiling_pct ?? 25;
           return (
             <>
-              <div className="card-grid card-strip">
+              <div className="card-grid card-strip strip-fit">
                 {rows.map((deal) => (
                   <DealCard
                     key={deal.code}

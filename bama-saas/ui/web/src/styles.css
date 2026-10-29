@@ -340,6 +340,7 @@ select, input { max-width: 100%; }
 }
 
 .stat { font-family: var(--font-mono); font-size: 25px; font-weight: 600; letter-spacing: -0.01em; }
+.stat-words { font-family: var(--font-sans); font-size: 21px; letter-spacing: 0; }
 .stat-sub { color: var(--muted); font-size: 12px; }
 .price-answer { display: grid; gap: 6px; }
 .price-answer h2 { margin: 0; }
@@ -1299,10 +1300,10 @@ main:focus { outline: none; }
   .card-grid .card-badges .badge { font-size: 10px; }
   /* Tab rows scroll inside the card; clipping them hid the overflow on Home/Deals. */
   .card:not(:has([data-slot="tabs-list"])) { overflow-x: clip; }
-  [data-slot="tabs-list"] {
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: thin;
-  }
+  /* No scrollbar-width here: `thin` beat the list's own `none` and drew the
+     1px-overflow vertical scrollbar that components/ui/tabs.tsx warns about —
+     a grey bar on the left end of every tab row on phones (RTL). */
+  [data-slot="tabs-list"] { -webkit-overflow-scrolling: touch; }
 }
 
 /* --- price verdict --------------------------------------------------------
@@ -1384,6 +1385,11 @@ main:focus { outline: none; }
   scroll-snap-type: x mandatory; padding-bottom: 4px;
 }
 .card-strip > * { scroll-snap-align: start; }
+/* Home's shortlist is six cars at most: on a wide screen they all fit, and
+   the strip cut the sixth in half for no reason. */
+@media (min-width: 1024px) {
+  .card-grid.card-strip.strip-fit { grid-auto-columns: minmax(0, 1fr); overflow-x: visible; }
+}
 
 /* Budget results: one tappable row per car (was a 7-column table). */
 .budget-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
