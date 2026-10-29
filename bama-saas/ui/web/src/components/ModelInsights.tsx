@@ -81,7 +81,18 @@ export function trendRequest(f: {
 export function TrendPanel({ url }: { url: string }) {
   const trend = useQuery({
     queryKey: ["trend", url],
-    queryFn: ({ signal }) => api.get<Trend>(url, signal),
+    queryFn: async ({ signal }) => {
+      const index = await api.get<Trend>(url, signal);
+      // The stored index skips a model with fewer than five peer groups a day,
+      // so a selling car (Tara: 276 prices) read «0 روز». Its own cohort series
+      // still has the days; it arrives marked thin, and says so.
+      const model = new URL(url, location.origin).searchParams;
+      if (!index.series?.length && model.get("scope") === "model" && model.get("id")) {
+        return api.get<Trend>(`/api/analytics/movement/${qs({
+          model: model.get("id")!, days: model.get("days") ?? undefined })}`, signal);
+      }
+      return index;
+    },
   });
 
   return (

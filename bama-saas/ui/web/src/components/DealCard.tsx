@@ -121,7 +121,7 @@ export function verdictNote(
     return [why, age].filter(Boolean).join(" · ") || null;
   }
   if (deal.deal_status === "deal" && deal.cheaper_than_pct != null) {
-    return [`ارزان‌تر از ${fa(deal.cheaper_than_pct)}٪ از ${fa(deal.fresh_peers)} آگهی تازه`, age]
+    return [`ارزان‌تر از ${fa(deal.cheaper_than_pct)}% از ${fa(deal.fresh_peers)} آگهی تازه`, age]
       .filter(Boolean).join(" · ");
   }
   return null;
@@ -211,12 +211,17 @@ export function DealCard({ deal, suspect }: { deal: Deal; suspect: boolean }) {
 
 /** At most one car per dealer. One dealer's 0 km listings took 4 of the 6
  *  cards (twice the same L8), which is one seller's stock, not a market. */
-export function onePerSeller<T extends { dealer_id: number | null }>(rows: T[], n: number): T[] {
-  const seen = new Set<number>();
+export function onePerSeller<T extends { dealer_id: number | null; model_name?: string | null; year?: number | null }>(
+  rows: T[], n: number,
+): T[] {
+  const seen = new Set<string>();
+  // One per seller, and one per car: two «پژو 206 · 1384» at the same price
+  // from different cities filled a six-slot strip with the same answer twice.
   return rows.filter((r) => {
-    if (r.dealer_id == null) return true;
-    if (seen.has(r.dealer_id)) return false;
-    seen.add(r.dealer_id);
+    const keys = [r.dealer_id != null ? `d${r.dealer_id}` : null,
+                  r.model_name ? `c${r.model_name}|${r.year ?? ""}` : null].filter(Boolean) as string[];
+    if (keys.some((k) => seen.has(k))) return false;
+    keys.forEach((k) => seen.add(k));
     return true;
   }).slice(0, n);
 }

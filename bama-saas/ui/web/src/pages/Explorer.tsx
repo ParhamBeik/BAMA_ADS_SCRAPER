@@ -332,7 +332,11 @@ export function Explorer() {
                       style={{ cursor: "pointer" }}
                     >
                       <td>
-                        <Fa>{ad.title || ad.model_name}</Fa>
+                        {/* The row's click had no keyboard or screen-reader way in. */}
+                        <button type="button" className="row-open"
+                                onClick={(e) => { e.stopPropagation(); setSelected(ad.code); }}>
+                          <Fa>{ad.title || ad.model_name}</Fa>
+                        </button>
                         <div className="row" style={{ marginTop: 4 }}>
                           <AdWarnings ad={ad} />
                         </div>

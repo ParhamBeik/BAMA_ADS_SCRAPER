@@ -1463,3 +1463,17 @@ main:focus { outline: none; }
   color: var(--accent); font-size: 13.5px; font-weight: 600;
 }
 .empty-action:hover { background: var(--panel-2, rgba(127,127,127,.08)); }
+
+/* Selected looked like unselected in dark mode: the active tab, a pressed
+   toggle button and a checked switch all computed to the panel colour
+   (audit 2026-10-29). One accent treatment for "this one is on". */
+[role="tab"][data-state="active"],
+button[aria-pressed="true"]:not(.save-fab) {
+  background: var(--accent-soft) !important;
+  color: var(--accent) !important;
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent) !important;
+}
+[role="switch"][data-state="checked"] { background: var(--accent) !important; }
+[role="switch"][data-state="unchecked"] { background: var(--border) !important; }
+.row-open { all: unset; cursor: pointer; font-weight: 600; text-align: start; }
+.row-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }

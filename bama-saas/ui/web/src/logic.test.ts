@@ -198,6 +198,15 @@ it("keeps one car per dealer on a shortlist, and every private seller", () => {
   expect(onePerSeller(rows, 2).map((r) => r.code)).toEqual(["a", "c"]);
 });
 
+it("keeps one listing per car on a shortlist", () => {
+  const rows = [
+    { code: "a", dealer_id: null, model_name: "206", year: 1384 },
+    { code: "b", dealer_id: null, model_name: "206", year: 1384 },
+    { code: "c", dealer_id: null, model_name: "206", year: 1390 },
+  ];
+  expect(onePerSeller(rows, 6).map((r) => r.code)).toEqual(["a", "c"]);
+});
+
 describe("final pass", () => {
   it("parseAmount reads grouped digits as one number", () => {
     expect(parseAmount("1,500,000,000")).toBe(1500000000);
