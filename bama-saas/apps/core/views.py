@@ -74,9 +74,10 @@ from apps.ml.models import AdPrediction
 # cycle behind the data it summarises.
 MARKETS_CACHE_SECONDS = 120
 # Picker counts (brands, cities, the default model list) scan every listable ad
-# — 1-2 s each on the VPS, and the model browser fires three at once. The
-# crawl moves these by a handful per tick, so ten minutes stale is invisible.
-CATALOG_CACHE_SECONDS = 600
+# — 1-5 s each on the VPS, and the model browser fires three at once. The warm
+# tick (every 30 min) rewrites them, so this outlives it and no reader ever
+# pays for a miss; the crawl moves these by a handful per tick.
+CATALOG_CACHE_SECONDS = 45 * 60
 # A car's price page reads every listing of that car in Python: ~1 s of CPU for
 # a 206 on the VPS. Uncached, 20 readers queued it to 12.6 s at the median
 # (load test 2026-10-15). Shared by every reader, so held like the catalog.
@@ -113,22 +114,26 @@ class BrandViewSet(viewsets.ReadOnlyModelViewSet):
         ).order_by("-ad_count", "name_fa")
 
     def list(self, request, *args, **kwargs):
-        return Response(cached("catalog:brands", CATALOG_CACHE_SECONDS, lambda: (
-            self.get_serializer(self.get_queryset(), many=True).data
-        )))
+        return Response(cached("catalog:brands", CATALOG_CACHE_SECONDS, brand_rows))
+
+
+def brand_rows() -> list:
+    return BrandSerializer(BrandViewSet().get_queryset(), many=True).data
 
 
 @api_view(["GET"])
 def cities(request):
     """City choices counted over the same visible listings as the Explorer."""
-    def produce():
-        listable = without_high_outliers(pricing.scorable_rows())
-        rows = City.objects.annotate(
-            ad_count=Count("ads", filter=Q(ads__in=listable), distinct=True),
-        ).filter(ad_count__gt=0).order_by("-ad_count", "name_fa", "pk")
-        return [{"id": c.pk, "name_fa": c.name_fa, "province": c.province,
-                 "ad_count": c.ad_count} for c in rows]
-    return Response(cached("catalog:cities", CATALOG_CACHE_SECONDS, produce))
+    return Response(cached("catalog:cities", CATALOG_CACHE_SECONDS, city_rows))
+
+
+def city_rows() -> list[dict]:
+    listable = without_high_outliers(pricing.scorable_rows())
+    rows = City.objects.annotate(
+        ad_count=Count("ads", filter=Q(ads__in=listable), distinct=True),
+    ).filter(ad_count__gt=0).order_by("-ad_count", "name_fa", "pk")
+    return [{"id": c.pk, "name_fa": c.name_fa, "province": c.province,
+             "ad_count": c.ad_count} for c in rows]
 
 
 class ModelVariantsView(ListAPIView):
@@ -199,6 +204,16 @@ def model_search(request):
 
                     qs = qs.filter(token_q)
 
+    # Only the browse lists are cached: typed text would mint a key per
+    # keystroke, and a by-id lookup is one cheap row.
+    if by_id or params.get("q"):
+        return Response(_model_rows(qs, by_id=bool(by_id)))
+    brand = params.get("brand") or ""
+    return Response(cached(models_cache_key(brand), CATALOG_CACHE_SECONDS,
+                           lambda: browse_models(brand)))
+
+
+def _model_rows(qs, *, by_id: bool = False) -> list[dict]:
     listable = without_high_outliers(pricing.scorable_rows())
     rows = qs.annotate(ad_count=Count("ads", filter=Q(ads__in=listable), distinct=True))
     if not by_id:
@@ -208,17 +223,19 @@ def model_search(request):
         # reporting an empty count.
         rows = rows.filter(ad_count__gt=0)
     rows = rows.order_by("-ad_count", "name_fa")[:MODEL_SEARCH_LIMIT]
+    return [{"id": m.id, "name_fa": m.name_fa, "brand_slug": m.brand_id,
+             "brand_name": m.brand.name_fa, "ad_count": m.ad_count}
+            for m in rows]
 
-    def produce():
-        return [{"id": m.id, "name_fa": m.name_fa, "brand_slug": m.brand_id,
-                 "brand_name": m.brand.name_fa, "ad_count": m.ad_count}
-                for m in rows]
-    # Only the browse lists are cached: typed text would mint a key per
-    # keystroke, and a by-id lookup is one cheap row.
-    if by_id or params.get("q"):
-        return Response(produce())
-    key = cache_key("catalog:models", {"brand": params.get("brand") or ""})
-    return Response(cached(key, CATALOG_CACHE_SECONDS, produce))
+
+def models_cache_key(brand: str = "") -> str:
+    return cache_key("catalog:models", {"brand": brand})
+
+
+def browse_models(brand: str = "") -> list[dict]:
+    """The picker's default list: no typed text, optionally one brand."""
+    qs = Model.objects.select_related("brand")
+    return _model_rows(qs.filter(brand__slug=brand) if brand else qs)
 
 
 @api_view(["GET"])
@@ -280,6 +297,10 @@ _AD_QUERY_PARAMS = frozenset(AdFilter.base_filters) | {
 }
 
 
+# Never read by a list row; `raw_payload` alone is the widest column on Ad.
+_UNSHOWN_AD_FIELDS = ("raw_payload", "search_text")
+
+
 class AdViewSet(viewsets.ReadOnlyModelViewSet):
     """GET /api/ads/ and /api/ads/<code>/.
 
@@ -313,7 +334,10 @@ class AdViewSet(viewsets.ReadOnlyModelViewSet):
         related = ("brand", "model", "variant", "city", "dealer")
         if self.action != "list":
             return verified(Ad.objects).select_related(*related)
-        qs = pricing.scorable_rows().select_related(*related)
+        # The scraped record and the search index are never serialized, and the
+        # record is the widest column on the table: loading it for every card
+        # was most of the list's time.
+        qs = pricing.scorable_rows().select_related(*related).defer(*_UNSHOWN_AD_FIELDS)
         if self.request.query_params.get("include_outliers", "").lower() != "true":
             qs = without_high_outliers(qs)
         return qs
@@ -708,6 +732,7 @@ def _deal_score_qs(*, now=None, by_freshness: bool = True):
             DealScoreCache.objects.select_related("ad", "ad__city", "ad__variant", "ad__ml")
         )
         .annotate(model_name=F("ad__model__name_fa"), brand_name=F("ad__brand__name_fa"))
+        .defer(*(f"ad__{f}" for f in _UNSHOWN_AD_FIELDS))
     )
     # Tie-break on ad_id in both orders: hundreds of rows share a score to one
     # decimal, and an unstable sort under LIMIT/OFFSET drops and repeats

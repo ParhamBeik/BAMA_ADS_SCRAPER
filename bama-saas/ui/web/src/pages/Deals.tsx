@@ -150,6 +150,8 @@ function NotifierPanel() {
       <PopoverTrigger asChild>
         <Button variant="outline" size="sm">
           <Bell className="size-4" />
+          {/* The label was hidden on phones, leaving a bell beside a bare «روشن». */}
+          <span className="sm:hidden">تلگرام</span>
           <span className="hidden sm:inline">اعلان تلگرام</span>
           <span className={`badge ${form.enabled ? "ok" : ""}`}>
             {form.enabled ? "روشن" : "خاموش"}

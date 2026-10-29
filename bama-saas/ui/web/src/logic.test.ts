@@ -13,7 +13,7 @@ import { onePerSeller, verdictNote } from "./components/DealCard";
 import { scopeKey } from "./components/FollowButton";
 import { qs } from "./filters";
 import { mileageLabel } from "./components/FilterPanel";
-import { carName, fa, modelYear, parseAmount, parseBudget, pct, toman, tomanRange, trimNote } from "./format";
+import { carName, fa, modelYear, parseAmount, parseBudget, pct, toman, tomanRange, trimNote, bothDates } from "./format";
 import { modelFamilies } from "./components/ModelCombobox";
 
 it("parses Persian and Arabic-Indic budget input without dropping its digits", () => {
@@ -214,5 +214,13 @@ describe("modelFamilies", () => {
     const fams = modelFamilies([row(1, "207 TU5"), row(2, "207 اتوماتیک"), row(3, "405 دنده ای")] as never);
     expect(fams).toHaveLength(1);
     expect(fams[0].models.map((m) => m.id)).toEqual([1, 2]);
+  });
+});
+
+describe("bothDates", () => {
+  it("pairs the Jalali date with a Persian age, no English month", () => {
+    const out = bothDates("2026-10-26T10:00:00Z", new Date("2026-10-29T12:00:00Z"));
+    expect(out).toMatch(/· 3 روز پیش$/);
+    expect(out).not.toMatch(/[A-Za-z]/);
   });
 });

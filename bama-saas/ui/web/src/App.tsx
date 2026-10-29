@@ -163,8 +163,25 @@ function RememberThenLogin() {
   return <Navigate to="/login" replace />;
 }
 
+/** The four tabs' code, fetched once the first screen has painted. Without it
+ *  a tab's first visit waited on three chunk round trips in a row (~3 s on a
+ *  phone link) before it even asked for data. Idle time cannot race the CSS
+ *  the way `modulepreload` hints did (see vite.config). */
+function usePrefetchTabs() {
+  useEffect(() => {
+    const later = window.requestIdleCallback ?? ((f: () => void) => window.setTimeout(f, 2000));
+    later(() => {
+      for (const load of [() => import("./pages/Home"), () => import("./pages/ModelExplorer"),
+                          () => import("./pages/Cars"), () => import("./pages/Mine")]) {
+        load().catch(() => {});
+      }
+    });
+  }, []);
+}
+
 function AppShell() {
   const { user } = useAuth();
+  usePrefetchTabs();
 
   return (
     <div className="min-h-dvh">
@@ -174,7 +191,7 @@ function AppShell() {
       <AppHeader />
       <ScrollToTop />
       <main id="main" tabIndex={-1}
-            className="mx-auto max-w-[1600px] px-4 pt-2 pb-24 sm:px-6 lg:pb-16">
+            className="mx-auto max-w-[1280px] px-4 pt-2 pb-24 sm:px-6 lg:pb-16">
         <Routes>
           {/* Four tabs: home, price lookup, cars, mine. */}
           <Route path="/" element={<Lazy><Home /></Lazy>} />
