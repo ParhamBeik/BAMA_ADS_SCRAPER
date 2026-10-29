@@ -13,7 +13,7 @@ import { onePerSeller, verdictNote } from "./components/DealCard";
 import { scopeKey } from "./components/FollowButton";
 import { qs } from "./filters";
 import { mileageLabel } from "./components/FilterPanel";
-import { carName, fa, modelYear, parseAmount, parseBudget, pct, toman, tomanRange, trimNote, bothDates } from "./format";
+import { carName, fa, modelYear, parseAmount, parseBudget, pct, toman, tomanRange, trimNote, bothDates, faDateTime } from "./format";
 import { modelFamilies } from "./components/ModelCombobox";
 
 it("parses Persian and Arabic-Indic budget input without dropping its digits", () => {
@@ -222,5 +222,13 @@ describe("bothDates", () => {
     const out = bothDates("2026-10-26T10:00:00Z", new Date("2026-10-29T12:00:00Z"));
     expect(out).toMatch(/· 3 روز پیش$/);
     expect(out).not.toMatch(/[A-Za-z]/);
+  });
+});
+
+describe("faDateTime", () => {
+  it("drops seconds and uses the Persian comma", () => {
+    const out = faDateTime("2026-10-29T13:05:39Z");
+    expect(out).toContain("، ");
+    expect(out).not.toMatch(/:\d\d:\d\d/);
   });
 });

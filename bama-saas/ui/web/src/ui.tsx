@@ -17,7 +17,7 @@ import { AlertTriangle, Database, ExternalLink, Heart, Info, X } from "lucide-re
 import { Link } from "react-router-dom";
 import { ApiError, api, type Envelope, type Paginated } from "./api";
 import { useAuth } from "./auth";
-import { fa, latinDigits, num, parseAmount, pct, since, toman } from "./format";
+import { fa, faDateTime, latinDigits, num, parseAmount, pct, since, toman } from "./format";
 
 /**
  * What a cohort flag means, in the language the rest of the page is in.
@@ -204,7 +204,9 @@ export function Stat({
 }) {
   return (
     <Card title={label}>
-      <div className={`stat ${tone ?? ""}`}>{value}</div>
+      {/* A verdict in words, not a number: the mono face gave every space a
+          digit's width and spread «رو به بالا» apart. */}
+      <div className={`stat ${tone ?? ""}${typeof value === "string" && /[\u0600-\u06FF]/.test(value) ? " stat-words" : ""}`}>{value}</div>
       {sub && <div className="stat-sub">{sub}</div>}
     </Card>
   );
@@ -227,7 +229,7 @@ export function Provenance({
   if (compact) {
     return (
       <div className="provenance">
-        {as_of && <span>تا {new Date(as_of).toLocaleString("fa-IR-u-nu-latn")}</span>}
+        {as_of && <span>تا {faDateTime(as_of)}</span>}
         {methodology_version != null && <MethodologyLink version={methodology_version} />}
       </div>
     );
@@ -264,7 +266,7 @@ export function Provenance({
           <AlertTriangle size={11} /> قدیمی
         </span>
       )}
-      {as_of && <span>· تا {new Date(as_of).toLocaleString("fa-IR-u-nu-latn")}</span>}
+      {as_of && <span>· تا {faDateTime(as_of)}</span>}
       {methodology_version != null && <MethodologyLink version={methodology_version} />}
       {/* The consequences behind the tags, reachable by tap and keyboard. */}
       {(coverage.source_blocked || coverage.removal_detection_paused

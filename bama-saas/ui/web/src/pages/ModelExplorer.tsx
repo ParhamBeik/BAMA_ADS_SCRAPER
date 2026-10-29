@@ -21,7 +21,7 @@ import { Link } from "react-router-dom";
 import { ArrowLeft, X } from "lucide-react";
 import { api } from "../api";
 import { qs, useFilters } from "../filters";
-import { conditionLabel, km, num, toman, tomanRange } from "../format";
+import { conditionLabel, faDateTime, km, num, toman, tomanRange } from "../format";
 import { Async, Card, Fa, HowWeKnow, ListingActions, RangeNotes, Thumb } from "../ui";
 import type { Distribution } from "../ui";
 import { isZeroKm, MILEAGE_PRESETS } from "../components/FilterPanel";
@@ -341,9 +341,8 @@ export function ModelExplorer() {
                 ? "پوشش خوراک در پنجره‌ی اخیر کامل بوده است."
                 : "پوشش خوراک در پنجره‌ی اخیر کامل نبوده است؛ غیبت یک آگهی به معنی فروش نیست."}</p>
               {data.evidence.latest_selected_sighting && (
-                <p>آخرین مشاهده‌ی آگهی‌های انتخاب‌شده: {new Date(
-                  data.evidence.latest_selected_sighting,
-                ).toLocaleString("fa-IR-u-nu-latn")}</p>
+                <p>آخرین مشاهده‌ی آگهی‌های انتخاب‌شده: {faDateTime(
+                  data.evidence.latest_selected_sighting)}</p>
               )}
               <p>قیمت خرید واقعی در دسترس نیست؛ داده‌ی تأییدشده از معامله‌ها نداریم.</p>
             </>

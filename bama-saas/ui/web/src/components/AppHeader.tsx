@@ -138,7 +138,7 @@ function AccountMenu() {
 /** Brand mark and wordmark, shared by the app header and the signed-out one. */
 function Brand() {
   return (
-    <span className="text-accent flex flex-none items-center gap-2 font-extrabold tracking-tight">
+    <span className="text-accent-foreground flex flex-none items-center gap-2 font-extrabold tracking-tight">
       <BrandMark size={22} />
       <span className="text-[15px]">بازار خودرو باما</span>
     </span>
