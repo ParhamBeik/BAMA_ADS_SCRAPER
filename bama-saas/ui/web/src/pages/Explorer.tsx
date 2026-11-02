@@ -35,7 +35,7 @@ import { Async, BamaLink, Card, FLAG_LABEL, Fa, ListingActions, Pager, PriceBar,
 import { conditionLabel, km, modelYear, num, toman, trimNote } from "../format";
 import type { Distribution } from "../ui";
 import { ViewToggle, useListView } from "../components/ViewToggle";
-import { conditionNote } from "../components/DealCard";
+import { conditionNote, conditionTag } from "../components/DealCard";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "../components/ui/select";
@@ -155,7 +155,7 @@ function AdWarnings({ ad }: { ad: AdRow }) {
       )}
       {ad.condition_flagged && (
         <span className="badge warn" title={conditionNote(ad)}>
-          <AlertTriangle size={11} /> {ad.body_status || "وضعیت بدنه"}
+          <AlertTriangle size={11} /> {conditionTag(ad)}
         </span>
       )}
       {/* An odometer nobody can believe. `verify` flags these and `pricing`
@@ -201,6 +201,7 @@ export function Explorer() {
     listed_from: listedFrom(filters.getInt("listed_days")),
     mileage_min: filters.get("mileage_min"),
     mileage_max: filters.get("mileage_max"),
+    color: filters.get("color"),
     transmission: filters.get("transmission"),
     fuel: filters.get("fuel"),
     body_type: filters.get("body_type"),

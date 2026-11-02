@@ -49,6 +49,7 @@ type Ad = {
   reposted_from?: string | null;
   price_basis_unclear?: boolean;
   condition_flagged?: boolean;
+  condition_band?: string | null;
   mileage_implausible?: boolean;
   // Not yet in the generated schema (another agent is adding these to the API);
   // kept optional/local so this page renders fine against an old API response too.
@@ -283,7 +284,7 @@ export function ListingDetail() {
                       سالم» was captioned as describing its own crash. */}
                   {data.condition_flagged && (
                     <p className="badge warn">
-                      {data.body_status
+                      {data.condition_band && data.condition_band !== "clean" && data.body_status
                         ? `فروشنده وضعیت بدنه را «${data.body_status}» ثبت کرده — پیش از مقایسه قیمت آن را در نظر بگیرید.`
                         : "توضیحات آگهی به وضعیت خودرو اشاره کرده (تصادف، پلاک منطقه آزاد یا مشابه) — پیش از مقایسه قیمت آن را بخوانید."}
                     </p>

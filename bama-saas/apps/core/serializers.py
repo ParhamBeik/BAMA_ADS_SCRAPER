@@ -6,7 +6,7 @@ from apps.common.verify import MAX_PLAUSIBLE_MILEAGE
 from apps.core import images
 from apps.core.models import Ad, Brand, NotifierSettings, Variant
 from apps.core.pricing import MIN_PEERS
-from apps.core.quality import condition_discounted
+from apps.core.quality import condition_band, condition_discounted
 
 
 class BrandSerializer(serializers.ModelSerializer):
@@ -51,6 +51,8 @@ class AdSerializer(serializers.ModelSerializer):
     # board *excludes* the first and only *labels* the second — see
     # apps/core/quality.py for why that asymmetry is deliberate.
     condition_flagged = serializers.SerializerMethodField()
+    # Says which field raised that flag: a clean band means the text did.
+    condition_band = serializers.SerializerMethodField()
     # An odometer nobody can believe — 9,000,000 km on a one-year-old Koleos,
     # 6,900,000 on a Shahin. `verify` already flags these softly and `pricing`
     # already declines to adjust on them, but every screen still printed the
@@ -92,6 +94,9 @@ class AdSerializer(serializers.ModelSerializer):
         # payload at ingest, and the mileage the row carries is what it judged.
         return obj.mileage is not None and not 0 <= obj.mileage <= MAX_PLAUSIBLE_MILEAGE
 
+    def get_condition_band(self, obj) -> str | None:
+        return condition_band(obj.body_status)
+
     def get_condition_flagged(self, obj) -> bool:
         return condition_discounted(
             title=obj.title, description=obj.description,
@@ -115,7 +120,7 @@ class AdSerializer(serializers.ModelSerializer):
             # `price_basis_unclear` is the stored column now, not a method: the
             # regex behind it runs at ingest so the browse endpoints can filter
             # on an index instead of scanning every description.
-            "cohort_flags", "price_basis_unclear", "condition_flagged",
+            "cohort_flags", "price_basis_unclear", "condition_flagged", "condition_band",
             "mileage_implausible",
             "admission_state", "feed_evidence", "detail_evidence", 
         )

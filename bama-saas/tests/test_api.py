@@ -2551,3 +2551,12 @@ def test_warm_tick_prebuilds_the_picker_lists(exposure_catalog, api_client):
         assert api_client.get("/api/cities/").status_code == 200
         assert api_client.get("/api/models/").status_code == 200
     assert brands.call_count == cities.call_count == models.call_count == 0
+
+
+@pytest.mark.django_db
+def test_ad_list_names_the_band_behind_the_condition_flag(exposure_catalog, api_client):
+    make_ad(exposure_catalog, "BAND1", body_status="بدون رنگ",
+            description="خودرو تصادفی است")
+    row = next(r for r in api_client.get("/api/ads/").json()["results"] if r["code"] == "BAND1")
+    assert row["condition_flagged"] is True
+    assert row["condition_band"] == "clean"

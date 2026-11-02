@@ -110,6 +110,9 @@ export const DEAL_REASON: Record<string, string> = {
   not_new: "صفر کیلومتر ولی رنگ یا تعمیر دارد",
 };
 
+/** The review tab promises a reason on every card; past the ceiling the gap is the reason. */
+const SUSPECT_NOTE = "اختلاف قیمت غیرعادی زیاد است";
+
 /** What the verdict stood on, in one line: the real comparison and how old the price is. */
 export function verdictNote(
   deal: Pick<Deal, "deal_status" | "deal_reasons" | "cheaper_than_pct" | "fresh_peers" | "price_age_days">,
@@ -118,7 +121,7 @@ export function verdictNote(
     : deal.price_age_days <= 0 ? "قیمت امروز" : `قیمت بدون تغییر از ${fa(deal.price_age_days)} روز پیش`;
   if (deal.deal_status === "check") {
     const why = (deal.deal_reasons ?? []).map((r) => DEAL_REASON[r] ?? r).join("، ");
-    return [why, age].filter(Boolean).join(" · ") || null;
+    return [why || SUSPECT_NOTE, age].filter(Boolean).join(" · ");
   }
   if (deal.deal_status === "deal" && deal.cheaper_than_pct != null) {
     return [`ارزان‌تر از ${fa(deal.cheaper_than_pct)}% از ${fa(deal.fresh_peers)} آگهی تازه`, age]
@@ -140,10 +143,19 @@ export function verdictNote(
  * `condition_band` is present exactly when the structured field is what fired.
  */
 export function conditionNote(deal: Pick<Deal, "body_status" | "condition_band">): string {
-  if (deal.condition_band && deal.body_status) {
+  if (deal.condition_band && deal.condition_band !== "clean" && deal.body_status) {
     return `وضعیت بدنه‌ای که فروشنده در باما ثبت کرده: «${deal.body_status}»`;
   }
   return "توضیحات آگهی به تصادف، پلاک منطقه آزاد یا وضعیت بدنه اشاره کرده است";
+}
+
+/**
+ * The warning badge's words. A clean body can still be flagged by the ad's text,
+ * and printing «بدون رنگ» on a warning then names the one thing that is fine.
+ */
+export function conditionTag(deal: Pick<Deal, "body_status" | "condition_band">): string {
+  return deal.condition_band && deal.condition_band !== "clean" && deal.body_status
+    ? deal.body_status : "توضیحات آگهی را بخوانید";
 }
 
 /**
@@ -161,7 +173,7 @@ export function DealCard({ deal, suspect }: { deal: Deal; suspect: boolean }) {
   // Four rows. The peer median, sample size, days on Bama, liquidity, the Bama
   // link and the model's note are on the listing page one tap away; on the card they made
   // eight rows, and a struck-through median read as the car's old price.
-  const note = verdictNote(deal);
+  const note = verdictNote(deal) ?? (suspect ? SUSPECT_NOTE : null);
   return (
     <div className="listing-card stretch-host">
       <Thumb src={deal.image_url}>
@@ -171,7 +183,7 @@ export function DealCard({ deal, suspect }: { deal: Deal; suspect: boolean }) {
         {deal.condition_flagged && (
           <span className="card-badges">
             <span className="badge warn" title={conditionNote(deal)}>
-              <AlertTriangle size={11} /> {deal.body_status || "وضعیت بدنه"}
+              <AlertTriangle size={11} /> {conditionTag(deal)}
             </span>
           </span>
         )}
