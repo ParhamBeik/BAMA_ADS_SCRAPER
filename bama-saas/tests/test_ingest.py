@@ -1455,6 +1455,20 @@ def test_a_price_too_low_to_be_a_car_leaves_the_list_but_a_cheap_car_stays(catal
 
 
 @pytest.mark.django_db
+def test_an_absurd_price_is_flagged_on_too_few_peers_to_quote(catalog):
+    from apps.core import pricing
+    from apps.core.quality import FLAG_PRICE_IMPLAUSIBLE
+
+    for i in range(5):
+        _ad(catalog, f"thin{i:04d}", NOW, price=4_300_000_000)
+    absurd = _ad(catalog, "thinlow1", NOW, price=101_000_110)
+
+    assert pricing.flag_suspects()["implausible"] == 1
+    absurd.refresh_from_db()
+    assert FLAG_PRICE_IMPLAUSIBLE in absurd.cohort_flags
+
+
+@pytest.mark.django_db
 def test_a_model_year_can_be_searched_in_either_calendar(catalog, api_client):
     _ad(catalog, "old00001", NOW, year_jalali=1395)
     _ad(catalog, "new00001", NOW, year_jalali=1402)

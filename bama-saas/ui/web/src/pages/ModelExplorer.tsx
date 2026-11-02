@@ -19,7 +19,7 @@ import { useBrands } from "../catalogue";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { ArrowLeft, X } from "lucide-react";
-import { api } from "../api";
+import { api, ApiError } from "../api";
 import { qs, useFilters } from "../filters";
 import { conditionLabel, faDateTime, km, num, toman, tomanRange, tooLow, trimNote } from "../format";
 import { Async, Card, Fa, HowWeKnow, ListingActions, RangeNotes, Thumb } from "../ui";
@@ -142,11 +142,12 @@ const MAX_COMPARE = 4;
  * Trim is left out on purpose: trims belong to one model, and "same trim"
  * across a 206 and a Quick means nothing.
  */
-function CompareCard({ ids, params, onAdd, onRemove }: {
+function CompareCard({ ids, params, onAdd, onRemove, onClose }: {
   ids: string[];
   params: Record<string, string | undefined>;
   onAdd: (id: string) => void;
   onRemove: (id: string) => void;
+  onClose: () => void;
 }) {
   const results = useQueries({
     queries: ids.map((id) => ({
@@ -157,7 +158,9 @@ function CompareCard({ ids, params, onAdd, onRemove }: {
   });
   const refined = Object.values(params).some(Boolean);
   return (
-    <Card title="مقایسه">
+    <Card title="مقایسه" action={
+      <Button variant="ghost" size="sm" onClick={onClose}><X className="size-4" /> بستن</Button>
+    }>
       <ul className="compare-list">
         {ids.map((id, i) => {
           const q = results[i];
@@ -167,7 +170,9 @@ function CompareCard({ ids, params, onAdd, onRemove }: {
           return (
             <li key={id} className="compare-row">
               <span className="compare-name">
-                <Fa>{data ? `${data.model.brand} ${data.model.name}` : "…"}</Fa>
+                {i > 0 ? <Link to={`/price${qs({ model: id })}`}>
+                  <Fa>{data ? `${data.model.brand} ${data.model.name}` : "…"}</Fa>
+                </Link> : <Fa>{data ? `${data.model.brand} ${data.model.name}` : "…"}</Fa>}
               </span>
               <span className="compare-range">
                 {q.isLoading ? "…" : r ? <><bdi>{tomanRange(r.p25, r.p75)}</bdi> تومان</> : "نمونه کم"}
@@ -257,6 +262,7 @@ export function ModelExplorer() {
       `/api/models/${model}/explore/${qs(params)}`, signal,
     ),
   });
+  const missing = exploration.error instanceof ApiError && exploration.error.status === 404;
 
   const clearRefine = () => filters.set(Object.fromEntries(REFINE_KEYS.map((k) => [k, null])));
   const pick = (next: ModelRow | null) => filters.set({
@@ -276,8 +282,8 @@ export function ModelExplorer() {
               <Button variant="ghost" size="sm" onClick={() => pick(null)}>
                 <X className="size-4" /> مدل دیگر
               </Button>
-              <FollowButton scope={{ model, variant: params.variant, year: params.year }} />
-              {!comparing && compare.length === 0 && (
+              {!missing && <FollowButton scope={{ model, variant: params.variant, year: params.year }} />}
+              {!missing && !comparing && compare.length === 0 && (
                 <Button variant="outline" size="sm" onClick={() => setComparing(true)}>
                   مقایسه
                 </Button>
@@ -293,6 +299,7 @@ export function ModelExplorer() {
           params={{ year: params.year, condition: params.condition,
                     mileage_min: params.mileage_min, mileage_max: params.mileage_max }}
           onAdd={(id) => filters.set({ compare: [...compare, id].join(",") })}
+          onClose={() => { setComparing(false); filters.set({ compare: null }); }}
           onRemove={(id) => {
             if (id === model) {
               // The first of the others becomes the page's car.
@@ -319,7 +326,13 @@ export function ModelExplorer() {
       )}
       {!model && (mode === "budget" ? <Budget /> : <ModelBrowser onPick={pick} />)}
 
-      {model && <Async query={exploration}>
+      {model && missing && (
+        <div className="state">
+          <strong>این خودرو پیدا نشد.</strong>
+          <p className="empty-hint">نشانی اشتباه است یا این مدل دیگر در فهرست نیست.</p>
+        </div>
+      )}
+      {model && !missing && <Async query={exploration}>
         {(data) => {
           // Everything in the model page's selection that the listings page
           // can also filter on; both speak the same four condition bands.

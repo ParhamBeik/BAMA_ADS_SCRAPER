@@ -236,7 +236,7 @@ class FavoriteViewSet(viewsets.ModelViewSet):
     lookup_url_kwarg = "code"
     http_method_names = ["get", "post", "delete", "head", "options"]
     queryset = (
-        Favorite.objects.select_related("ad")
+        Favorite.objects.select_related("ad", "ad__city", "ad__variant")
         .annotate(
             previous_price=Subquery(_LATEST_DROP.values("old_price")[:1]),
             price_changed_at=Subquery(_LATEST_DROP.values("observed_at")[:1]),

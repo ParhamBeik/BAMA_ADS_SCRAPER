@@ -72,14 +72,23 @@ class FavoriteSerializer(serializers.ModelSerializer):
     code = serializers.CharField(source="ad_id")
     ad_title = serializers.CharField(source="ad.title", read_only=True)
     ad_price = serializers.IntegerField(source="ad.current_price", read_only=True)
+    ad_year = serializers.IntegerField(source="ad.year_jalali", read_only=True)
+    ad_mileage = serializers.IntegerField(source="ad.mileage", read_only=True)
+    ad_city = serializers.CharField(source="ad.city.name_fa", read_only=True, default="")
+    ad_variant = serializers.CharField(source="ad.variant.name_fa", read_only=True, default="")
+    ad_image = serializers.SerializerMethodField()
     previous_price = serializers.IntegerField(read_only=True)
     price_changed_at = serializers.DateTimeField(read_only=True)
 
     class Meta:
         model = Favorite
-        fields = ["code", "ad_title", "ad_price", "previous_price",
+        fields = ["code", "ad_title", "ad_price", "ad_year", "ad_mileage", "ad_city",
+                  "ad_variant", "ad_image", "previous_price",
                   "price_changed_at", "created_at"]
         read_only_fields = ["created_at"]
+
+    def get_ad_image(self, obj) -> str:
+        return images.ad_image_paths(obj.ad)[0]
 
     def validate_code(self, value):
         # A code with no ad behind it reached the insert and failed the FK
@@ -137,15 +146,17 @@ class AlertRuleSerializer(ScopeSerializerMixin, serializers.ModelSerializer):
     def get_cars(self, rule) -> list[dict]:
         """The listed cars with their names; the UI words them."""
         models = {
-            pk: (name, brand) for pk, name, brand in
+            pk: (name, brand, slug) for pk, name, brand, slug in
             Model.objects.filter(pk__in=rule.model_ids)
-            .values_list("pk", "name_fa", "brand__name_fa")
+            .values_list("pk", "name_fa", "brand__name_fa", "brand__slug")
         }
         brand_names = dict(
             Brand.objects.filter(slug__in=rule.brand_slugs).values_list("slug", "name_fa")
         )
-        return ([{"kind": "brand", "brand": brand_names.get(b, b)} for b in rule.brand_slugs]
-                + [{"kind": "model", "brand": models[m][1], "model": models[m][0]}
+        return ([{"kind": "brand", "id": b, "brand_slug": b, "brand": brand_names.get(b, b)}
+                 for b in rule.brand_slugs]
+                + [{"kind": "model", "id": m, "brand_slug": models[m][2],
+                    "brand": models[m][1], "model": models[m][0]}
                    for m in rule.model_ids if m in models])
 
     def validate_model_ids(self, value):

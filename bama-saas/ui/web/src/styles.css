@@ -1441,7 +1441,7 @@ main:focus { outline: none; }
 
 @media (pointer: coarse) {
   a.above-stretch, .provenance a, .compare-remove, .how-we-know summary,
-  td button { min-height: 44px; min-width: 44px; display: inline-flex; align-items: center; justify-content: center; }
+  td button:not([role="switch"]) { min-height: 44px; min-width: 44px; display: inline-flex; align-items: center; justify-content: center; }
   .provenance a { min-width: 0; }
 }
 
@@ -1513,3 +1513,10 @@ a.text-muted-foreground { color: var(--muted); }
   /* The car name already opens the listing, where save and Bama live. */
   .deals-table th:nth-child(8), .deals-table td:nth-child(8) { display: none; }
 }
+
+/* Saved cars: enough to tell two 207s apart. */
+.saved-row { display: flex; gap: 10px; align-items: flex-start; }
+.saved-row img { width: 56px; height: 42px; object-fit: cover; border-radius: 6px; flex: none; }
+.list-count { margin: 0 0 10px; }
+.rule-actions { white-space: nowrap; }
+@media (max-width: 560px) { .rule-actions .h-8, .rule-actions button { padding-inline: 4px; } }

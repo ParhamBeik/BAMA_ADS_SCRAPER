@@ -14,19 +14,23 @@
  * a drop had genuinely been recorded.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
 import { Trash2, TrendingDown } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import type { Paginated } from "../api";
-import { Async, Card, Fa, Table } from "../ui";
-import { faDate, pct, toman } from "../format";
+import { Async, Card, Fa, Table, useUndo } from "../ui";
+import { faDate, km, pct, toman, trimNote } from "../format";
 import { Sparkline } from "../components/Sparkline";
 
 interface SavedAd {
   code: string;
   ad_title?: string | null;
   ad_price?: number | null;
+  ad_year?: number | null;
+  ad_mileage?: number | null;
+  ad_city?: string;
+  ad_variant?: string;
+  ad_image?: string;
   previous_price?: number | null;
   price_changed_at?: string | null;
 }
@@ -75,16 +79,8 @@ export function Saved() {
       api.get<{ results: Followed[] }>("/api/watchlists/digest/", signal),
   });
 
-  // One mis-tap used to lose a saved ad or a followed car for good. The row
-  // goes at once; for a few seconds the bar below puts it back.
-  const [undo, setUndo] = useState<{ label: string; restore: () => Promise<unknown> } | null>(null);
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const offer = (label: string, restore: () => Promise<unknown>) => {
-    clearTimeout(timer.current);
-    setUndo({ label, restore });
-    timer.current = setTimeout(() => setUndo(null), 7000);
-  };
-  useEffect(() => () => clearTimeout(timer.current), []);
+  // One mis-tap used to lose a saved ad or a followed car for good.
+  const { offer, bar } = useUndo();
 
   const remove = useMutation({
     mutationFn: (row: SavedAd) => api.del(`/api/favorites/${row.code}/`),
@@ -183,9 +179,20 @@ export function Saved() {
                   {data.results.map((row) => (
                     <tr key={row.code}>
                       <td>
-                        <Link to={`/listing/${row.code}`}>
-                          <Fa>{row.ad_title || row.code}</Fa>
-                        </Link>
+                        <div className="saved-row">
+                          {row.ad_image && <img src={row.ad_image} alt="" loading="lazy" />}
+                          <div>
+                            <Link to={`/listing/${row.code}`}>
+                              <Fa>{row.ad_title || row.code}</Fa>
+                            </Link>
+                            {/* Several saved 207s read the same without these. */}
+                            <div className="stat-sub">
+                              <Fa>{[trimNote(row.ad_title, row.ad_variant), row.ad_year,
+                                    row.ad_mileage != null && km(row.ad_mileage), row.ad_city]
+                                .filter(Boolean).join(" · ")}</Fa>
+                            </div>
+                          </div>
+                        </div>
                       </td>
                       <td className="num">{toman(row.ad_price ?? null)}</td>
                       <td className="num">
@@ -270,17 +277,7 @@ export function Saved() {
           </Async>
         </Card>}
       </div>
-      {undo && (
-        <div role="status" className="undo-bar">
-          <span>{undo.label}</span>
-          <button
-            type="button"
-            onClick={() => { const u = undo; setUndo(null); void u.restore(); }}
-          >
-            بازگردانی
-          </button>
-        </div>
-      )}
+      {bar}
     </div>
   );
 }

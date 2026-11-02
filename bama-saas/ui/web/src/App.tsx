@@ -11,7 +11,7 @@
  * says what it is, and the nav already says where you are.
  */
 import { lazy, Suspense, useEffect, type ReactNode } from "react";
-import { Navigate, Route, Routes, useLocation, useNavigationType, useParams } from "react-router-dom";
+import { Link, Navigate, Route, Routes, useLocation, useNavigationType, useParams } from "react-router-dom";
 import { useAuth } from "./auth";
 import { AppHeader, AuthHeader, MobileNav } from "./components/AppHeader";
 // Only Login stays eager. Home looked like the other obvious candidate and was
@@ -232,10 +232,21 @@ function AppShell() {
               the link the reader actually asked for gets resumed. */}
           <Route path="/login" element={<ResumeOrHome />} />
           <Route path="/signup" element={<ResumeOrHome />} />
-          <Route path="*" element={<ResumeOrHome />} />
+          <Route path="*" element={<NotFoundOrResume />} />
         </Routes>
       </main>
       <MobileNav />
+    </div>
+  );
+}
+
+/** A link remembered through sign-in resumes; any other unknown path says so. */
+function NotFoundOrResume() {
+  if (intended) return <ResumeOrHome />;
+  return (
+    <div className="state">
+      <strong>این صفحه پیدا نشد.</strong>
+      <Link to="/" className="empty-action">رفتن به صفحه‌ی اصلی</Link>
     </div>
   );
 }

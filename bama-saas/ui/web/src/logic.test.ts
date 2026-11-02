@@ -20,6 +20,9 @@ it("parses Persian and Arabic-Indic budget input without dropping its digits", (
   expect(parseBudget("۱٬۲۰۰٬۰۰۰٬۰۰۰")).toBe(1_200_000_000);
   expect(parseBudget("١٢٠٠٠٠٠٠٠٠")).toBe(1_200_000_000);
   expect(parseBudget("abc")).toBeNull();
+  expect(parseBudget("800")).toBe(800_000_000);
+  expect(parseBudget("۲")).toBe(2_000_000_000);
+  expect(parseBudget("800 میلیون")).toBe(800_000_000);
 });
 
 it("reads a price the way it is said", () => {

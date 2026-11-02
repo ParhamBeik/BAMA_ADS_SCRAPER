@@ -800,6 +800,12 @@ function ActiveChips({ showConfidence }: { showConfidence: boolean }) {
   const active = all.filter(([k]) =>
     k !== "brand" && k !== "model" && k !== "mileage_min" && k !== "mileage_max");
   const mileage = mileageLabel(filters.get("mileage_min"), filters.get("mileage_max"));
+  const chipModel = filters.get("model");
+  const variantNames = useQuery({
+    queryKey: ["variants", chipModel],
+    enabled: Boolean(chipModel && filters.get("variant")),
+    queryFn: ({ signal }) => api.get<Variant[]>(`/api/models/${chipModel}/variants/`, signal),
+  });
 
   const clearAll = () => {
     const cleared: Record<string, null> = { page: null };
@@ -811,7 +817,9 @@ function ActiveChips({ showConfidence }: { showConfidence: boolean }) {
     <div className="chips mt-3">
       <CarChips inline />
       {active.map(([key, value]) => {
-        const label = key === "city"
+        const label = key === "variant"
+          ? `تیپ: ${variantNames.data?.find((v) => String(v.id) === value)?.name_fa ?? "انتخاب‌شده"}`
+          : key === "city"
           ? `شهر: ${cities.data?.find((c) => String(c.id) === value)?.name_fa ?? value}`
           : chipLabel(key, value as string);
         return (
