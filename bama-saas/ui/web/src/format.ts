@@ -195,6 +195,12 @@ export function bothDates(value: string | null | undefined, now: Date = new Date
   return `${faDate(date)} · ${ago}`;
 }
 
+/** A price so far under the cheap end of its range that it is probably not the
+ *  car's cash price: an instalment's down payment typed into the price box. */
+export function tooLow(price: number | null | undefined, p10: number | null | undefined): boolean {
+  return price != null && p10 != null && price < p10 * 0.6;
+}
+
 /** The trim, when the card title does not already say it. */
 export function trimNote(title: string | null | undefined, trim: string | null | undefined): string {
   const t = (trim ?? "").trim();

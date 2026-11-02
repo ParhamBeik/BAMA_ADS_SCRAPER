@@ -410,7 +410,7 @@ export function Deals() {
                     <BandedGrid rows={rows} ceiling={ceiling} />
                   )
                 ) : (
-                  <Table
+                  <div className="deals-table"><Table
                     head={[
                       "آگهی", "تخفیف", "قیمت", "میانه مشابه‌ها",
                       "تعداد مشابه", "اعتبار", "در بازار", "",
@@ -429,7 +429,7 @@ export function Deals() {
                             </div>
                           )}
                         </td>
-                        <td className="num up">{pct(d.discount_pct)}</td>
+                        <td className="num up">{pct(d.discount_pct, 0)}</td>
                         <td className="num">{toman(d.price)}</td>
                         <td className="num">{toman(d.peer_median)}</td>
                         <td className="num">{d.peer_count ?? "—"}</td>
@@ -445,7 +445,7 @@ export function Deals() {
                         </td>
                       </tr>
                     ))}
-                  </Table>
+                  </Table></div>
                 )}
 
                 <div style={{ marginTop: 14 }}>

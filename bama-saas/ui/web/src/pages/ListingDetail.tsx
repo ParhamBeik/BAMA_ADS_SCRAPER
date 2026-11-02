@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import { Async, BamaLink, FLAG_LABEL, Fa, ListingActions, PriceBar, PriceVerdict, Provenance, RangeNotes, HowWeKnow } from "../ui";
-import { bothDates, fa, faDate, modelYear, num, pct, toman } from "../format";
+import { bothDates, fa, faDate, modelYear, num, pct, toman, trimNote } from "../format";
 import type { Basis, Distribution, Verdict } from "../ui";
 import { verdictNote, type Deal } from "../components/DealCard";
 import { FollowButton } from "../components/FollowButton";
@@ -236,6 +236,10 @@ export function ListingDetail() {
               <div className="stack">
                 <div className="card">
                   <h1><Fa>{data.title}</Fa></h1>
+                  <p className="stat-sub" style={{ margin: "2px 0 0" }}>
+                    {trimNote(data.title, data.variant_name) && <><Fa>{trimNote(data.title, data.variant_name)}</Fa> · </>}
+                    {modelYear(data.year_jalali, data.year_calendar)}
+                  </p>
                   {data.status && data.status !== "active" && (
                     <ListingState
                       status={data.status}

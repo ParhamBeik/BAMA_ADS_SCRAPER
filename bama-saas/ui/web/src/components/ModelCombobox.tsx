@@ -125,6 +125,12 @@ export function ModelCombobox({
   });
 
   const families = onSelectMany && term ? modelFamilies(models.data ?? []) : [];
+  // Results arrive after typing, and cmdk highlights nothing it did not filter
+  // itself: Enter did nothing until an arrow key was pressed. The first row is
+  // the best match, so it starts highlighted.
+  const [active, setActive] = useState("");
+  const first = families[0] ? `family-${families[0].key}` : models.data?.[0] ? String(models.data[0].id) : "";
+  useEffect(() => setActive(first), [first]);
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -155,7 +161,7 @@ export function ModelCombobox({
         {/* The server already ranks and filters; cmdk must not filter a second
             time or a search for a Persian name it scores differently comes back
             empty while the API found matches. */}
-        <Command shouldFilter={false}>
+        <Command shouldFilter={false} value={active} onValueChange={setActive}>
           <CommandInput
             placeholder="جست‌وجوی مدل…"
             value={draft}

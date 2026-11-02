@@ -11,7 +11,7 @@
  * `Async` makes "we do not have enough clean data for this" a first-class result
  * rather than an error or, worse, an empty chart that looks like zero.
  */
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Database, ExternalLink, Heart, Info, X } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -138,14 +138,33 @@ export function NumberInput({
 
 /** Scraped text, isolated from its neighbours. Any Persian letter makes it RTL:
  *  `dir="auto"` reads only the first strong letter, so «207 TU5 دنده ای» came out
- *  left-to-right and in a different word order from «206 دنده ای» beside it. */
+ *  left-to-right and in a different word order from «206 دنده ای» beside it.
+ *  Inside an RTL name a Latin model code stays one left-to-right unit, so
+ *  «207 TU5P» is not printed as «TU5P 207». */
 export function Fa({ children }: { children: ReactNode }) {
-  const text = [children].flat().filter((c) => typeof c === "string" || typeof c === "number").join(" ");
+  const parts = [children].flat();
+  const text = parts.filter((c) => typeof c === "string" || typeof c === "number").join(" ");
+  const rtl = /[\u0600-\u06FF]/.test(text);
   return (
-    <span className="fa" dir={/[\u0600-\u06FF]/.test(text) ? "rtl" : "auto"}>
-      {children}
+    <span className="fa" dir={rtl ? "rtl" : "auto"}>
+      {rtl ? parts.map((c, i) => (typeof c === "string" ? <Fragment key={i}>{isolateLatin(c)}</Fragment> : c)) : children}
     </span>
   );
+}
+
+/** Latin-and-digit runs that contain a Latin letter («207 TU5P», «EF7», «V4»),
+ *  each wrapped in an LTR <bdi>. Pure numbers are left to the bidi algorithm. */
+export function isolateLatin(text: string): ReactNode[] {
+  const out: ReactNode[] = [];
+  let last = 0;
+  for (const m of text.matchAll(/[A-Za-z0-9][A-Za-z0-9.\-]*(?:\s+[A-Za-z0-9][A-Za-z0-9.\-]*)*/g)) {
+    if (!/[A-Za-z]/.test(m[0])) continue;
+    if (m.index > last) out.push(text.slice(last, m.index));
+    out.push(<bdi key={m.index} dir="ltr">{m[0]}</bdi>);
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
 }
 
 
@@ -901,7 +920,7 @@ export function RangeNotes({ distribution, children }: {
   const tags = d ? [
     d.thin && `تنها ${fa(d.count)} آگهی`,
     d.wide && "بازه‌ی پهن",
-    old && `${fa(d.old_price_pct)}٪ قیمت قدیمی`,
+    old && `${fa(d.old_price_pct)}% قیمت قدیمی`,
     d.clusters && "دو دسته قیمت",
   ].filter(Boolean) as string[] : [];
   if (!tags.length && !children) return null;
@@ -921,7 +940,7 @@ export function RangeNotes({ distribution, children }: {
         {d?.wide && <p>نیمه‌ی میانی قیمت‌ها {pct(d.width_pct, 0)} از میانه را می‌پوشاند.</p>}
         {old && (
           <p>
-            {fa(d!.old_price_pct)}٪ از این قیمت‌ها بیش از {fa(d!.old_price_days)} روز پیش ثبت
+            {fa(d!.old_price_pct)}% از این قیمت‌ها بیش از {fa(d!.old_price_days)} روز پیش ثبت
             شده‌اند و بازار از آن زمان جابه‌جا شده است.
           </p>
         )}

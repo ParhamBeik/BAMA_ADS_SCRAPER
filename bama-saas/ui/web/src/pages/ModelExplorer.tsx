@@ -21,7 +21,7 @@ import { Link } from "react-router-dom";
 import { ArrowLeft, X } from "lucide-react";
 import { api } from "../api";
 import { qs, useFilters } from "../filters";
-import { conditionLabel, faDateTime, km, num, toman, tomanRange } from "../format";
+import { conditionLabel, faDateTime, km, num, toman, tomanRange, tooLow, trimNote } from "../format";
 import { Async, Card, Fa, HowWeKnow, ListingActions, RangeNotes, Thumb } from "../ui";
 import type { Distribution } from "../ui";
 import { isZeroKm, MILEAGE_PRESETS } from "../components/FilterPanel";
@@ -45,7 +45,7 @@ type Summary = { count: number; thin: boolean; asking_range: Range | null;
 type Facet = Summary & { value: string | number | null; label: string | number | null };
 type Ad = { code: string; title: string; current_price: number; year_jalali: number | null;
   mileage: number | null; body_status: string; city__name_fa: string | null;
-  image_url: string; listing_url: string };
+  image_url: string; listing_url: string; variant__name_fa?: string | null };
 type Exploration = {
   model: { id: number; name: string; brand: string };
   basis: string;
@@ -422,7 +422,13 @@ export function ModelExplorer() {
                           <strong>
                             <Link to={ad.listing_url} className="stretch-link"><Fa>{ad.title}</Fa></Link>
                           </strong>
+                          {trimNote(ad.title, ad.variant__name_fa) && (
+                            <span className="stat-sub"><Fa>{trimNote(ad.title, ad.variant__name_fa)}</Fa></span>
+                          )}
                           <span className="deal-price">{toman(ad.current_price)}</span>
+                          {tooLow(ad.current_price, (useSelected ? data.selected : data.national).asking_range?.p10) && (
+                            <span className="badge warn">خیلی پایین‌تر از بازه؛ شاید پیش‌پرداخت</span>
+                          )}
                           <div className="row card-facts">
                             <span>{ad.year_jalali ?? "—"}</span>
                             <span aria-hidden>·</span>

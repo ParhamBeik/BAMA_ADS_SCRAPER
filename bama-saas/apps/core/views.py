@@ -78,6 +78,8 @@ MARKETS_CACHE_SECONDS = 120
 # tick (every 30 min) rewrites them, so this outlives it and no reader ever
 # pays for a miss; the crawl moves these by a handful per tick.
 CATALOG_CACHE_SECONDS = 45 * 60
+# Shorter than the hot tick that rebuilds the board.
+DEAL_BOARD_CACHE_SECONDS = 120
 # A car's price page reads every listing of that car in Python: ~1 s of CPU for
 # a 206 on the VPS. Uncached, 20 readers queued it to 12.6 s at the median
 # (load test 2026-10-15). Shared by every reader, so held like the catalog.
@@ -204,10 +206,13 @@ def model_search(request):
 
                     qs = qs.filter(token_q)
 
-    # Only the browse lists are cached: typed text would mint a key per
-    # keystroke, and a by-id lookup is one cheap row.
-    if by_id or params.get("q"):
-        return Response(_model_rows(qs, by_id=bool(by_id)))
+    if by_id:
+        return Response(_model_rows(qs, by_id=True))
+    # Typed text too: «تارا» took 3.4 s uncached. The input is debounced, so a
+    # key per settled query is a handful per search, and LRU evicts the rest.
+    if q := (params.get("q") or "").strip():
+        key = cache_key("catalog:models:q", {"q": q[:60], "brand": params.get("brand") or ""})
+        return Response(cached(key, CATALOG_CACHE_SECONDS, lambda: _model_rows(qs)))
     brand = params.get("brand") or ""
     return Response(cached(models_cache_key(brand), CATALOG_CACHE_SECONDS,
                            lambda: browse_models(brand)))
@@ -879,14 +884,25 @@ def deal_scores(request):
         if hi is not None:
             qs = qs.filter(components__peer_count__lt=hi)
 
-    count = qs.count()
-    return envelope({
-        "count": count, "limit": limit, "offset": offset, "band": band,
-        # The thresholds the page is standing on, so the screen can state them
-        # rather than describing a filter it does not know the value of.
-        "window": window,
-        "results": [_deal_score_row(o, now=now) for o in qs[offset:offset + limit]],
-    })
+    def produce():
+        return {
+            "count": qs.count(), "limit": limit, "offset": offset, "band": band,
+            # The thresholds the page is standing on, so the screen can state
+            # them rather than describing a filter it does not know the value of.
+            "window": window,
+            "results": [_deal_score_row(o, now=now) for o in qs[offset:offset + limit]],
+            "as_of": now,
+        }
+
+    # The unfiltered board is the same for every reader and took 4.5 s under
+    # load (audit 2026-10-29): it filters JSON fields over every scored car.
+    if set(params) <= {"band", "limit", "offset"}:
+        # Keyed on the window too: a rebuild recomputes it, so a fresh board
+        # never waits out the old one's TTL.
+        key = cache_key("deals:board", {"band": band, "limit": limit, "offset": offset,
+                                        "window": sorted(window.items())})
+        return envelope(cached(key, DEAL_BOARD_CACHE_SECONDS, produce))
+    return envelope(produce())
 
 
 @api_view(["GET"])
