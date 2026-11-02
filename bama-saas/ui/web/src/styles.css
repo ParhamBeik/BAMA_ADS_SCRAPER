@@ -1489,3 +1489,20 @@ button[aria-pressed="true"]:not(.save-fab) {
   [role="tab"] { min-height: 34px; }
   .breadcrumb a { display: inline-block; min-height: 32px; line-height: 32px; }
 }
+
+/* The global `a { color: accent }` is unlayered, so it beat this utility and the
+   bottom nav showed all four tabs as active. */
+a.text-muted-foreground { color: var(--muted); }
+.deal-price { color: var(--text); }
+.breadcrumb { align-items: center; }
+.cars-table-facts { display: none; }
+@media (max-width: 560px) {
+  /* Year and mileage move under the car name instead of wrapping into blobs. */
+  .cars-table-facts { display: block; margin-top: 2px; }
+  .cars-table th:nth-child(2), .cars-table td:nth-child(2),
+  .cars-table th:nth-child(3), .cars-table td:nth-child(3) { display: none; }
+}
+@media (max-width: 640px) {
+  /* A ten-digit budget with commas needs the whole row. */
+  .budget-input { flex: 1 1 100%; }
+}

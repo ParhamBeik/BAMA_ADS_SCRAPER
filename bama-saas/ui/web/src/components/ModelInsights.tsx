@@ -99,7 +99,14 @@ export function TrendPanel({ url }: { url: string }) {
     <Card title="روند قیمت" action={<WindowPicker defaultDays={DEFAULT_DAYS} />}>
       <Async query={trend} shape="chart" empty="هنوز سابقه‌ای برای این دسته ثبت نشده است.">
         {(data) => {
-          const points = data.series ?? [];
+          // The stored index counts from its own start date, so a window opened
+          // at 98 and printed 139.8 beside "42.2%" under "base 100 at the start
+          // of the range". Rebased here, the three numbers agree.
+          const raw = data.series ?? [];
+          const start = raw.find((p) => p.index_value != null)?.index_value;
+          const points = raw.map((p) => ({
+            ...p, index_value: p.index_value != null && start ? (p.index_value / start) * 100 : p.index_value,
+          }));
           const last = points[points.length - 1];
           return (
             <>
@@ -117,7 +124,7 @@ export function TrendPanel({ url }: { url: string }) {
                 />
                 <Stat
                   label="شاخص"
-                  value={data.latest_index != null ? data.latest_index.toFixed(1) : "—"}
+                  value={last?.index_value != null ? last.index_value.toFixed(1) : "—"}
                   sub={`پایه ${fa(data.base_value)} در ابتدای بازه`}
                 />
               </div>
