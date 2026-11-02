@@ -419,6 +419,9 @@ tbody tr:hover { background: var(--panel-2); }
    to `.num` alone: these cells hold one number and no Persian text, so there
    is no bidi run for the override to disturb. */
 td.num, th.num {
+  /* Each cell's own text decides: «4.8 میلیارد» was printed «میلیارد 4.8». */
+  unicode-bidi: plaintext;
+  white-space: nowrap;
   direction: ltr;
   text-align: left;
   font-family: var(--font-mono);

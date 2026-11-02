@@ -161,7 +161,7 @@ describe("modelYear", () => {
 describe("verdictNote", () => {
   it("names the reasons a cheap car went to review", () => {
     expect(verdictNote({ deal_status: "check", deal_reasons: ["stale_price"], price_age_days: 40 }))
-      .toBe(`قیمت قدیمی · قیمتِ ${fa(40)} روز پیش`);
+      .toBe(`قیمت قدیمی · قیمت بدون تغییر از ${fa(40)} روز پیش`);
   });
   it("states the comparison behind a deal", () => {
     expect(verdictNote({ deal_status: "deal", cheaper_than_pct: 90, fresh_peers: 20, price_age_days: 0 }))

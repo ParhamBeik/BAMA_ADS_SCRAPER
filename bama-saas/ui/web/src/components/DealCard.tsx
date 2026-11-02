@@ -115,7 +115,7 @@ export function verdictNote(
   deal: Pick<Deal, "deal_status" | "deal_reasons" | "cheaper_than_pct" | "fresh_peers" | "price_age_days">,
 ): string | null {
   const age = deal.price_age_days == null ? null
-    : deal.price_age_days <= 0 ? "قیمت امروز" : `قیمتِ ${fa(deal.price_age_days)} روز پیش`;
+    : deal.price_age_days <= 0 ? "قیمت امروز" : `قیمت بدون تغییر از ${fa(deal.price_age_days)} روز پیش`;
   if (deal.deal_status === "check") {
     const why = (deal.deal_reasons ?? []).map((r) => DEAL_REASON[r] ?? r).join("، ");
     return [why, age].filter(Boolean).join(" · ") || null;
