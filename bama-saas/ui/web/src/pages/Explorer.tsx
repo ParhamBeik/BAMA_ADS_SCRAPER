@@ -84,6 +84,7 @@ interface FairPrice extends Envelope {
   code: string;
   asking: number | null;
   fair_value: number | null;
+  median_gap_pct?: number | null;
   gap_pct: number | null;
   peer_count: number;
   dispersion: number | null;
@@ -403,10 +404,11 @@ function FairPriceSheet({ code, onClose }: { code: string; onClose: () => void }
                 <div className={`stat ${(data.gap_pct ?? 0) < 0 ? "up" : ""}`}>
                   {toman(data.fair_value)}
                 </div>
-                {data.gap_pct != null && (
+                {(data.median_gap_pct ?? data.gap_pct) != null && (
                   <div className="stat-sub">
-                    {Math.abs(data.gap_pct)}%{" "}
-                    {data.gap_pct > 0 ? "بالاتر از" : "پایین‌تر از"} قیمت منصفانه
+                    {/* The listing page's number, so one car does not read 7% here and 9% there. */}
+                    {Math.round(Math.abs((data.median_gap_pct ?? data.gap_pct)!))}%{" "}
+                    {(data.median_gap_pct ?? data.gap_pct)! > 0 ? "بالاتر از" : "پایین‌تر از"} حد معمول
                   </div>
                 )}
               </div>}
@@ -436,14 +438,15 @@ function FairPriceSheet({ code, onClose }: { code: string; onClose: () => void }
               ))}
             </Table>}
 
-            <div className="row" style={{ marginTop: 12 }}>
-              <Link className="btn" to={`/listing/${code}`}>صفحه آگهی</Link>
-              <ListingActions code={code} />
-            </div>
             <Provenance envelope={data} />
           </>
         )}
       </Async>
+      {/* Outside Async: a car with no fair value still needs a way onward. */}
+      <div className="row" style={{ marginTop: 12 }}>
+        <Link className="btn" to={`/listing/${code}`}>صفحه آگهی</Link>
+        <ListingActions code={code} />
+      </div>
     </Sheet>
   );
 }

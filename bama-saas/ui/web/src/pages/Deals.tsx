@@ -247,7 +247,6 @@ function BandedGrid({ rows, ceiling }: { rows: Deal[]; ceiling: number }) {
     out.push(
       <div key={`h${band}-${items[0].code}`} className="band-heading">
         {BAND_LABEL[band]}
-        <span className="badge">{items.length}</span>
       </div>,
       <div key={`g${band}-${items[0].code}`} className="card-grid">
         {items.map((d) => (

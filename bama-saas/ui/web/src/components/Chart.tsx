@@ -138,6 +138,9 @@ export function Chart({
         // be handed pairs rather than a separate label list — the label list is
         // what made a four-day hole look like one day.
         data: xType === "category" ? x : undefined,
+        // A value axis draws vertical gridlines by default, in ECharts' own
+        // near-white: the survival chart alone had bright bars across it.
+        splitLine: { show: false },
         axisLine: { lineStyle: { color: border } },
         axisLabel: {
           color: muted,
