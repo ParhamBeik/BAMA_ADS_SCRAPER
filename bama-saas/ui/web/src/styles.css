@@ -1487,5 +1487,5 @@ button[aria-pressed="true"]:not(.save-fab) {
 @media (pointer: coarse) {
   [data-slot="tabs-list"] { min-height: 40px; }
   [role="tab"] { min-height: 34px; }
-  .breadcrumb a, nav[aria-label] a { display: inline-block; min-height: 32px; line-height: 32px; }
+  .breadcrumb a { display: inline-block; min-height: 32px; line-height: 32px; }
 }
