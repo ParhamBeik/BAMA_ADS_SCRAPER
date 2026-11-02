@@ -398,12 +398,6 @@ function FairPriceSheet({ code, onClose }: { code: string; onClose: () => void }
               <div>
                 <div className="card-title">قیمت درخواستی فروشنده</div>
                 <div className="stat">{toman(data.asking)}</div>
-              </div>
-              {data.fair_value != null && <div>
-                <div className="card-title">قیمت منصفانه</div>
-                <div className={`stat ${(data.gap_pct ?? 0) < 0 ? "up" : ""}`}>
-                  {toman(data.fair_value)}
-                </div>
                 {(data.median_gap_pct ?? data.gap_pct) != null && (
                   <div className="stat-sub">
                     {/* The listing page's number, so one car does not read 7% here and 9% there. */}
@@ -411,6 +405,12 @@ function FairPriceSheet({ code, onClose }: { code: string; onClose: () => void }
                     {(data.median_gap_pct ?? data.gap_pct)! > 0 ? "بالاتر از" : "پایین‌تر از"} حد معمول
                   </div>
                 )}
+              </div>
+              {data.fair_value != null && <div>
+                <div className="card-title">قیمت منصفانه</div>
+                <div className={`stat ${(data.gap_pct ?? 0) < 0 ? "up" : ""}`}>
+                  {toman(data.fair_value)}
+                </div>
               </div>}
             </div>
 
