@@ -13,7 +13,7 @@
 import { Link } from "react-router-dom";
 import { AlertTriangle, BadgeCheck } from "lucide-react";
 import type { Envelope } from "@/api";
-import { Fa, Thumb } from "@/ui";
+import { Fa, ListingActions, Thumb } from "@/ui";
 import { fa, km, modelYear, pct, toman, trimNote } from "@/format";
 
 /**
@@ -187,6 +187,7 @@ export function DealCard({ deal, suspect }: { deal: Deal; suspect: boolean }) {
             </span>
           </span>
         )}
+        <ListingActions code={deal.code} compact name={deal.title} />
       </Thumb>
       <div className="listing-meta">
         <strong>

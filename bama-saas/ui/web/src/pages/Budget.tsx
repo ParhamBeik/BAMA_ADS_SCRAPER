@@ -219,6 +219,7 @@ export function Budget() {
                         </span>
                         <span className="stat-sub">
                           {num(o.within_budget)} آگهی {tolerance ? "در این بازه" : "زیر بودجه"}
+                          {o.year_min !== o.year_max && " در همه‌ی این سال‌ها"}
                           {o.median_mileage != null && <> · کارکرد میانه {km(o.median_mileage)}</>}
                         </span>
                       </Link>

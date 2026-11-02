@@ -33,9 +33,17 @@ export function parseAmount(input: string): number | null {
   return Math.round(Number(digits[0]) * scale);
 }
 
+/**
+ * An amount a person typed for a car. A bare "800" means 800 million and a bare
+ * "2" means 2 billion: nobody prices a car in single tomans, and read literally
+ * the rule could never fire and the budget matched nothing.
+ */
 export function parseBudget(input: string): number | null {
   const amount = parseAmount(input);
-  return amount != null && amount > 0 ? amount : null;
+  if (amount == null || amount <= 0) return null;
+  if (/[؀-ۿa-z]/i.test(input.replace(/[۰-۹٠-٩٫٬،]/g, ""))) return amount;
+  if (amount < 100) return Math.round(amount * 1_000_000_000);
+  return amount < 100_000 ? Math.round(amount * 1_000_000) : amount;
 }
 
 export function toman(value: number | null | undefined): string {

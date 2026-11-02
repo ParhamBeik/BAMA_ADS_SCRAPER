@@ -31,7 +31,7 @@ import { useAuth, useMlEnabled } from "../auth";
 import { FilterPanel } from "@/components/FilterPanel";
 import { listedFrom, qs, useFilters } from "../filters";
 import { Async, BamaLink, Card, ConfidenceDots, Fa, HowWeKnow, ListingActions, NumberInput, Pager, Provenance, Table } from "../ui";
-import { fa, pct, toman } from "../format";
+import { fa, pct, toman, num } from "../format";
 import { DealCard, conditionNote, conditionTag, type Deal, type DealBoard } from "../components/DealCard";
 import { ViewToggle, useListView } from "../components/ViewToggle";
 import { Button } from "../components/ui/button";
@@ -395,6 +395,7 @@ export function Deals() {
             const ceiling = board.window?.ceiling_pct ?? 25;
             return (
               <>
+                <p className="stat-sub list-count" role="status">{num(total)} آگهی</p>
                 {view === "cards" ? (
                   band === "review" || band === "ml" ? (
                     // Neither of these is ranked by freshness — `review` by

@@ -866,6 +866,9 @@ INSTALLMENT_MAX_RATIO = 0.8
 # placeholder, a deposit or a dropped zero; between it and 0.5 they were real
 # crashed, free-zone or worn-out cars.
 IMPLAUSIBLE_MAX_RATIO = 0.2
+# A fifth of the median is too far off to need the fair-price minimum: a 0 km
+# Changan with six peers asked 2% of their median and carried no warning.
+IMPLAUSIBLE_MIN_PEERS = 4
 
 # A car this far from its own group's median, outside its P10-P90, with an
 # ordinary odometer for its group, and sitting inside another trim's or year's
@@ -892,13 +895,14 @@ def flag_suspects(*, model_id: int | None = None) -> dict:
         r["band"] = peer_band(r["body_status"], r["mileage"])
         cohorts[(r["model_id"], r["variant_id"], r["year_jalali"])].append(r["current_price"])
     medians = {k: median(v) for k, v in cohorts.items() if len(v) >= MIN_PEERS}
+    thin_medians = {k: median(v) for k, v in cohorts.items() if len(v) >= IMPLAUSIBLE_MIN_PEERS}
 
     # Instalment: cheap first, then read text only for those few rows.
     cheap = {r["code"] for r in rows
              if (m := medians.get((r["model_id"], r["variant_id"], r["year_jalali"])))
              and r["current_price"] < INSTALLMENT_MAX_RATIO * m}
     implausible = {r["code"] for r in rows
-                   if (m := medians.get((r["model_id"], r["variant_id"], r["year_jalali"])))
+                   if (m := thin_medians.get((r["model_id"], r["variant_id"], r["year_jalali"])))
                    and r["current_price"] < IMPLAUSIBLE_MAX_RATIO * m}
     installment = {
         code for code, title, description in

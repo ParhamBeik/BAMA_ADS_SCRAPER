@@ -22,11 +22,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useMlEnabled } from "../auth";
 import { Link } from "react-router-dom";
-import { BellOff, Plus, Trash2, X } from "lucide-react";
+import { BellOff, Pencil, Plus, Trash2, X } from "lucide-react";
 import { api } from "../api";
 import type { Paginated } from "../api";
-import { Async, BamaLink, Card, Fa, NumberInput, Table, Thumb, HowWeKnow } from "../ui";
-import { km, pct, toman } from "../format";
+import { Async, BamaLink, Card, Fa, NumberInput, Table, Thumb, HowWeKnow, humanError, useUndo } from "../ui";
+import { km, num, parseBudget, pct, toman } from "../format";
 import { ModelCombobox } from "../components/ModelCombobox";
 import { useBrands } from "../catalogue";
 import {
@@ -75,7 +75,10 @@ interface Rule {
   telegram_chat_id: string;
   model_ids: number[];
   brand_slugs: string[];
-  cars: ({ kind: "brand"; brand: string } | { kind: "model"; brand: string; model: string })[];
+  cars: (
+    | { kind: "brand"; id: string; brand_slug: string; brand: string }
+    | { kind: "model"; id: number; brand_slug: string; brand: string; model: string }
+  )[];
 }
 
 /** `brand` is the slug a model belongs to, or the brand itself. */
@@ -84,10 +87,13 @@ const MAX_CARS = 10;
 
 const MIN_PEERS = 8;
 
-function RuleForm({ onDone }: { onDone: () => void }) {
+function RuleForm({ rule, onDone }: { rule?: Rule; onDone: () => void }) {
   const mlEnabled = useMlEnabled();
   const client = useQueryClient();
-  const [cars, setCars] = useState<PickedCar[]>([]);
+  const [cars, setCars] = useState<PickedCar[]>(() => (rule?.cars ?? []).map((c) => ({
+    kind: c.kind, id: String(c.id), brand: c.brand_slug,
+    label: c.kind === "brand" ? `همه‌ی ${c.brand}` : `${c.brand} ${c.model}`,
+  })));
   const { list: brandList } = useBrands();
   // A brand and one of its models do not sit side by side: the server reads
   // that pair as "only this model" (`car_scope_q`), so "all Peugeot" beside a
@@ -99,22 +105,28 @@ function RuleForm({ onDone }: { onDone: () => void }) {
       return kept.length >= MAX_CARS ? now : [...kept, car];
     });
   const [form, setForm] = useState({
-    name: "",
-    min_discount_pct: 12,
-    min_residual_pct: "" as string | number,
-    min_peers: MIN_PEERS,
-    price_max: "" as string | number,
-    mileage_max: "" as string | number,
-    exclude_review: true,
+    name: rule?.name ?? "",
+    min_discount_pct: (rule?.min_discount_pct ?? 12) as string | number,
+    min_residual_pct: (rule?.min_residual_pct ?? "") as string | number,
+    min_peers: rule?.min_peers ?? MIN_PEERS,
+    price_max: rule?.price_max != null ? rule.price_max.toLocaleString("en-US") : "",
+    mileage_max: (rule?.mileage_max ?? "") as string | number,
+    exclude_review: rule?.exclude_review ?? true,
   });
+  // The server refuses 0 and 100; say so beside the field, in Persian, before asking it.
+  const discount = Number(form.min_discount_pct);
+  const discountBad = !(discount > 0 && discount < 100);
+  const priceMax = form.price_max.trim() ? parseBudget(form.price_max) : null;
+  const priceBad = !!form.price_max.trim() && priceMax == null;
 
   const create = useMutation({
     mutationFn: () =>
-      api.post<Rule>("/api/alert-rules/", {
+      api[rule ? "patch" : "post"]<Rule>(rule ? `/api/alert-rules/${rule.id}/` : "/api/alert-rules/", {
         ...form,
+        min_discount_pct: discount,
         model_ids: cars.filter((c) => c.kind === "model").map((c) => Number(c.id)),
         brand_slugs: cars.filter((c) => c.kind === "brand").map((c) => c.id),
-        price_max: form.price_max === "" ? null : Number(form.price_max),
+        price_max: priceMax,
         mileage_max: form.mileage_max === "" ? null : Number(form.mileage_max),
         min_residual_pct:
           form.min_residual_pct === "" ? null : Number(form.min_residual_pct),
@@ -186,9 +198,12 @@ function RuleForm({ onDone }: { onDone: () => void }) {
             className={field}
             value={form.min_discount_pct}
             onChange={(e) =>
-              setForm({ ...form, min_discount_pct: Number(e.target.value) })
+              setForm({ ...form, min_discount_pct: e.target.value })
             }
           />
+          {discountBad && (
+            <span className="badge warn">عددی بین 1 تا 99 بنویسید.</span>
+          )}
         </label>
         {mlEnabled && (
           <label className="grid gap-1.5">
@@ -212,13 +227,18 @@ function RuleForm({ onDone }: { onDone: () => void }) {
         )}
         <label className="grid gap-1.5">
           <span className="text-muted-foreground text-xs font-semibold">
-            بیشترین قیمت (تومان)
+            بیشترین قیمت
           </span>
-          <NumberInput
+          <input
             className={field}
             value={form.price_max}
+            placeholder="مثلاً 800 میلیون"
             onChange={(e) => setForm({ ...form, price_max: e.target.value })}
           />
+          {priceMax != null && (
+            <span className="stat-sub">یعنی تا <bdi>{toman(priceMax)}</bdi> تومان</span>
+          )}
+          {priceBad && <span className="badge warn">این مبلغ خوانده نشد.</span>}
         </label>
         <label className="grid gap-1.5">
           <span className="text-muted-foreground text-xs font-semibold">
@@ -247,13 +267,14 @@ function RuleForm({ onDone }: { onDone: () => void }) {
       </div>
 
       <div className="row">
-        <Button onClick={() => create.mutate()} disabled={create.isPending}>
-          {create.isPending ? "در حال ذخیره…" : "ساخت قاعده"}
+        <Button onClick={() => create.mutate()}
+                disabled={create.isPending || discountBad || priceBad}>
+          {create.isPending ? "در حال ذخیره…" : rule ? "ذخیره تغییرات" : "ساخت قاعده"}
         </Button>
         <Button variant="ghost" onClick={onDone}>انصراف</Button>
         {create.isError && (
           <span className="badge warn">
-            {(create.error as Error)?.message ?? "ذخیره نشد"}
+            {humanError(create.error)}
           </span>
         )}
       </div>
@@ -265,14 +286,29 @@ function Rules() {
   const mlEnabled = useMlEnabled();
   const client = useQueryClient();
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<Rule | null>(null);
+  const { offer, bar } = useUndo();
   const rules = useQuery({
     queryKey: ["alert-rules"],
     queryFn: ({ signal }) => api.get<Paginated<Rule>>("/api/alert-rules/", signal),
   });
 
   const remove = useMutation({
-    mutationFn: (id: number) => api.del(`/api/alert-rules/${id}/`),
-    onSuccess: () => client.invalidateQueries({ queryKey: ["alert-rules"] }),
+    mutationFn: (rule: Rule) => api.del(`/api/alert-rules/${rule.id}/`),
+    onSuccess: (_, rule) => {
+      client.invalidateQueries({ queryKey: ["alert-rules"] });
+      offer("قاعده حذف شد", async () => {
+        const { name, enabled, brand_slug, model, variant, year_jalali, min_discount_pct,
+                min_residual_pct, min_peers, price_min, price_max, mileage_max,
+                exclude_review, telegram_chat_id, model_ids, brand_slugs } = rule;
+        await api.post("/api/alert-rules/", {
+          name, enabled, brand_slug, model, variant, year_jalali, min_discount_pct,
+          min_residual_pct, min_peers, price_min, price_max, mileage_max,
+          exclude_review, telegram_chat_id, model_ids, brand_slugs,
+        });
+        client.invalidateQueries({ queryKey: ["alert-rules"] });
+      });
+    },
   });
 
   const toggle = useMutation({
@@ -293,6 +329,7 @@ function Rules() {
       }
     >
       {adding && <RuleForm onDone={() => setAdding(false)} />}
+      {editing && <RuleForm key={editing.id} rule={editing} onDone={() => setEditing(null)} />}
       <Async query={rules} shape="table" empty="هنوز قاعده‌ای نساخته‌اید.">
         {(data) =>
           data.results.length ? (
@@ -311,6 +348,12 @@ function Rules() {
                     {rule.price_max != null && (
                       <div className="stat-sub">تا <bdi>{toman(rule.price_max)}</bdi> تومان</div>
                     )}
+                    {rule.mileage_max != null && (
+                      <div className="stat-sub">کارکرد تا {num(rule.mileage_max)} کیلومتر</div>
+                    )}
+                    {rule.exclude_review && (
+                      <div className="stat-sub">بدون رنگ‌شده و تعویضی</div>
+                    )}
                   </td>
                   <td className="num">
                     {pct(rule.min_discount_pct, 0)}
@@ -325,12 +368,20 @@ function Rules() {
                       onCheckedChange={() => toggle.mutate(rule)}
                     />
                   </td>
-                  <td className="num">
+                  <td className="num rule-actions">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      aria-label="ویرایش قاعده"
+                      onClick={() => { setAdding(false); setEditing(rule); }}
+                    >
+                      <Pencil className="size-4" />
+                    </Button>
                     <Button
                       variant="ghost"
                       size="sm"
                       aria-label="حذف قاعده"
-                      onClick={() => remove.mutate(rule.id)}
+                      onClick={() => remove.mutate(rule)}
                     >
                       <Trash2 className="size-4" />
                     </Button>
@@ -348,6 +399,7 @@ function Rules() {
           )
         }
       </Async>
+      {bar}
     </Card>
   );
 }

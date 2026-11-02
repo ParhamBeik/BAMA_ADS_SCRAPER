@@ -893,6 +893,7 @@ def test_favorite_response_matches_saved_screen_contract(api_client, catalog):
     assert resp.status_code == 201, resp.content
     body = resp.json()
     assert set(body) == {
+        "ad_year", "ad_mileage", "ad_city", "ad_variant", "ad_image",
         "code", "ad_title", "ad_price", "previous_price", "price_changed_at", "created_at",
     }
     assert body["code"] == ad.code
@@ -2221,7 +2222,8 @@ def test_one_alert_rule_can_cover_several_cars(member, deal_market):
         "model_ids": [deal_market["model"].pk, other.pk], "brand_slugs": ["elsewhere"],
     }, format="json")
     assert response.status_code == 201, response.json()
-    assert {"kind": "model", "brand": "برند تست", "model": "مدل تست"} in response.json()["cars"]
+    car = next(c for c in response.json()["cars"] if c["kind"] == "model")
+    assert (car["brand"], car["model"]) == ("برند تست", "مدل تست")
     elsewhere_only = AlertRule.objects.create(
         user=user, min_discount_pct=5, min_peers=8, model_ids=[other.pk])
 

@@ -21,7 +21,7 @@
  * Keep the field order narrowest-last, and keep the `market` fallback.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, BellRing } from "lucide-react";
+import { Eye, EyeOff } from "lucide-react";
 import { api } from "../api";
 import type { Paginated } from "../api";
 import { Button } from "./ui/button";
@@ -136,7 +136,7 @@ export function FollowButton({ scope }: { scope: Scope }) {
       onClick={() => (existing ? unfollow.mutate(existing.id) : follow.mutate())}
       aria-pressed={on}
     >
-      {on ? <BellRing className="size-4" /> : <Bell className="size-4" />}
+      {on ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
       {on ? "دنبال می‌کنید" : "دنبال کردن"}
     </Button>
   );

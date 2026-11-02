@@ -2,9 +2,9 @@ import { useState } from "react";
 import { useMlEnabled } from "../auth";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
-import { api } from "../api";
+import { api, ApiError } from "../api";
 import { Async, BamaLink, FLAG_LABEL, Fa, ListingActions, PriceBar, PriceVerdict, Provenance, RangeNotes, HowWeKnow } from "../ui";
-import { bothDates, fa, faDate, modelYear, num, pct, toman, trimNote } from "../format";
+import { bothDates, fa, faDate, modelYear, num, pct, toman, tooLow, trimNote } from "../format";
 import type { Basis, Distribution, Verdict } from "../ui";
 import { verdictNote, type Deal } from "../components/DealCard";
 import { FollowButton } from "../components/FollowButton";
@@ -217,7 +217,13 @@ export function ListingDetail() {
 
   return (
     <div className="stack">
-      <Async query={ad}>
+      {ad.error instanceof ApiError && ad.error.status === 404 ? (
+        <div className="state">
+          <strong>این آگهی پیدا نشد.</strong>
+          <p className="empty-hint">شاید حذف شده یا نشانی اشتباه است.</p>
+          <Link to="/cars" className="empty-action">دیدن خودروها</Link>
+        </div>
+      ) : <Async query={ad}>
         {(data) => (
           <>
             {/* One parent, and the right one. This read
@@ -342,7 +348,7 @@ export function ListingDetail() {
             </div>
           </>
         )}
-      </Async>
+      </Async>}
 
       {/* Held back until the listing itself has rendered, and that ordering is
           the whole point. These three panels resolve independently of `ad`, so
@@ -374,6 +380,9 @@ export function ListingDetail() {
               {/* Where this car sits among its peers: the bar's legend already
                   carries this ad, the median and the middle half, so they are
                   not repeated in a table. The rest is behind the tap. */}
+              {tooLow(fp.asking, fp.distribution?.p10) && (
+                <p className="badge warn">این قیمت خیلی پایین‌تر از مشابه‌هاست؛ شاید پیش‌پرداخت یا اشتباه ثبت باشد.</p>
+              )}
               <PriceBar distribution={fp.distribution} asking={fp.asking} />
               {fp.cohort_stale && <span className="badge warn">مشابه‌ها قدیمی</span>}
               <RangeNotes distribution={fp.distribution}>

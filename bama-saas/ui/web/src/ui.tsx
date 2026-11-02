@@ -485,6 +485,27 @@ export function Async<T>({
  * is only shown when there is nothing better to say, and never on a 5xx, where
  * it is a stack-trace fragment.
  */
+/** Take something away at once, and offer it back for a few seconds. */
+export function useUndo() {
+  const [undo, setUndo] = useState<{ label: string; restore: () => Promise<unknown> } | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const offer = (label: string, restore: () => Promise<unknown>) => {
+    clearTimeout(timer.current);
+    setUndo({ label, restore });
+    timer.current = setTimeout(() => setUndo(null), 7000);
+  };
+  useEffect(() => () => clearTimeout(timer.current), []);
+  const bar = undo && (
+    <div role="status" className="undo-bar">
+      <span>{undo.label}</span>
+      <button type="button" onClick={() => { const u = undo; setUndo(null); void u.restore(); }}>
+        بازگردانی
+      </button>
+    </div>
+  );
+  return { offer, bar };
+}
+
 export function humanError(error: unknown): string {
   const status = error instanceof ApiError ? error.status : 0;
   if (status === 404) return "پیدا نشد — شاید حذف شده یا نشانی اشتباه است.";

@@ -26,13 +26,13 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { AlertTriangle, ArrowUpDown, Gauge, Wallet } from "lucide-react";
-import { api } from "../api";
+import { api, ApiError } from "../api";
 import type { Envelope, Paginated } from "../api";
 import { FilterPanel } from "@/components/FilterPanel";
 import { listedFrom, qs, useFilters } from "../filters";
 import { Button } from "../components/ui/button";
 import { Async, BamaLink, Card, FLAG_LABEL, Fa, ListingActions, Pager, PriceBar, Provenance, Sheet, Table, Thumb } from "../ui";
-import { conditionLabel, km, modelYear, num, toman, trimNote } from "../format";
+import { conditionLabel, km, modelYear, num, toman, tooLow, trimNote } from "../format";
 import type { Distribution } from "../ui";
 import { ViewToggle, useListView } from "../components/ViewToggle";
 import { conditionNote, conditionTag } from "../components/DealCard";
@@ -240,7 +240,15 @@ export function Explorer() {
           </div>
         }
       >
-        <Async
+        {/* A page past the end answers 404, not an empty list. */}
+        {ads.error instanceof ApiError && ads.error.status === 404 && page > 1 ? (
+          <div className="state">
+            <strong>این صفحه دیگر وجود ندارد.</strong>
+            <Button variant="outline" size="sm" onClick={() => filters.set({ page: null })}>
+              برگشت به صفحه‌ی اول
+            </Button>
+          </div>
+        ) : <Async
           query={ads}
           empty="آگهی‌ای با این فیلترها پیدا نشد."
           shape={view === "cards" ? "cards" : "table"}
@@ -262,6 +270,7 @@ export function Explorer() {
             </div>
           ) : (
             <>
+              <p className="stat-sub list-count" role="status">{num(data.count)} آگهی</p>
               {view === "cards" ? (
                 <div className="card-grid">
                   {data.results.map((ad) => (
@@ -374,7 +383,7 @@ export function Explorer() {
               </div>
             </>
           )}
-        </Async>
+        </Async>}
       </Card>
 
       {selected && (
@@ -403,7 +412,7 @@ function FairPriceSheet({ code, onClose }: { code: string; onClose: () => void }
                   <div className="stat-sub">
                     {/* The listing page's number, so one car does not read 7% here and 9% there. */}
                     {Math.round(Math.abs((data.median_gap_pct ?? data.gap_pct)!))}%{" "}
-                    {(data.median_gap_pct ?? data.gap_pct)! > 0 ? "بالاتر از" : "پایین‌تر از"} حد معمول
+                    {(data.median_gap_pct ?? data.gap_pct)! > 0 ? "بالاتر از" : "پایین‌تر از"} میانه‌ی مشابه‌ها
                   </div>
                 )}
               </div>
@@ -416,6 +425,9 @@ function FairPriceSheet({ code, onClose }: { code: string; onClose: () => void }
             </div>
 
             {/* The answer first, the arithmetic under it. */}
+            {tooLow(data.asking, data.distribution?.p10) && (
+              <p className="badge warn">این قیمت خیلی پایین‌تر از مشابه‌هاست؛ شاید پیش‌پرداخت یا اشتباه ثبت باشد.</p>
+            )}
             <PriceBar distribution={data.distribution} asking={data.asking} />
 
             <p className="empty-hint">
