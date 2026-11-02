@@ -32,7 +32,7 @@ import { FilterPanel } from "@/components/FilterPanel";
 import { listedFrom, qs, useFilters } from "../filters";
 import { Async, BamaLink, Card, ConfidenceDots, Fa, HowWeKnow, ListingActions, NumberInput, Pager, Provenance, Table } from "../ui";
 import { fa, pct, toman } from "../format";
-import { DealCard, conditionNote, type Deal, type DealBoard } from "../components/DealCard";
+import { DealCard, conditionNote, conditionTag, type Deal, type DealBoard } from "../components/DealCard";
 import { ViewToggle, useListView } from "../components/ViewToggle";
 import { Button } from "../components/ui/button";
 import { Label } from "../components/ui/label";
@@ -325,6 +325,7 @@ export function Deals() {
     // as chips here and be ignored: 7 of 9 "automatic" deals were manual.
     q: filters.get("q"),
     listed_from: listedFrom(filters.getInt("listed_days")),
+    color: filters.get("color"),
     transmission: filters.get("transmission"),
     fuel: filters.get("fuel"),
     body_type: filters.get("body_type"),
@@ -426,7 +427,7 @@ export function Deals() {
                           {d.condition_flagged && (
                             <div className="badge warn" style={{ marginTop: 4 }}
                                  title={conditionNote(d)}>
-                              <AlertTriangle size={11} /> {d.body_status || "توضیحات وضعیت را بخوانید"}
+                              <AlertTriangle size={11} /> {conditionTag(d)}
                             </div>
                           )}
                         </td>

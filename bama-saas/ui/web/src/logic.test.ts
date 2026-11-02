@@ -9,7 +9,7 @@
  * Telegram notifier that quotes the same price.
  */
 import { describe, expect, it } from "vitest";
-import { onePerSeller, verdictNote } from "./components/DealCard";
+import { conditionTag, onePerSeller, verdictNote } from "./components/DealCard";
 import { scopeKey } from "./components/FollowButton";
 import { qs } from "./filters";
 import { mileageLabel } from "./components/FilterPanel";
@@ -158,7 +158,18 @@ describe("modelYear", () => {
   });
 });
 
+describe("conditionTag", () => {
+  it("never names a clean body on a warning", () => {
+    expect(conditionTag({ body_status: "بدون رنگ", condition_band: "clean" })).toBe("توضیحات آگهی را بخوانید");
+    expect(conditionTag({ body_status: "دو لکه رنگ", condition_band: "painted" })).toBe("دو لکه رنگ");
+  });
+});
+
 describe("verdictNote", () => {
+  it("gives a review card with no named reason the gap itself as its reason", () => {
+    expect(verdictNote({ deal_status: "check", deal_reasons: [] })).toBe("اختلاف قیمت غیرعادی زیاد است");
+  });
+
   it("names the reasons a cheap car went to review", () => {
     expect(verdictNote({ deal_status: "check", deal_reasons: ["stale_price"], price_age_days: 40 }))
       .toBe(`قیمت قدیمی · قیمت بدون تغییر از ${fa(40)} روز پیش`);

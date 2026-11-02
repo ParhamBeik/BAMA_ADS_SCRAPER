@@ -217,6 +217,8 @@ interface MarketRead extends Partial<Envelope> {
   arrived: number;
   departed: number;
   window_days: number;
+  /** Days the slope really stands on; `window_days` is only what was asked for. */
+  index_days: number;
 }
 
 /**
@@ -287,7 +289,7 @@ function MarketReadPanel({ days }: { days: number }) {
                   value={DIRECTION_LABEL[data.price_direction] ?? "—"}
                   tone={data.price_direction === "flat" ? undefined
                         : data.price_direction === "up" ? "up" : "down"}
-                  sub={`شیب شاخص در ${fa(data.window_days)} روز`}
+                  sub={`شیب شاخص در ${fa(data.index_days)} روز`}
                 />
                 <Stat
                   label="عرضه و تقاضا"

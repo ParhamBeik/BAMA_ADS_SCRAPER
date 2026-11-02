@@ -26,7 +26,7 @@ interface Trend extends Partial<Envelope> {
   latest_index: number | null;
   change_pct: number | null;
   base_value: number;
-  window: { requested_days: number; days: number; clamped: boolean };
+  window: { requested_days: number; days: number; clamped: boolean; last_date?: string | null };
   sample: {
     cohort_count: number; ad_count: number; thin: boolean; min_cohorts: number;
     low_coverage_days: number; max_gap_days: number;
@@ -78,6 +78,8 @@ export function trendRequest(f: {
   return `/api/analytics/market-index/${qs({ days: f.days })}`;
 }
 
+const STALE_INDEX_MS = 3 * 86_400_000;
+
 export function TrendPanel({ url }: { url: string }) {
   const trend = useQuery({
     queryKey: ["trend", url],
@@ -87,9 +89,14 @@ export function TrendPanel({ url }: { url: string }) {
       // so a selling car (Tara: 276 prices) read «0 روز». Its own cohort series
       // still has the days; it arrives marked thin, and says so.
       const model = new URL(url, location.origin).searchParams;
-      if (!index.series?.length && model.get("scope") === "model" && model.get("id")) {
-        return api.get<Trend>(`/api/analytics/movement/${qs({
+      // The same gap can open later: a model that drops under the bar keeps its
+      // old rows, so the chart ended weeks ago under a "now" heading.
+      const last = index.window?.last_date;
+      const stale = !!last && Date.now() - new Date(last).getTime() > STALE_INDEX_MS;
+      if ((!index.series?.length || stale) && model.get("scope") === "model" && model.get("id")) {
+        const own = await api.get<Trend>(`/api/analytics/movement/${qs({
           model: model.get("id")!, days: model.get("days") ?? undefined })}`, signal);
+        return own.series?.length ? own : index;
       }
       return index;
     },
