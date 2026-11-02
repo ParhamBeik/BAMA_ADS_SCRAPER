@@ -1292,3 +1292,17 @@ def test_zero_km_cars_are_their_own_peer_group():
     from apps.core.quality import peer_band
     assert peer_band("بدون رنگ", 0) == "new"
     assert peer_band("بدون رنگ", 12_000) == CLEAN
+
+
+@pytest.mark.parametrize("text,flagged", [
+    ("شاسی جلو سمت راننده ضربه و بکس", True),
+    ("سر شاسی ضربه خورده است", True),
+    ("شاسی خوردگی داره", True),
+    ("شاسی ها پلمپ بدون ضربه", False),
+    ("شاسی ها سالم پوسته سقف سالم", False),
+    ("شاسی و سینی سالم فنی", False),
+    ("شاسی ضربه ندارد", False),
+])
+def test_chassis_damage_in_free_word_order(text, flagged):
+    from apps.core.quality import red_flags
+    assert red_flags(description=text) is flagged
