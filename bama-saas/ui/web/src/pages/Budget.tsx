@@ -80,11 +80,13 @@ const PAGE = 40;
 /** `_affordable_limit` on the server; asking past it returns the same rows. */
 const MAX_LIMIT = 400;
 
+const grouped = (n: number) => n.toLocaleString("en-US");
+
 export function Budget() {
   const filters = useFilters();
   const budget = filters.getInt("budget");
   const tolerance = filters.getInt("tolerance") ?? 10;
-  const [draft, setDraft] = useState(budget ? String(budget) : "");
+  const [draft, setDraft] = useState(budget ? grouped(budget) : "");
   // Grows by a page per "more"; a new budget or tolerance starts over.
   const [shown, setShown] = useState({ key: "", limit: PAGE });
   const searchKey = `${budget}-${tolerance}`;
@@ -121,11 +123,15 @@ export function Budget() {
           <NumberInput
             className="border-border bg-panel min-w-0 flex-1 rounded-md border px-3 py-2 text-sm sm:max-w-64"
             aria-label="بودجه به تومان"
-            placeholder="مثلاً 1000000000"
+            placeholder="مثلاً 1,000,000,000"
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            // Ten digits cannot be read without commas; words («800 میلیون»)
+            // stay as typed until the field is left.
+            onChange={(e) => setDraft(/^[\d,]+$/.test(e.target.value)
+              ? grouped(Number(e.target.value.replace(/,/g, ""))) : e.target.value)}
             onBlur={(e) => commit(e.target.value)}
           />
+          <span className="text-muted-foreground text-sm">تومان</span>
           <Button type="submit">ببین چه می‌شود خرید</Button>
         </form>
 
@@ -137,7 +143,7 @@ export function Budget() {
               className={`preset${budget === value ? " on" : ""}`}
               aria-pressed={budget === value}
               onClick={() => {
-                setDraft(String(value));
+                setDraft(grouped(value));
                 filters.set({ budget: value });
               }}
             >

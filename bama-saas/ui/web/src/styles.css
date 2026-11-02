@@ -1477,3 +1477,15 @@ button[aria-pressed="true"]:not(.save-fab) {
 [role="switch"][data-state="unchecked"] { background: var(--border) !important; }
 .row-open { all: unset; cursor: pointer; font-weight: 600; text-align: start; }
 .row-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+/* Phone: the deals table keeps car, discount and price; the card view has the rest. */
+@media (max-width: 560px) {
+  .deals-table th:nth-child(n+4):nth-child(-n+7),
+  .deals-table td:nth-child(n+4):nth-child(-n+7) { display: none; }
+}
+/* Phone tap targets: chips, tab rows and the breadcrumb under 32px. */
+@media (pointer: coarse) {
+  [data-slot="tabs-list"] { min-height: 40px; }
+  [role="tab"] { min-height: 34px; }
+  .breadcrumb a, nav[aria-label] a { display: inline-block; min-height: 32px; line-height: 32px; }
+}

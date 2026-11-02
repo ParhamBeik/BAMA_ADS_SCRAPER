@@ -13,7 +13,7 @@ import { onePerSeller, verdictNote } from "./components/DealCard";
 import { scopeKey } from "./components/FollowButton";
 import { qs } from "./filters";
 import { mileageLabel } from "./components/FilterPanel";
-import { carName, fa, modelYear, parseAmount, parseBudget, pct, toman, tomanRange, trimNote, bothDates, faDateTime } from "./format";
+import { carName, fa, modelYear, parseAmount, parseBudget, pct, toman, tomanRange, trimNote, bothDates, faDateTime, tooLow } from "./format";
 import { modelFamilies } from "./components/ModelCombobox";
 
 it("parses Persian and Arabic-Indic budget input without dropping its digits", () => {
@@ -165,7 +165,7 @@ describe("verdictNote", () => {
   });
   it("states the comparison behind a deal", () => {
     expect(verdictNote({ deal_status: "deal", cheaper_than_pct: 90, fresh_peers: 20, price_age_days: 0 }))
-      .toBe(`ارزان‌تر از ${fa(90)}٪ از ${fa(20)} آگهی تازه · قیمت امروز`);
+      .toBe(`ارزان‌تر از ${fa(90)}% از ${fa(20)} آگهی تازه · قیمت امروز`);
   });
   it("says nothing when no peer group could judge", () => {
     expect(verdictNote({ deal_status: null })).toBeNull();
@@ -240,4 +240,10 @@ describe("faDateTime", () => {
     expect(out).toContain("، ");
     expect(out).not.toMatch(/:\d\d:\d\d/);
   });
+});
+
+it("flags a price far under the range's cheap end", () => {
+  expect(tooLow(1_150_000_000, 2_900_000_000)).toBe(true);
+  expect(tooLow(2_500_000_000, 2_900_000_000)).toBe(false);
+  expect(tooLow(null, 2_900_000_000)).toBe(false);
 });

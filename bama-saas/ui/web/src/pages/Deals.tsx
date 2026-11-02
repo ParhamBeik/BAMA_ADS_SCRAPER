@@ -410,7 +410,7 @@ export function Deals() {
                     <BandedGrid rows={rows} ceiling={ceiling} />
                   )
                 ) : (
-                  <Table
+                  <div className="deals-table"><Table
                     head={[
                       "آگهی", "تخفیف", "قیمت", "میانه مشابه‌ها",
                       "تعداد مشابه", "اعتبار", "در بازار", "",
@@ -445,7 +445,7 @@ export function Deals() {
                         </td>
                       </tr>
                     ))}
-                  </Table>
+                  </Table></div>
                 )}
 
                 <div style={{ marginTop: 14 }}>
