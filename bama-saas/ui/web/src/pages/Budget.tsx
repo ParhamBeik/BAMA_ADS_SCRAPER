@@ -121,7 +121,7 @@ export function Budget() {
         >
           <Wallet className="text-muted-foreground size-4 flex-none" aria-hidden />
           <NumberInput
-            className="border-border bg-panel min-w-0 flex-1 rounded-md border px-3 py-2 text-sm sm:max-w-64"
+            className="budget-input border-border bg-panel min-w-0 flex-1 rounded-md border px-3 py-2 text-sm sm:max-w-64"
             aria-label="بودجه به تومان"
             placeholder="مثلاً 1,000,000,000"
             value={draft}

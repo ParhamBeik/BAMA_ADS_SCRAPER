@@ -324,7 +324,7 @@ export function Explorer() {
                   ))}
                 </div>
               ) : (
-                <Table head={["خودرو", "سال", "کارکرد", "قیمت", ""]}>
+                <div className="cars-table"><Table head={["خودرو", "سال", "کارکرد", "قیمت", ""]}>
                   {data.results.map((ad) => (
                     <tr
                       key={ad.code}
@@ -337,6 +337,9 @@ export function Explorer() {
                                 onClick={(e) => { e.stopPropagation(); setSelected(ad.code); }}>
                           <Fa>{ad.title || ad.model_name}</Fa>
                         </button>
+                        <div className="cars-table-facts stat-sub">
+                          {modelYear(ad.year_jalali, ad.year_calendar)} · {km(ad.mileage)}
+                        </div>
                         <div className="row" style={{ marginTop: 4 }}>
                           <AdWarnings ad={ad} />
                         </div>
@@ -356,7 +359,7 @@ export function Explorer() {
                       </td>
                     </tr>
                   ))}
-                </Table>
+                </Table></div>
               )}
               <div style={{ marginTop: 10 }}>
                 <Pager
