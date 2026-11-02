@@ -218,7 +218,7 @@ export function Budget() {
                           میانه <bdi>{toman(o.median_price)}</bdi>
                         </span>
                         <span className="stat-sub">
-                          {num(o.within_budget)} آگهی زیر بودجه
+                          {num(o.within_budget)} آگهی {tolerance ? "در این بازه" : "زیر بودجه"}
                           {o.median_mileage != null && <> · کارکرد میانه {km(o.median_mileage)}</>}
                         </span>
                       </Link>

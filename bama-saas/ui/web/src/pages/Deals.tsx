@@ -55,11 +55,13 @@ const PAGE_SIZE = 24;
  * second copy of that band's heading further down the grid.
  */
 const BAND_LABEL = [
-  "امروز",
-  "1 تا 3 روز پیش",
-  "4 تا 7 روز پیش",
-  "1 تا 2 هفته پیش",
-  "بیش از دو هفته پیش",
+  // Bama's bump date, not the price's age: a card under «امروز» read
+  // «قیمتِ 6 روز پیش» and looked like a contradiction.
+  "آگهی به‌روزشده امروز",
+  "به‌روزشده 1 تا 3 روز پیش",
+  "به‌روزشده 4 تا 7 روز پیش",
+  "به‌روزشده 1 تا 2 هفته پیش",
+  "به‌روزشده بیش از دو هفته پیش",
 ];
 
 const LAST_BAND = BAND_LABEL.length - 1;

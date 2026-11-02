@@ -398,7 +398,7 @@ function FairPriceSheet({ code, onClose }: { code: string; onClose: () => void }
                 <div className="card-title">قیمت درخواستی فروشنده</div>
                 <div className="stat">{toman(data.asking)}</div>
               </div>
-              <div>
+              {data.fair_value != null && <div>
                 <div className="card-title">قیمت منصفانه</div>
                 <div className={`stat ${(data.gap_pct ?? 0) < 0 ? "up" : ""}`}>
                   {toman(data.fair_value)}
@@ -409,7 +409,7 @@ function FairPriceSheet({ code, onClose }: { code: string; onClose: () => void }
                     {data.gap_pct > 0 ? "بالاتر از" : "پایین‌تر از"} قیمت منصفانه
                   </div>
                 )}
-              </div>
+              </div>}
             </div>
 
             {/* The answer first, the arithmetic under it. */}
@@ -419,7 +419,7 @@ function FairPriceSheet({ code, onClose }: { code: string; onClose: () => void }
               بر پایه {data.peer_count} آگهی مشابه با همان مدل، تیپ و سال ساخت.
             </p>
 
-            <Table head={["جزء محاسبه", "تومان"]}>
+            {data.components.length > 0 && <Table head={["جزء محاسبه", "تومان"]}>
               {data.components.map((c) => (
                 <tr key={c.name}>
                   <td>
@@ -434,7 +434,7 @@ function FairPriceSheet({ code, onClose }: { code: string; onClose: () => void }
                   </td>
                 </tr>
               ))}
-            </Table>
+            </Table>}
 
             <div className="row" style={{ marginTop: 12 }}>
               <Link className="btn" to={`/listing/${code}`}>صفحه آگهی</Link>

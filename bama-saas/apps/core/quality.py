@@ -169,7 +169,11 @@ _RED_FLAGS_RE = re.compile(RED_FLAGS)
 _DAMAGE = (
     r"((?<!روغن )(?<!روغن)(?<!دسته )موتور.?(باز|خراب|تعویض|سوخته)"
     r"|(?<!روغن )(?<!روغن)(?<!خنک کن )(?<!سرد کن )(?<!فیلتر )گیربکس.?(خراب|تعویض)"
-    r"|نیاز.?به.?تعمیر|تصادفی|شاسی.?(تعویض|خورده|جوش))"
+    r"|نیاز.?به.?تعمیر|تصادفی|شاسی.?(تعویض|خورده|جوش)"
+    # Chassis damage in free word order ("شاسی جلو سمت راننده ضربه"). Stops at a
+    # denial so "شاسی ها پلمپ بدون ضربه" passes. 2026-11-02: about 10 of the 34
+    # current deals naming شاسی admitted damage, one of them ranked first.
+    r"|شاسی(?:(?!سالم|پلمپ|پلمب|بدون|بی )[^.،\n]){0,20}(خوردگی|ضربه|فشار|ترمیم|صافکاری))"
 )
 _DAMAGE_RE = re.compile(_DAMAGE)
 _NEGATED_DAMAGE_RE = re.compile(
