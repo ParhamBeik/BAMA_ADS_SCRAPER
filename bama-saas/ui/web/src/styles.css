@@ -1509,3 +1509,7 @@ a.text-muted-foreground { color: var(--muted); }
   /* A ten-digit budget with commas needs the whole row. */
   .budget-input { flex: 1 1 100%; }
 }
+@media (max-width: 560px) {
+  /* The car name already opens the listing, where save and Bama live. */
+  .deals-table th:nth-child(8), .deals-table td:nth-child(8) { display: none; }
+}

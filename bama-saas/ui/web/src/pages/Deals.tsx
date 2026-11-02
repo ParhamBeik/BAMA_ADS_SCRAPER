@@ -436,7 +436,8 @@ export function Deals() {
                         <td className="num">{d.peer_count ?? "—"}</td>
                         <td className="num"><ConfidenceDots tier={d.confidence} /></td>
                         <td className="num">
-                          {d.days_listed != null ? `${d.days_listed} روز` : "—"}
+                          {/* `days_listed` restarts at every bump: 18 of 24 rows read «0 روز». */}
+                          {(d.age_days ?? d.days_listed) != null ? `${d.age_days ?? d.days_listed} روز` : "—"}
                         </td>
                         <td className="num">
                           <div className="row">

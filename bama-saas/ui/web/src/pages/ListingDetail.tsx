@@ -210,7 +210,7 @@ export function ListingDetail() {
   });
   const history = useQuery({
     queryKey: ["price-history", code],
-    queryFn: ({ signal }) => api.get<{ results?: { price: number; observed_at: string }[] } | { price: number; observed_at: string }[]>(`/api/ads/${code}/price-history/`, signal),
+    queryFn: ({ signal }) => api.get<{ series?: { price: number; observed_at: string }[] }>(`/api/ads/${code}/price-history/`, signal),
     enabled: !!code,
   });
 
@@ -423,8 +423,10 @@ export function ListingDetail() {
         <h2>تاریخچه قیمت</h2>
         <Async query={history}>
           {(rows) => {
-            const list = Array.isArray(rows) ? rows : rows.results ?? [];
-            if (!list.length) return <p className="muted">تغییر قیمتی ثبت نشده است.</p>;
+            // The endpoint answers `{series}`, oldest first. This read `results`, so
+            // every car said "no price change" whatever its history held.
+            const list = [...(rows.series ?? [])].reverse();
+            if (list.length < 2) return <p className="muted">تغییر قیمتی ثبت نشده است.</p>;
             return (
               <div className="table-wrap">
               <table className="table">
