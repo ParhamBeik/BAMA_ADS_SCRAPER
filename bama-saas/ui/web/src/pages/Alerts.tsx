@@ -219,9 +219,7 @@ function RuleForm({ rule, onDone }: { rule?: Rule; onDone: () => void }) {
               }
             />
             <span className="text-muted-foreground text-[11px]">
-              خالی بگذارید تا فقط تخفیف نسبت به میانه هم‌گروه ملاک باشد. اگر عدد
-              بگذارید، آگهی باید علاوه بر آن زیر برآورد مدل هم باشد — همان فهرست
-              «مدل» در صفحه معامله‌ها.
+              خالی = فقط تخفیف نسبت به میانه هم‌گروه؛ عدد = زیر برآورد مدل هم باشد.
             </span>
           </label>
         )}
@@ -441,10 +439,14 @@ export function Alerts() {
 
   return (
     <div className="stack">
-      <Card title="آگهی‌های رسیده">
-        <Async query={feed} shape="cards" empty="هنوز اعلانی نرسیده است.">
-          {(data) =>
-            data.results.length ? (
+      <Async query={feed} shape="cards" empty="هنوز اعلانی نرسیده است.">
+        {(data) =>
+          data.results.length ? (
+            <div className="stack">
+              <div className="grid-header">
+                <h2 className="card-title">آگهی‌های رسیده</h2>
+                <span className="stat-sub">{num(data.results.length)} آگهی</span>
+              </div>
               <div className="card-grid">
                 {data.results.map((alert) => (
                   <div key={alert.id} className="listing-card stretch-host">
@@ -488,7 +490,9 @@ export function Alerts() {
                   </div>
                 ))}
               </div>
-            ) : (
+            </div>
+          ) : (
+            <Card title="آگهی‌های رسیده">
               <div className="state">
                 <strong>هنوز اعلانی نرسیده است.</strong>
                 <HowWeKnow><p>
@@ -496,10 +500,10 @@ export function Alerts() {
                   قاعده‌ای ندارید، پایین همین صفحه یکی بسازید.
                 </p></HowWeKnow>
               </div>
-            )
-          }
-        </Async>
-      </Card>
+            </Card>
+          )
+        }
+      </Async>
 
       <Rules />
     </div>

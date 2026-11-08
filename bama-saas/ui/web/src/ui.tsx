@@ -13,7 +13,7 @@
  */
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Database, ExternalLink, Heart, Info, X } from "lucide-react";
+import { AlertTriangle, Database, ExternalLink, Heart, Info } from "lucide-react";
 import { Link } from "react-router-dom";
 import { ApiError, api, type Envelope, type Paginated } from "./api";
 import { useAuth } from "./auth";
@@ -26,13 +26,13 @@ import { fa, faDateTime, latinDigits, num, parseAmount, pct, since, toman } from
  * detail page used to print the raw `price_outlier_low` string.
  */
 export const FLAG_LABEL: Record<string, string> = {
-  price_outlier_low: "خیلی پایین‌تر از آگهی‌های مشابه — دلیلش را بررسی کنید",
-  price_outlier_high: "خیلی بالاتر از آگهی‌های مشابه",
+  price_outlier_low: "خیلی پایین‌تر از مشابه‌ها — دلیلش را بررسی کنید",
+  price_outlier_high: "خیلی بالاتر از مشابه‌ها",
   // Kept out of every price range; the listing itself stays visible.
   suspect_installment_price: "احتمالاً پیش‌پرداخت اقساطی است، نه قیمت کامل",
-  suspect_misfiled: "قیمتش به تیپ یا سال دیگری از همین مدل می‌خورد — شاید اشتباه ثبت شده",
+  suspect_misfiled: "شاید در تیپ یا سال اشتباهی ثبت شده باشد",
   // Hidden from the listings; seen only on a directly opened ad.
-  price_implausible: "این عدد قیمت خودرو نیست — احتمالاً پیش‌پرداخت یا اشتباه تایپی",
+  price_implausible: "احتمالاً پیش‌پرداخت یا اشتباه تایپی است",
 };
 
 /**
@@ -357,29 +357,25 @@ export function SeriesCaveats({
   if (window.clamped) {
     tags.push(`فقط ${fa(window.days)} روز سابقه`);
     notes.push(
-      `سابقه شاخص فقط ${fa(window.days)} روز است، نه ${fa(window.requested_days)} روز — ` +
-      "بازه‌های بلندتر همین عدد را برمی‌گردانند.",
+      `سابقه شاخص ${fa(window.days)} روز است (نه ${fa(window.requested_days)} روز درخواستی).`,
     );
   }
   if (sample?.low_coverage_days) {
     tags.push(`${fa(sample.low_coverage_days)} روز کم‌پوشش`);
     notes.push(
-      `${fa(sample.low_coverage_days)} روز از این بازه کم‌پوشش بوده و در محاسبه تغییر ` +
-      "قیمت شرکت داده نشده است.",
+      `${fa(sample.low_coverage_days)} روز کم‌پوشش از محاسبه کنار گذاشته شده است.`,
     );
   }
   if (sample && sample.max_gap_days > 1) {
     tags.push(`فاصله‌ی ${fa(sample.max_gap_days)} روزه`);
     notes.push(
-      `بزرگ‌ترین فاصله میان دو روز پیاپی این نمودار ${fa(sample.max_gap_days)} روز است؛ ` +
-      "حرکت آن گام، حاصل چند روز است نه یک روز.",
+      `بزرگ‌ترین فاصله میان دو نقطه ${fa(sample.max_gap_days)} روز است (حرکت چند روز در یک گام).`,
     );
   }
   if (sample?.thin) {
     tags.push("نمونه کم");
     notes.push(
-      `این شاخص روی ${fa(sample.cohort_count)} دسته ساخته شده — کمتر از ` +
-      `${fa(sample.min_cohorts)} دسته‌ای که برای یک عدد قابل اتکا لازم است.`,
+      `بر پایه ${fa(sample.cohort_count)} دسته (کمتر از حد نصاب ${fa(sample.min_cohorts)} دسته).`,
     );
   }
   if (!notes.length) return null;
@@ -787,60 +783,6 @@ export function ListingActions({ code, compact = false, name }: { code: string; 
       <Heart size={14} fill={saved ? "currentColor" : "none"} aria-hidden />{" "}
       {saved ? "ذخیره شد" : "ذخیره"}
     </button>
-  );
-}
-
-/**
- * A right-side panel for a secondary answer about a chosen row.
- *
- * Exists because the Explore page gave half its width permanently to a
- * fair-price panel that was empty until something was clicked. Escape and a
- * backdrop click both close, and focus returns to whatever opened it — a modal
- * that traps the keyboard is worse than the layout it replaced.
- */
-export function Sheet({
-  title,
-  onClose,
-  children,
-}: {
-  title: ReactNode;
-  onClose: () => void;
-  children: ReactNode;
-}) {
-  const panel = useRef<HTMLDivElement>(null);
-  const opener = useRef<Element | null>(null);
-
-  useEffect(() => {
-    opener.current = document.activeElement;
-    panel.current?.focus();
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      (opener.current as HTMLElement | null)?.focus?.();
-    };
-  }, [onClose]);
-
-  return (
-    <>
-      <div className="sheet-backdrop" onClick={onClose} />
-      <div
-        className="sheet"
-        role="dialog"
-        aria-modal="true"
-        aria-label={typeof title === "string" ? title : undefined}
-        tabIndex={-1}
-        ref={panel}
-      >
-        <div className="sheet-head">
-          <h2>{title}</h2>
-          <button className="sheet-close" onClick={onClose} aria-label="بستن">
-            <X size={18} />
-          </button>
-        </div>
-        {children}
-      </div>
-    </>
   );
 }
 

@@ -167,16 +167,17 @@ export function Saved() {
         </Async>
       </Card>
 
-      <div className="grid cols-2">
-        <Card title="آگهی‌های ذخیره‌شده">
-          <Async query={saved} empty="هنوز چیزی ذخیره نشده است." shape="table">
-            {(data) =>
-              data.results.length ? (
-                // The last column holds one icon button per row. An empty header
-                // left it unnamed, so a screen reader moving across a row
-                // announced the button with no column to attach it to.
-                <Table head={["آگهی", "قیمت", <span key="rm" className="sr-only">حذف</span>]}>
-                  {data.results.map((row) => (
+      <Card title="آگهی‌های ذخیره‌شده">
+        <Async query={saved} empty="هنوز چیزی ذخیره نشده است." shape="table">
+          {(data) =>
+            data.results.length ? (
+              // The last column holds one icon button per row. An empty header
+              // left it unnamed, so a screen reader moving across a row
+              // announced the button with no column to attach it to.
+              <Table head={["آگهی", "قیمت", <span key="rm" className="sr-only">حذف</span>]}>
+                {data.results.map((row) => {
+                  const change = dropPct(row);
+                  return (
                     <tr key={row.code}>
                       <td>
                         <div className="saved-row">
@@ -194,89 +195,40 @@ export function Saved() {
                           </div>
                         </div>
                       </td>
-                      <td className="num">{toman(row.ad_price ?? null)}</td>
+                      <td className="num">
+                        <div>{toman(row.ad_price ?? null)}</div>
+                        {change != null && (
+                          <div className="stat-sub" style={{ marginTop: 2 }}>
+                            <span className="badge ok">
+                              <TrendingDown size={11} /> {pct(change, 0)}
+                            </span>{" "}
+                            <span className="deal-median">{toman(row.previous_price ?? null)}</span>
+                            {row.price_changed_at && ` · ${faDate(row.price_changed_at)}`}
+                          </div>
+                        )}
+                      </td>
                       <td className="num">
                         <button onClick={() => remove.mutate(row)} aria-label="حذف">
                           <Trash2 size={13} />
                         </button>
                       </td>
                     </tr>
-                  ))}
-                </Table>
-              ) : (
-                <div className="state">
-                  <strong>هنوز چیزی ذخیره نشده است.</strong>
-                  <p className="empty-hint">
-                    در «خودروها» روی «ذخیره» بزنید تا تغییر
-                    قیمت آن آگهی اینجا دنبال شود.
-                  </p>
-                  <Link to="/cars" className="empty-action">رفتن به «خودروها»</Link>
-                </div>
-              )
-            }
-          </Async>
-        </Card>
-
-        {/* Nothing saved means nothing can get cheaper: a second empty box said
-            the same thing twice. */}
-        {!!saved.data?.results.length && <Card title="کاهش قیمت‌ها">
-          <Async query={saved} empty="کاهش قیمتی ثبت نشده است." shape="table">
-            {(data) => {
-              const drops = data.results
-                .map((row) => ({ row, change: dropPct(row) }))
-                .filter((d): d is { row: SavedAd; change: number } => d.change != null)
-                .sort((a, b) => a.change - b.change);
-              if (!drops.length) {
-                return (
-                  <div className="state">
-                    هیچ‌کدام از آگهی‌های ذخیره‌شده شما ارزان‌تر نشده‌اند.
-                  </div>
-                );
-              }
-              return (
-                <Table head={[
-                  "آگهی",
-                  <span key="prev" className="hide-narrow">قیمت پیشین</span>,
-                  "قیمت فعلی",
-                  "تغییر",
-                  <span key="when" className="hide-narrow">زمان</span>,
-                ]}>
-                  {drops.map(({ row, change }) => {
-                    const when = row.price_changed_at
-                      ? faDate(row.price_changed_at)
-                      : "—";
-                    return (
-                      <tr key={row.code}>
-                        <td>
-                          <Link to={`/listing/${row.code}`}>
-                            <Fa>{row.ad_title || row.code}</Fa>
-                          </Link>
-                          {/* The date, moved under the title instead of dropped.
-                              Five columns is two too many at 390px, and the two
-                              that give way are chosen for different reasons: the
-                              previous price the row can restate (current price
-                              and the fall are both here), the date it cannot —
-                              nothing else says when. So it moves rather than
-                              goes, and the row loses a column without losing a
-                              fact. The wide layout keeps its own column and
-                              hides this one, so neither is announced twice. */}
-                          <small className="stat-sub show-narrow">{when}</small>
-                        </td>
-                        <td className="num hide-narrow">{toman(row.previous_price ?? null)}</td>
-                        <td className="num">{toman(row.ad_price ?? null)}</td>
-                        <td className="num up">
-                          <TrendingDown size={12} /> {pct(change)}
-                        </td>
-                        <td className="num hide-narrow">{when}</td>
-                      </tr>
-                    );
-                  })}
-                </Table>
-              );
-            }}
-          </Async>
-        </Card>}
-      </div>
+                  );
+                })}
+              </Table>
+            ) : (
+              <div className="state">
+                <strong>هنوز چیزی ذخیره نشده است.</strong>
+                <p className="empty-hint">
+                  در «خودروها» روی «ذخیره» بزنید تا تغییر
+                  قیمت آن آگهی اینجا دنبال شود.
+                </p>
+                <Link to="/cars" className="empty-action">رفتن به «خودروها»</Link>
+              </div>
+            )
+          }
+        </Async>
+      </Card>
       {bar}
     </div>
   );

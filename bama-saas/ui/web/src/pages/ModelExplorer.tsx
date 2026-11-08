@@ -28,7 +28,7 @@ import { isZeroKm, MILEAGE_PRESETS } from "../components/FilterPanel";
 import { ModelCombobox, type ModelRow } from "../components/ModelCombobox";
 import { FollowButton } from "../components/FollowButton";
 import {
-  DEFAULT_DAYS, RetentionPanel, SurvivalPanel, TrendPanel, trendRequest,
+  DEFAULT_DAYS, ModelInsightsCard,
 } from "../components/ModelInsights";
 import { Budget } from "./Budget";
 import { Button } from "../components/ui/button";
@@ -371,12 +371,13 @@ export function ModelExplorer() {
             params.condition && conditionLabel(params.condition),
             label(data.facets.cities, params.city),
           ].filter(Boolean).join(" · ");
+          const natRange = data.national.asking_range;
           return (
             <>
               <Card
-                title="دقیق‌تر کنید"
+                title={useSelected ? "قیمت انتخاب شما" : "قیمت در بازار"}
                 action={refined
-                  ? <Button variant="ghost" size="sm" onClick={clearRefine}>پاک کردن</Button>
+                  ? <Button variant="ghost" size="sm" onClick={clearRefine}>پاک کردن فیلترها</Button>
                   : undefined}
               >
                 <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
@@ -394,17 +395,12 @@ export function ModelExplorer() {
                     onChange={(value) => filters.set({ city: value })} />
                   <MileageSelect />
                 </div>
-              </Card>
 
-              {/* The answer first: the selection's range when it has one,
-                  otherwise the whole model's — a refinement too thin for a
-                  range must not push the one range there is below the
-                  filters. The whole-model card below appears only when the
-                  answer above is the selection's. */}
-              <Card title={useSelected ? "قیمت انتخاب شما" : "قیمت در بازار"}>
+                <hr className="hero-divider" />
+
                 {thinSelection && (
-                  <span className="badge warn">
-                    انتخاب شما: {num(data.selected.count)} قیمت، کم برای بازه
+                  <span className="badge warn" style={{ marginBottom: 6 }}>
+                    انتخاب شما: {num(data.selected.count)} قیمت (کم برای بازه‌ی جداگانه؛ بازه‌ی کل مدل نمایش داده شده)
                   </span>
                 )}
                 <PriceSummary
@@ -412,6 +408,12 @@ export function ModelExplorer() {
                   summary={useSelected ? data.selected : data.national} emphasis>
                   {evidence}
                 </PriceSummary>
+
+                {useSelected && natRange && (
+                  <p className="stat-sub" style={{ margin: "8px 0 0" }}>
+                    کل این مدل در بازار: بازه <bdi>{tomanRange(natRange.p25, natRange.p75)}</bdi> تومان · میانه <bdi>{toman(natRange.median)}</bdi> (از {num(data.national.count)} قیمت)
+                  </p>
+                )}
               </Card>
 
               {/* The cars behind the range, straight under it. */}
@@ -457,22 +459,12 @@ export function ModelExplorer() {
                 ) : <p>آگهی‌ای برای این انتخاب پیدا نشد.</p>}
               </Card>
 
-
-              {useSelected && (
-                <Card title="کل این مدل">
-                  <PriceSummary title={`${data.model.brand} ${data.model.name}`}
-                                summary={data.national} />
-                </Card>
-              )}
-
-              <TrendPanel url={trendRequest({
-                model: String(data.model.id), variant: params.variant, year: params.year, days,
-              })!} />
-              <RetentionPanel model={String(data.model.id)} variant={params.variant} />
-              <SurvivalPanel model={String(data.model.id)} variant={params.variant}
-                             year={params.year} />
-
-
+              <ModelInsightsCard
+                model={String(data.model.id)}
+                variant={params.variant}
+                year={params.year}
+                days={days}
+              />
             </>
           );
         }}
