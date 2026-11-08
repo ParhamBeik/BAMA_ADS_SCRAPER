@@ -236,19 +236,19 @@ interface MarketRead extends Partial<Envelope> {
 const POSITION: Record<string, { title: string; advice: string }> = {
   sellers_market: {
     title: "بازار به سود فروشنده",
-    advice: "قیمت‌ها بالا می‌روند و آگهی‌ها سریع‌تر از ورودشان از بازار خارج می‌شوند. اگر خریدارید، منتظر ماندن احتمالاً گران‌تر تمام می‌شود.",
+    advice: "قیمت‌ها بالا می‌روند و آگهی‌ها سریع‌تر از ورودشان خارج می‌شوند.",
   },
   buyers_market: {
     title: "بازار به سود خریدار",
-    advice: "قیمت‌ها پایین می‌آیند و موجودی در حال انباشت است. اگر عجله ندارید، صبر کردن به نفع شماست.",
+    advice: "قیمت‌ها پایین می‌آیند و موجودی در حال انباشت است.",
   },
   stable: {
     title: "بازار آرام",
-    advice: "نه قیمت جهت مشخصی دارد و نه ورود و خروج آگهی‌ها نامتوازن است. زمان خرید را وضعیت خودِ آگهی تعیین می‌کند، نه بازار.",
+    advice: "قیمت و جریان ورود و خروج آگهی‌ها متوازن است.",
   },
   mixed: {
-    title: "بازار تصمیم روشنی نمی‌دهد",
-    advice: "قیمت و جریان عرضه یک چیز نمی‌گویند، پس یک توصیه واحد از این داده در نمی‌آید. دو عدد زیر را جدا بخوانید.",
+    title: "بازار بدون جهت واحد",
+    advice: "قیمت و جریان عرضه هم‌جهت نیستند؛ دو شاخص را جداگانه بسنجید.",
   },
 };
 
@@ -260,70 +260,8 @@ const FLOW_LABEL: Record<string, string> = {
   tightening: "خروج سریع‌تر از ورود",
   building: "انباشت موجودی",
   balanced: "ورود و خروج متوازن",
-  unknown: "برای اظهار نظر کافی نیست",
+  unknown: "داده ناکافی",
 };
-
-function MarketReadPanel({ days }: { days: number }) {
-  const read = useQuery({
-    queryKey: ["market-read", days],
-    queryFn: ({ signal }) =>
-      api.get<MarketRead>(`/api/analytics/market-read/${qs({ days })}`, signal),
-  });
-
-  return (
-    <Card title="بازار الان کجاست؟">
-      <Async query={read} shape="table">
-        {(data) => {
-          const position = POSITION[data.position] ?? POSITION.mixed;
-          return (
-            <>
-              <p style={{ margin: "0 0 4px", fontSize: 18, fontWeight: 700 }}>
-                {position.title}
-              </p>
-
-              {/* The two inputs, never hidden behind the conclusion. A reader
-                  who disagrees needs to see which half they disagree with. */}
-              <div className="grid cols-2" style={{ marginTop: 10 }}>
-                <Stat
-                  label="جهت قیمت"
-                  value={DIRECTION_LABEL[data.price_direction] ?? "—"}
-                  tone={data.price_direction === "flat" ? undefined
-                        : data.price_direction === "up" ? "up" : "down"}
-                  sub={`شیب شاخص در ${fa(data.index_days)} روز`}
-                />
-                <Stat
-                  label="عرضه و تقاضا"
-                  value={FLOW_LABEL[data.flow] ?? "—"}
-                  sub={
-                    data.absorption != null
-                      ? `${num(data.departed)} خروج در برابر ${num(data.arrived)} ورود`
-                      : "تعداد آگهی‌های ثبت و حذف‌شده کم است"
-                  }
-                />
-              </div>
-
-              {data.price_trend?.turning && (
-                <span className="badge warn">
-                  <AlertTriangle size={11} /> در حال چرخش
-                </span>
-              )}
-
-              <HowWeKnow>
-                <p>{position.advice}</p>
-                <p>
-                «جهت قیمت» از شیب شاخص هم‌ترکیب می‌آید، نه از اختلاف دو روز؛ و
-                «عرضه و تقاضا» نسبت آگهی‌های خارج‌شده به آگهی‌های تازه در همین
-                بازه است. هیچ‌کدام پیش‌بینی نیستند — وضعیت امروزند.
-              </p>
-              </HowWeKnow>
-              <Provenance envelope={data} compact />
-            </>
-          );
-        }}
-      </Async>
-    </Card>
-  );
-}
 
 /**
  * One side of a movers board.
@@ -469,14 +407,9 @@ function MoversPanel({ days }: { days: number }) {
 
                 <HowWeKnow>
                   <p>
-                  از میان {num(data.scopes_ranked)} دسته‌ای که
-                  سابقه کافی داشتند. «تغییر» حرکت شاخص هم‌ترکیب بین ابتدا و انتهای
-                  بازه است و «روند فعلی» شیب همه روزها — یک دسته می‌تواند در کل
-                  بازه بالا رفته باشد ولی همین حالا رو به پایین باشد. ستون‌های
-                  آگهی و دسته می‌گویند این اعداد بر چه پایه‌ای ساخته شده‌اند.
+                  از میان {num(data.scopes_ranked)} دسته‌ی دارای سابقه کافی. «تغییر» اختلاف ابتدا و انتهای بازه و «روند فعلی» شیب روزهای اخیر است.
                 </p>
                 </HowWeKnow>
-                <Provenance envelope={data} compact />
               </>
             )}
           </Async>
@@ -486,7 +419,7 @@ function MoversPanel({ days }: { days: number }) {
   );
 }
 
-function SupplyAndDemand({ days }: { days: number }) {
+function FlowAndBrands({ days, overview }: { days: number; overview: ReturnType<typeof useQuery<OverviewData>> }) {
   const arrivals = useQuery({
     queryKey: ["arrivals", days],
     queryFn: ({ signal }) =>
@@ -499,82 +432,115 @@ function SupplyAndDemand({ days }: { days: number }) {
   });
 
   return (
-    <div className="grid cols-2">
-      <Card title="بیشترین آگهی تازه">
-        <Async query={arrivals} shape="table">
-          {(data) => (
-            <>
-              <Table head={["خودرو", "آگهی تازه", "الان در بازار"]}>
-                {data.models.map((row) => (
-                  <tr key={row.model_id}>
-                    <td>
-                      <Link to={`/price?model=${row.model_id}`}>
-                        <Fa>{row.name}</Fa>
-                      </Link>
-                      {row.brand_name && (
-                        <div className="stat-sub"><Fa>{row.brand_name}</Fa></div>
-                      )}
-                    </td>
-                    <td className="num">{num(row.new_listings)}</td>
-                    <td className="num">{num(row.listed_now)}</td>
-                  </tr>
-                ))}
-              </Table>
-              <Provenance envelope={data} compact />
-            </>
-          )}
-        </Async>
-      </Card>
+    <Card title="جریان و سهم بازار">
+      <Tabs defaultValue="flow">
+        <TabsList className="mb-3 max-w-full">
+          <TabsTrigger value="flow">ورود و خروج آگهی‌ها</TabsTrigger>
+          <TabsTrigger value="brands">پرآگهی‌ترین برندها</TabsTrigger>
+        </TabsList>
+        <TabsContent value="flow">
+          <div className="grid cols-2">
+            <div>
+              <div className="card-title">بیشترین آگهی تازه</div>
+              <Async query={arrivals} shape="table">
+                {(data) => (
+                  <Table head={["خودرو", "آگهی تازه", "الان در بازار"]}>
+                    {data.models.map((row) => (
+                      <tr key={row.model_id}>
+                        <td>
+                          <Link to={`/price?model=${row.model_id}`}>
+                            <Fa>{row.name}</Fa>
+                          </Link>
+                          {row.brand_name && (
+                            <div className="stat-sub"><Fa>{row.brand_name}</Fa></div>
+                          )}
+                        </td>
+                        <td className="num">{num(row.new_listings)}</td>
+                        <td className="num">{num(row.listed_now)}</td>
+                      </tr>
+                    ))}
+                  </Table>
+                )}
+              </Async>
+            </div>
 
-      <Card title="سریع‌ترین خروج از بازار">
-        {/* The window comes from the answer, not from the request. The panel
-            used to print the requested one — and since the home page asks for
-            30 days against a much shorter clean history, the endpoint refused
-            and this card was empty for every reader, every time. */}
-        <p className="stat-sub" style={{ marginTop: 0 }}>
-          <Timer size={12} /> خروج ظرف {fa(turnover.data?.window_days ?? days)} روز
-        </p>
-        <Async query={turnover} shape="table">
-          {(data) => (
-            <>
-              {data.clamped && (
-                <span className="badge warn">
-                  <AlertTriangle size={11} /> {fa(data.window_days)} روز
+            <div>
+              {/* The window comes from the answer, not from the request. The panel
+                  used to print the requested one — and since the home page asks for
+                  30 days against a much shorter clean history, the endpoint refused
+                  and this card was empty for every reader, every time. */}
+              <div className="row between" style={{ marginBottom: 6 }}>
+                <div className="card-title" style={{ margin: 0 }}>سریع‌ترین خروج از بازار</div>
+                <span className="stat-sub">
+                  <Timer size={12} className="inline align-[-2px]" /> ظرف {fa(turnover.data?.window_days ?? days)} روز
                 </span>
-              )}
-              <Table head={["خودرو", "خارج‌شده", "از میان"]}>
-                {data.fastest.map((row) => (
-                  <tr key={row.model_id}>
-                    <td>
-                      <Link to={`/price?model=${row.model_id}`}>
-                        <Fa>{row.name}</Fa>
-                      </Link>
-                      {row.brand_name && (
-                        <div className="stat-sub"><Fa>{row.brand_name}</Fa></div>
-                      )}
+              </div>
+              <Async query={turnover} shape="table">
+                {(data) => (
+                  <>
+                    {data.clamped && (
+                      <span className="badge warn">
+                        <AlertTriangle size={11} /> {fa(data.window_days)} روز
+                      </span>
+                    )}
+                    <Table head={["خودرو", "خارج‌شده", "از میان"]}>
+                      {data.fastest.map((row) => (
+                        <tr key={row.model_id}>
+                          <td>
+                            <Link to={`/price?model=${row.model_id}`}>
+                              <Fa>{row.name}</Fa>
+                            </Link>
+                            {row.brand_name && (
+                              <div className="stat-sub"><Fa>{row.brand_name}</Fa></div>
+                            )}
+                          </td>
+                          <td className="num up">{pct(row.left_pct, 0)}</td>
+                          <td className="num">{num(row.n)}</td>
+                        </tr>
+                      ))}
+                    </Table>
+                    {/* The distinction the data can actually support. Bama publishes
+                        no reason for a listing disappearing, so "sold" would be an
+                        assertion nothing here observed. */}
+                    <HowWeKnow>
+                      <p>
+                        فقط آگهی‌های ثبت‌شده دست‌کم {fa(data.window_days)} روز پیش شمرده می‌شوند. «خارج‌شده» یعنی حذف از باما (فروش، پایان اعتبار یا انصراف).
+                      </p>
+                    </HowWeKnow>
+                  </>
+                )}
+              </Async>
+            </div>
+          </div>
+        </TabsContent>
+        <TabsContent value="brands">
+          <Async query={overview} shape="table">
+            {(data) => (
+              /* A bar next to each count. The share is the question being asked
+                 of this table, and a column of numbers makes the reader do the
+                 division. */
+              <Table head={["برند", "تعداد آگهی", "سهم"]}>
+                {data.top_brands.map((b) => (
+                  <tr key={b.brand__name_fa}>
+                    <td><Fa>{b.brand__name_fa}</Fa></td>
+                    <td className="num">{num(b.n)}</td>
+                    {/* Of the whole market, not of the biggest row: scaled to
+                        Peugeot, Peugeot's ~19% drew as a full bar. */}
+                    <td style={{ width: "45%" }}>
+                      <span
+                        className="bar"
+                        style={{ width: `${(b.n / Math.max(data.active_listings, 1)) * 100}%` }}
+                      />
+                      <span className="stat-sub"> {pct((b.n / Math.max(data.active_listings, 1)) * 100, 0)}</span>
                     </td>
-                    <td className="num up">{pct(row.left_pct, 0)}</td>
-                    <td className="num">{num(row.n)}</td>
                   </tr>
                 ))}
               </Table>
-              {/* The distinction the data can actually support. Bama publishes
-                  no reason for a listing disappearing, so "sold" would be an
-                  assertion nothing here observed. */}
-              <HowWeKnow>
-                <p>
-                فقط آگهی‌هایی شمرده می‌شوند که دست‌کم {fa(data.window_days)} روز پیش
-                ثبت شده‌اند، تا هر آگهی فرصت کامل این بازه را داشته باشد. «خارج‌شده»
-                یعنی از باما برداشته شده — فروش، پایان اعتبار یا انصراف فروشنده، که
-                باما تفاوتشان را اعلام نمی‌کند.
-              </p>
-              </HowWeKnow>
-              <Provenance envelope={data} compact />
-            </>
-          )}
-        </Async>
-      </Card>
-    </div>
+            )}
+          </Async>
+        </TabsContent>
+      </Tabs>
+    </Card>
   );
 }
 
@@ -645,6 +611,14 @@ export function Home() {
     queryFn: ({ signal }) =>
       api.get<MarketIndex>(`/api/analytics/market-index/${qs({ days })}`, signal),
   });
+  const read = useQuery({
+    queryKey: ["market-read", days],
+    queryFn: ({ signal }) =>
+      api.get<MarketRead>(`/api/analytics/market-read/${qs({ days })}`, signal),
+  });
+
+  const readData = read.data && read.data.available !== false ? read.data : undefined;
+  const position = readData ? (POSITION[readData.position] ?? POSITION.mixed) : null;
 
   return (
     <div className="stack">
@@ -668,16 +642,28 @@ export function Home() {
         <WindowPicker className="w-full sm:w-auto" defaultDays={DEFAULT_DAYS} />
       </div>
 
-      <Card title="شاخص قیمت با کنترل ترکیب آگهی‌ها">
+      <Card title="شاخص قیمت و وضعیت بازار">
         <Async query={index} shape="chart" empty="هنوز سابقه‌ای برای شاخص وجود ندارد.">
           {(data) => {
             const points = data.series ?? [];
             const last = points[points.length - 1];
             return (
               <>
+                {position && readData && (
+                  <div className="verdict" style={{ marginBottom: 12 }}>
+                    <strong>{position.title}</strong>
+                    <span className="muted">{position.advice}</span>
+                    {readData.price_trend?.turning && (
+                      <span className="badge warn">
+                        <AlertTriangle size={11} /> در حال چرخش
+                      </span>
+                    )}
+                  </div>
+                )}
+
                 <div className="grid cols-4">
                   <Stat
-                    label="تغییر در این بازه"
+                    label="تغییر شاخص"
                     value={pct(data.change_pct)}
                     tone={toneOf(data.change_pct)}
                     // Persian digits, like the window chips directly above
@@ -685,15 +671,27 @@ export function Home() {
                     // "30 روز" — the same value in two numeral systems.
                     sub={
                       data.window.clamped
-                        ? `${fa(data.window.days)} روز واقعی از ${fa(data.window.requested_days)} روز درخواستی`
-                        : `${fa(data.window.days)} روز`
+                        ? `${fa(data.window.days)} روز از ${fa(data.window.requested_days)} روز · پایه ${fa(data.base_value)}`
+                        : `در ${fa(data.window.days)} روز · شاخص ${data.latest_index != null ? data.latest_index.toFixed(1) : "—"}`
                     }
                   />
-                  <Stat
-                    label="شاخص"
-                    value={data.latest_index != null ? data.latest_index.toFixed(1) : "—"}
-                    sub={`پایه ${fa(data.base_value)}`}
-                  />
+                  {readData ? (
+                    <Stat
+                      label="عرضه و تقاضا"
+                      value={FLOW_LABEL[readData.flow] ?? "—"}
+                      sub={
+                        readData.absorption != null
+                          ? `${num(readData.departed)} خروج در برابر ${num(readData.arrived)} ورود`
+                          : `جهت قیمت: ${DIRECTION_LABEL[readData.price_direction] ?? "—"}`
+                      }
+                    />
+                  ) : (
+                    <Stat
+                      label="شاخص"
+                      value={data.latest_index != null ? data.latest_index.toFixed(1) : "—"}
+                      sub={`پایه ${fa(data.base_value)}`}
+                    />
+                  )}
                   <Async query={overview}>
                     {(o) => (
                       <Stat
@@ -703,7 +701,7 @@ export function Home() {
                         // same N: it counted priced ads inside a population
                         // that was already priced, so the tile captioned
                         // itself. This is a number that can differ.
-                        sub={`${num(o.instalment_listings)} آگهی اقساطی کنار گذاشته شده`}
+                        sub={`${num(o.instalment_listings)} اقساطی کنار گذاشته شده`}
                       />
                     )}
                   </Async>
@@ -712,7 +710,7 @@ export function Home() {
                       <Stat
                         label="برند و مدل"
                         value={`${num(o.brands)} / ${num(o.models)}`}
-                        sub="برند / مدل با آگهی فعال"
+                        sub="برند / مدل فعال"
                       />
                     )}
                   </Async>
@@ -722,14 +720,6 @@ export function Home() {
                     sweep's coverage reported in the strip below — printed here
                     so the two are never read as the same number. */}
                 <SeriesCaveats window={data.window} sample={data.sample} />
-                {last && (
-                  <HowWeKnow><p>
-                    ساخته‌شده از {num(data.sample.cohort_count)} دسته
-                    و {num(data.sample.ad_count)} آگهی در آخرین روزِ
-                    دارای پوشش کامل. هر دسته فقط با خودش مقایسه می‌شود، تا تغییر در
-                    ترکیب آگهی‌های موجود به‌اشتباه حرکت قیمت به نظر نرسد.
-                  </p></HowWeKnow>
-                )}
                 {points.length ? (
                   <Suspense fallback={<p className="muted">…</p>}>
                     {/* A real time axis. As a category axis the four multi-day
@@ -747,47 +737,23 @@ export function Home() {
                 ) : (
                   <div className="state">هنوز سابقه‌ای برای شاخص وجود ندارد.</div>
                 )}
-                <Provenance envelope={data} />
+                {last && (
+                  <HowWeKnow><p>
+                    ساخته‌شده از {num(data.sample.cohort_count)} دسته
+                    و {num(data.sample.ad_count)} آگهی در آخرین روزِ
+                    دارای پوشش کامل. هر دسته فقط با خودش مقایسه می‌شود تا تغییر در
+                    ترکیب آگهی‌ها به‌اشتباه حرکت قیمت دیده نشود.
+                  </p></HowWeKnow>
+                )}
               </>
             );
           }}
         </Async>
       </Card>
 
-      {/* Directly under the index, because it is the reading *of* the index
-          plus the two flow panels below — and a reader who takes only one
-          thing from this page should take this. */}
-      <MarketReadPanel days={days} />
       <MoversPanel days={days} />
-      <SupplyAndDemand days={days} />
-
-      <Async query={overview}>
-        {(data) => (
-          <Card title="پرآگهی‌ترین برندها">
-            {/* A bar next to each count. The share is the question being asked
-                of this table, and a column of numbers makes the reader do the
-                division. */}
-            <Table head={["برند", "تعداد آگهی", "سهم"]}>
-              {data.top_brands.map((b) => (
-                <tr key={b.brand__name_fa}>
-                  <td><Fa>{b.brand__name_fa}</Fa></td>
-                  <td className="num">{num(b.n)}</td>
-                  {/* Of the whole market, not of the biggest row: scaled to
-                      Peugeot, Peugeot's ~19% drew as a full bar. */}
-                  <td style={{ width: "45%" }}>
-                    <span
-                      className="bar"
-                      style={{ width: `${(b.n / Math.max(data.active_listings, 1)) * 100}%` }}
-                    />
-                    <span className="stat-sub"> {pct((b.n / Math.max(data.active_listings, 1)) * 100, 0)}</span>
-                  </td>
-                </tr>
-              ))}
-            </Table>
-            <Provenance envelope={data} compact />
-          </Card>
-        )}
-      </Async>
+      <FlowAndBrands days={days} overview={overview} />
+      <Provenance envelope={index.data ?? overview.data} />
     </div>
   );
 }

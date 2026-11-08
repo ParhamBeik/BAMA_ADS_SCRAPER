@@ -23,17 +23,15 @@
  * column of the same table.
  */
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { AlertTriangle, ArrowUpDown, Gauge, Wallet } from "lucide-react";
 import { api, ApiError } from "../api";
-import type { Envelope, Paginated } from "../api";
+import type { Paginated } from "../api";
 import { FilterPanel } from "@/components/FilterPanel";
 import { listedFrom, qs, useFilters } from "../filters";
 import { Button } from "../components/ui/button";
-import { Async, BamaLink, Card, FLAG_LABEL, Fa, ListingActions, Pager, PriceBar, Provenance, Sheet, Table, Thumb } from "../ui";
-import { conditionLabel, km, modelYear, num, toman, tooLow, trimNote } from "../format";
-import type { Distribution } from "../ui";
+import { Async, BamaLink, FLAG_LABEL, Fa, ListingActions, Pager, Table, Thumb } from "../ui";
+import { km, modelYear, num, toman, trimNote } from "../format";
 import { ViewToggle, useListView } from "../components/ViewToggle";
 import { conditionNote, conditionTag } from "../components/DealCard";
 import {
@@ -80,26 +78,6 @@ interface AdRow {
 // know it independently to compute the last page.
 const PAGE_SIZE = 50;
 
-interface FairPrice extends Envelope {
-  code: string;
-  asking: number | null;
-  fair_value: number | null;
-  median_gap_pct?: number | null;
-  gap_pct: number | null;
-  peer_count: number;
-  dispersion: number | null;
-  confidence: string;
-  distribution?: Distribution;
-  components: { name: string; amount: number; facts?: Record<string, unknown> }[];
-}
-
-const COMPONENT_LABEL: Record<string, string> = {
-  cohort_median: "میانه قیمت آگهی‌های مشابه",
-  mileage: "تعدیل بابت کارکرد",
-};
-
-
-
 /** One-word badges for `Ad.cohort_flags`; the full sentence is the tooltip. */
 const FLAG_SHORT: Record<string, string> = {
   price_outlier_high: "گران‌تر از مشابه‌ها",
@@ -108,32 +86,6 @@ const FLAG_SHORT: Record<string, string> = {
   suspect_misfiled: "تیپ یا سال مشکوک",
   price_implausible: "قیمت نامعتبر",
 };
-
-/**
- * How each line of the fair-price breakdown was arrived at, in Persian.
- *
- * The backend sends the facts and this composes the sentence. It used to send
- * the sentence, which put "median of 13 peers" and "catalogue-wide gap for clean
- * bodywork" into a Persian table on the one panel that is meant to make the
- * number checkable.
- */
-function componentDetail(name: string, facts?: Record<string, unknown>): string {
-  if (!facts) return "";
-  const peers = Number(facts.peers ?? 0);
-  switch (name) {
-    case "cohort_median":
-      // Peers share trim, year and condition, so condition needs no line of
-      // its own: it is already in this median.
-      return `میانه ${peers} آگهی ${String(facts.model ?? "")} با همان تیپ، سال ساخت و بدنه ${
-        conditionLabel(facts.band)}`;
-    case "mileage":
-      return `بر پایه ${peers} آگهی در بازه کارکرد ${num(Number(
-        facts.bucket ?? 0,
-      ))} کیلومتر به بالا`;
-    default:
-      return "";
-  }
-}
 
 /**
  * Every reason this row's price may not mean what it looks like.
@@ -181,8 +133,8 @@ function AdWarnings({ ad }: { ad: AdRow }) {
 
 export function Explorer() {
   const filters = useFilters();
+  const navigate = useNavigate();
   const page = filters.getInt("page") ?? 1;
-  const [selected, setSelected] = useState<string | null>(null);
   const view = useListView();
   const ordering = filters.get("ordering") ?? "-publish_at";
 
@@ -215,12 +167,14 @@ export function Explorer() {
   });
 
   return (
-    <div>
+    <div className="stack">
       <FilterPanel />
 
-      <Card
-        title="آگهی‌ها"
-        action={
+      <div>
+        <div className="grid-header">
+          <p className="stat-sub list-count" role="status">
+            {ads.data?.count != null ? `${num(ads.data.count)} آگهی` : "\u00a0"}
+          </p>
           <div className="row">
             <Select
               value={ordering}
@@ -238,8 +192,8 @@ export function Explorer() {
             </Select>
             <ViewToggle />
           </div>
-        }
-      >
+        </div>
+
         {/* A page past the end answers 404, not an empty list. */}
         {ads.error instanceof ApiError && ads.error.status === 404 && page > 1 ? (
           <div className="state">
@@ -270,24 +224,12 @@ export function Explorer() {
             </div>
           ) : (
             <>
-              <p className="stat-sub list-count" role="status">{num(data.count)} آگهی</p>
               {view === "cards" ? (
                 <div className="card-grid">
                   {data.results.map((ad) => (
-                    // Not a Link: clicking a card prices it in the panel beside
-                    // it. It used to be a Link that *also* set the selection, so
-                    // the fair-price panel it populated was unmounted by the
-                    // navigation before anyone could read it.
-                    //
-                    // The click target is a real <button> on the title whose
-                    // ::after covers the card, rather than role="button" on the
-                    // wrapper — that version nested two links inside a control,
-                    // which is invalid and left the card announcing itself as a
-                    // single button with no way to reach either link by keyboard.
                     <div
                       key={ad.code}
                       className="listing-card stretch-host"
-                      aria-current={selected === ad.code ? "true" : undefined}
                     >
                       <Thumb src={ad.image_url}>
                         <span className="card-badges">
@@ -295,18 +237,14 @@ export function Explorer() {
                         </span>
                         <ListingActions code={ad.code} compact name={ad.title || ad.model_name} />
                       </Thumb>
-                      {/* Title, price, one facts line, one action line. It was
-                          six rows, three of them for a city and two links, which
-                          is what made a two-across phone grid impossible. */}
                       <div className="listing-meta">
                         <strong>
-                          <button
-                            type="button"
-                            className="stretch-link linkish-title"
-                            onClick={() => setSelected(ad.code)}
+                          <Link
+                            to={`/listing/${ad.code}`}
+                            className="stretch-link"
                           >
                             <Fa>{ad.title}</Fa>
-                          </button>
+                          </Link>
                         </strong>
                         {trimNote(ad.title, ad.variant_name) && (
                           <span className="stat-sub"><Fa>{trimNote(ad.title, ad.variant_name)}</Fa></span>
@@ -319,35 +257,26 @@ export function Explorer() {
                           <span aria-hidden>·</span>
                           <Fa>{ad.city_name || "—"}</Fa>
                         </div>
-                        <div className="row">
-                          <Link to={`/listing/${ad.code}`} className="above-stretch">
-                            جزئیات
-                          </Link>
-                          <BamaLink
-                            href={ad.bama_url}
-                            className="ghost above-stretch hide-narrow"
-                          >
-                            باما
-                          </BamaLink>
-                        </div>
                       </div>
                     </div>
                   ))}
                 </div>
               ) : (
-                <div className="cars-table"><Table head={["خودرو", "سال", "کارکرد", "قیمت", ""]}>
+                <div className="card cars-table"><Table head={["خودرو", "سال", "کارکرد", "قیمت", ""]}>
                   {data.results.map((ad) => (
                     <tr
                       key={ad.code}
-                      onClick={() => setSelected(ad.code)}
+                      onClick={() => navigate(`/listing/${ad.code}`)}
                       style={{ cursor: "pointer" }}
                     >
                       <td>
-                        {/* The row's click had no keyboard or screen-reader way in. */}
-                        <button type="button" className="row-open"
-                                onClick={(e) => { e.stopPropagation(); setSelected(ad.code); }}>
+                        <Link
+                          to={`/listing/${ad.code}`}
+                          className="row-open"
+                          onClick={(e) => e.stopPropagation()}
+                        >
                           <Fa>{ad.title || ad.model_name}</Fa>
-                        </button>
+                        </Link>
                         <div className="cars-table-facts stat-sub">
                           {modelYear(ad.year_jalali, ad.year_calendar)} · {km(ad.mileage)}
                         </div>
@@ -372,7 +301,7 @@ export function Explorer() {
                   ))}
                 </Table></div>
               )}
-              <div style={{ marginTop: 10 }}>
+              <div style={{ marginTop: 14 }}>
                 <Pager
                   page={page}
                   lastPage={Math.max(1, Math.ceil(data.count / PAGE_SIZE))}
@@ -384,82 +313,7 @@ export function Explorer() {
             </>
           )}
         </Async>}
-      </Card>
-
-      {selected && (
-        <FairPriceSheet code={selected} onClose={() => setSelected(null)} />
-      )}
-    </div>
-  );
-}
-
-function FairPriceSheet({ code, onClose }: { code: string; onClose: () => void }) {
-  const query = useQuery({
-    queryKey: ["fair-price", code],
-    queryFn: ({ signal }) => api.get<FairPrice>(`/api/ads/${code}/fair-price/`, signal),
-  });
-
-  return (
-    <Sheet title="قیمت منصفانه" onClose={onClose}>
-      <Async query={query} shape="table">
-        {(data) => (
-          <>
-            <div className="grid cols-2" style={{ marginBottom: 12 }}>
-              <div>
-                <div className="card-title">قیمت درخواستی فروشنده</div>
-                <div className="stat">{toman(data.asking)}</div>
-                {(data.median_gap_pct ?? data.gap_pct) != null && (
-                  <div className="stat-sub">
-                    {/* The listing page's number, so one car does not read 7% here and 9% there. */}
-                    {Math.round(Math.abs((data.median_gap_pct ?? data.gap_pct)!))}%{" "}
-                    {(data.median_gap_pct ?? data.gap_pct)! > 0 ? "بالاتر از" : "پایین‌تر از"} میانه‌ی مشابه‌ها
-                  </div>
-                )}
-              </div>
-              {data.fair_value != null && <div>
-                <div className="card-title">قیمت منصفانه</div>
-                <div className={`stat ${(data.gap_pct ?? 0) < 0 ? "up" : ""}`}>
-                  {toman(data.fair_value)}
-                </div>
-              </div>}
-            </div>
-
-            {/* The answer first, the arithmetic under it. */}
-            {tooLow(data.asking, data.distribution?.p10) && (
-              <p className="badge warn">این قیمت خیلی پایین‌تر از مشابه‌هاست؛ شاید پیش‌پرداخت یا اشتباه ثبت باشد.</p>
-            )}
-            <PriceBar distribution={data.distribution} asking={data.asking} />
-
-            <p className="empty-hint">
-              بر پایه {data.peer_count} آگهی مشابه با همان مدل، تیپ و سال ساخت.
-            </p>
-
-            {data.components.length > 0 && <Table head={["جزء محاسبه", "تومان"]}>
-              {data.components.map((c) => (
-                <tr key={c.name}>
-                  <td>
-                    {COMPONENT_LABEL[c.name] ?? c.name.replace(/_/g, " ")}
-                    <div className="stat-sub">
-                      <Fa>{componentDetail(c.name, c.facts)}</Fa>
-                    </div>
-                  </td>
-                  <td className="num">
-                    {c.amount > 0 && c.name !== "cohort_median" ? "+" : ""}
-                    {toman(c.amount)}
-                  </td>
-                </tr>
-              ))}
-            </Table>}
-
-            <Provenance envelope={data} />
-          </>
-        )}
-      </Async>
-      {/* Outside Async: a car with no fair value still needs a way onward. */}
-      <div className="row" style={{ marginTop: 12 }}>
-        <Link className="btn" to={`/listing/${code}`}>صفحه آگهی</Link>
-        <ListingActions code={code} />
       </div>
-    </Sheet>
+    </div>
   );
 }

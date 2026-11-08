@@ -30,14 +30,13 @@ import { api } from "../api";
 import { useAuth, useMlEnabled } from "../auth";
 import { FilterPanel } from "@/components/FilterPanel";
 import { listedFrom, qs, useFilters } from "../filters";
-import { Async, BamaLink, Card, ConfidenceDots, Fa, HowWeKnow, ListingActions, NumberInput, Pager, Provenance, Table } from "../ui";
+import { Async, BamaLink, ConfidenceDots, Fa, HowWeKnow, ListingActions, NumberInput, Pager, Provenance, Table } from "../ui";
 import { fa, pct, toman, num } from "../format";
 import { DealCard, conditionNote, conditionTag, type Deal, type DealBoard } from "../components/DealCard";
 import { ViewToggle, useListView } from "../components/ViewToggle";
 import { Button } from "../components/ui/button";
 import { Label } from "../components/ui/label";
 import { Switch } from "../components/ui/switch";
-import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs";
 import {
   Popover, PopoverContent, PopoverTrigger,
 } from "../components/ui/popover";
@@ -119,7 +118,7 @@ function NumberField({
  * off the operator's alerts. The endpoint enforces this; the check here only
  * keeps the button from appearing and 403ing.
  */
-function NotifierPanel() {
+export function NotifierPanel() {
   const client = useQueryClient();
   const { user } = useAuth();
   const [form, setForm] = useState<NotifierSettings | null>(null);
@@ -281,7 +280,7 @@ function BandedGrid({ rows, ceiling }: { rows: Deal[]; ceiling: number }) {
 // price model puts below its own predicted p10, ordered by that gap. The two
 // disagree often, and where they disagree is the interesting part, so the
 // board keeps both rather than replacing one with the other.
-const TABS: { id: string; label: string }[] = [
+export const DEAL_TABS: { id: string; label: string }[] = [
   { id: "top", label: "پیشنهادهای برتر" },
   // "همه", not "بقیه": the `all` band is a superset of `top`, not its
   // complement — it drops the discount floor and keeps the same ceiling and
@@ -294,14 +293,12 @@ const TABS: { id: string; label: string }[] = [
 
 /** What the `ml` tab is, in one line, because the label cannot carry it. */
 const ML_TAB_NOTE =
-  "آگهی‌هایی که مدل یادگیرنده قیمتشان را پایین‌تر از پیش‌بینی خودش می‌داند. " +
-  "برخلاف بقیه‌ی زبانه‌ها، این تخمین کارکرد، وضعیت بدنه، شهر و نوع فروشنده را " +
-  "هم در نظر می‌گیرد. مبنای درصد تخفیف روی کارت‌ها همچنان میانه‌ی آگهی‌های مشابه است.";
+  "آگهی‌هایی که مدل یادگیرنده با توجه به کارکرد، بدنه، شهر و فروشنده ارزان‌تر از پیش‌بینی می‌داند.";
 
 export function Deals() {
   const filters = useFilters();
   const page = filters.getInt("page") ?? 1;
-  const tabs = useMlEnabled() ? TABS : TABS.filter((t) => t.id !== "ml");
+  const tabs = useMlEnabled() ? DEAL_TABS : DEAL_TABS.filter((t) => t.id !== "ml");
   const raw = filters.get("band");
   const band = tabs.some((t) => t.id === raw) ? raw! : "top";
   const view = useListView();
@@ -343,166 +340,130 @@ export function Deals() {
 
   return (
     <div className="stack">
-      <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <Tabs
-          className="min-w-0"
-          value={band}
-          onValueChange={(next) =>
-            filters.set({ band: next === "top" ? null : next, page: null })
-          }
-        >
-          <TabsList aria-label="دسته‌بندی آگهی‌ها">
-            {tabs.map((t) => (
-              <TabsTrigger key={t.id} value={t.id}>{t.label}</TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
-        <div className="shrink-0 self-end sm:self-auto">
-          <NotifierPanel />
-        </div>
-      </div>
-
-
       <FilterPanel showConfidence />
 
-      <Card action={<ViewToggle />}>
-        <Async query={deals} empty="هنوز امتیازی محاسبه نشده است." shape="cards">
-          {(board) => {
-            const rows = board.results ?? [];
-            if (!rows.length) {
-              // page > 1 with zero rows usually means the page fell out of
-              // range (fewer results now than when this URL was built), not
-              // that there are no matches at all — leave a way back to page 1
-              // instead of a dead end.
-              return (
-                <div className="state">
-                  <strong>آگهی‌ای با این فیلترها پیدا نشد.</strong>
-                  <p className="empty-hint">
-                    {page > 1
-                      ? "ممکن است این صفحه دیگر وجود نداشته باشد."
-                      : "فیلترها را ساده‌تر کنید یا برند دیگری را امتحان کنید."}
-                  </p>
-                  {page > 1 && (
-                    <button onClick={() => filters.set({ page: null })}>
-                      بازگشت به صفحه اول
-                    </button>
-                  )}
-                </div>
-              );
-            }
-            const total = board.count ?? rows.length;
-            const lastPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
-            const ceiling = board.window?.ceiling_pct ?? 25;
+      <Async query={deals} empty="هنوز امتیازی محاسبه نشده است." shape="cards">
+        {(board) => {
+          const rows = board.results ?? [];
+          if (!rows.length) {
+            // page > 1 with zero rows usually means the page fell out of
+            // range (fewer results now than when this URL was built), not
+            // that there are no matches at all — leave a way back to page 1
+            // instead of a dead end.
             return (
-              <>
-                <p className="stat-sub list-count" role="status">{num(total)} آگهی</p>
-                {view === "cards" ? (
-                  band === "review" || band === "ml" ? (
-                    // Neither of these is ranked by freshness — `review` by
-                    // discount and `ml` by the model's residual — so banding
-                    // them would draw groups the order does not follow, and
-                    // the server sends no freshness rank for either, which
-                    // would silently pile every row under "over two weeks".
-                    <div className="card-grid">
-                      {rows.map((d) => (
-                        <DealCard key={d.code} deal={d}
-                                  suspect={band === "review"} />
-                      ))}
-                    </div>
-                  ) : (
-                    <BandedGrid rows={rows} ceiling={ceiling} />
-                  )
-                ) : (
-                  <div className="deals-table"><Table
-                    head={[
-                      "آگهی", "تخفیف", "قیمت", "میانه مشابه‌ها",
-                      "تعداد مشابه", "اعتبار", "در بازار", "",
-                    ]}
-                  >
-                    {rows.map((d) => (
-                      <tr key={d.code}>
-                        <td>
-                          <Link to={`/listing/${d.code}`}>
-                            <Fa>{d.title || d.code}</Fa>
-                          </Link>
-                          {d.condition_flagged && (
-                            <div className="badge warn" style={{ marginTop: 4 }}
-                                 title={conditionNote(d)}>
-                              <AlertTriangle size={11} /> {conditionTag(d)}
-                            </div>
-                          )}
-                        </td>
-                        <td className="num up">{pct(d.discount_pct, 0)}</td>
-                        <td className="num">{toman(d.price)}</td>
-                        <td className="num">{toman(d.peer_median)}</td>
-                        <td className="num">{d.peer_count ?? "—"}</td>
-                        <td className="num"><ConfidenceDots tier={d.confidence} /></td>
-                        <td className="num">
-                          {/* `days_listed` restarts at every bump: 18 of 24 rows read «0 روز». */}
-                          {(d.age_days ?? d.days_listed) != null ? `${d.age_days ?? d.days_listed} روز` : "—"}
-                        </td>
-                        <td className="num">
-                          <div className="row">
-                            <ListingActions code={d.code} />
-                            <BamaLink href={d.bama_url} className="ghost">باما</BamaLink>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </Table></div>
+              <div className="state">
+                <strong>آگهی‌ای با این فیلترها پیدا نشد.</strong>
+                <p className="empty-hint">
+                  {page > 1
+                    ? "ممکن است این صفحه دیگر وجود نداشته باشد."
+                    : "فیلترها را ساده‌تر کنید یا برند دیگری را امتحان کنید."}
+                </p>
+                {page > 1 && (
+                  <button onClick={() => filters.set({ page: null })}>
+                    بازگشت به صفحه اول
+                  </button>
                 )}
-
-                <div style={{ marginTop: 14 }}>
-                  <Pager
-                    page={page}
-                    lastPage={lastPage}
-                    total={total}
-                    onChange={(next) => filters.set({ page: next })}
-                  />
-                </div>
-                <Provenance envelope={board} />
-              </>
+              </div>
             );
-          }}
-        </Async>
-      </Card>
+          }
+          const total = board.count ?? rows.length;
+          const lastPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
+          const ceiling = board.window?.ceiling_pct ?? 25;
+          return (
+            <>
+              <div className="grid-header">
+                <p className="stat-sub list-count" role="status">{num(total)} آگهی</p>
+                <ViewToggle />
+              </div>
+              {view === "cards" ? (
+                band === "review" || band === "ml" ? (
+                  // Neither of these is ranked by freshness — `review` by
+                  // discount and `ml` by the model's residual — so banding
+                  // them would draw groups the order does not follow, and
+                  // the server sends no freshness rank for either, which
+                  // would silently pile every row under "over two weeks".
+                  <div className="card-grid">
+                    {rows.map((d) => (
+                      <DealCard key={d.code} deal={d}
+                                suspect={band === "review"} />
+                    ))}
+                  </div>
+                ) : (
+                  <BandedGrid rows={rows} ceiling={ceiling} />
+                )
+              ) : (
+                <div className="card deals-table"><Table
+                  head={[
+                    "آگهی", "تخفیف", "قیمت", "میانه مشابه‌ها",
+                    "تعداد مشابه", "اعتبار", "در بازار", "",
+                  ]}
+                >
+                  {rows.map((d) => (
+                    <tr key={d.code}>
+                      <td>
+                        <Link to={`/listing/${d.code}`}>
+                          <Fa>{d.title || d.code}</Fa>
+                        </Link>
+                        {d.condition_flagged && (
+                          <div className="badge warn" style={{ marginTop: 4 }}
+                               title={conditionNote(d)}>
+                            <AlertTriangle size={11} /> {conditionTag(d)}
+                          </div>
+                        )}
+                      </td>
+                      <td className="num up">{pct(d.discount_pct, 0)}</td>
+                      <td className="num">{toman(d.price)}</td>
+                      <td className="num">{toman(d.peer_median)}</td>
+                      <td className="num">{d.peer_count ?? "—"}</td>
+                      <td className="num"><ConfidenceDots tier={d.confidence} /></td>
+                      <td className="num">
+                        {/* `days_listed` restarts at every bump: 18 of 24 rows read «0 روز». */}
+                        {(d.age_days ?? d.days_listed) != null ? `${d.age_days ?? d.days_listed} روز` : "—"}
+                      </td>
+                      <td className="num">
+                        <div className="row">
+                          <ListingActions code={d.code} />
+                          <BamaLink href={d.bama_url} className="ghost">باما</BamaLink>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </Table></div>
+              )}
 
-      <HowWeKnow>
-        <p>
-        {band === "top" && (
-          <>
-            خودروهایی که قیمتشان در <b>۱۴ روز گذشته</b> ثبت شده و از بیشتر
-            آگهی‌های هم‌تیپ، هم‌سال و هم‌وضعیتِ ماه اخیر ارزان‌ترند، کارکردشان
-            عادی است و در متن آگهی دلیلی برای ارزانی دیده نمی‌شود.
-            <span>
-              {" "}حد ثابتی برای درصد تخفیف نیست؛ معیار، گروه آگهی‌های تازه
-              است. آگهی‌هایی که یکی از این شرط‌ها را ندارند، با ذکر دلیل در زبانه
-              «نیازمند بررسی»‌اند.
-            </span>
-          </>
-        )}
-        {band === "all" && (
-          <>
-            همه آگهی‌های زیر میانه قیمت آگهی‌های مشابه، تا سقف{" "}
-            <b>{w ? pct(w.ceiling_pct, 0) : "—"}</b>، در همان بازه{" "}
-            <b>{fa(w?.window_days)} روزه</b> — بدون حداقلِ تخفیفِ زبانه
-            «پیشنهادهای برتر»، پس آن آگهی‌ها را هم در بر می‌گیرد. گروه‌بندی بر
-            پایه تازگی آگهی است و میزان تخفیف تنها ترتیب درون هر گروه را تعیین
-            می‌کند.
-          </>
-        )}
-        {band === "ml" && <>{ML_TAB_NOTE}</>}
-        {band === "review" && (
-          <>
-            آگهی‌هایی که ارزان‌اند، اما دلیلی برای ارزانی‌شان دیده می‌شود:
-            قیمتی که هفته‌ها پیش ثبت شده (بازار از آن زمان گران‌تر شده)،
-            کارکرد غیرعادی، فاصله‌ای بسیار بیشتر از پراکندگی عادی گروه،
-            احتمال ثبت در مدل یا سال اشتباه، یا نکته‌ای در متن آگهی مثل وکالتی
-            بودن یا ایراد فنی. دلیل روی هر کارت نوشته شده است.
-          </>
-        )}
-        </p>
-      </HowWeKnow>
+              <div style={{ marginTop: 14 }}>
+                <Pager
+                  page={page}
+                  lastPage={lastPage}
+                  total={total}
+                  onChange={(next) => filters.set({ page: next })}
+                />
+              </div>
+              <HowWeKnow>
+                <p>
+                {band === "top" && (
+                  <>
+                    قیمت ثبت‌شده در <b>۱۴ روز اخیر</b>، ارزان‌تر از بیشتر مشابه‌های ماه اخیر، با کارکرد عادی و بدون توضیح منفی در متن آگهی.
+                  </>
+                )}
+                {band === "all" && (
+                  <>
+                    همه آگهی‌های زیر میانه مشابه‌ها تا سقف <b>{w ? pct(w.ceiling_pct, 0) : "—"}</b> در بازه <b>{fa(w?.window_days)} روزه</b>، مرتب‌شده بر پایه تازگی آگهی.
+                  </>
+                )}
+                {band === "ml" && <>{ML_TAB_NOTE}</>}
+                {band === "review" && (
+                  <>
+                    آگهی‌های ارزانی که دلیلی برای فاصله قیمتشان دیده می‌شود (قیمت قدیمی، کارکرد غیرعادی یا نکته در متن آگهی). دلیل روی هر کارت درج شده است.
+                  </>
+                )}
+                </p>
+              </HowWeKnow>
+              <Provenance envelope={board} />
+            </>
+          );
+        }}
+      </Async>
     </div>
   );
 }

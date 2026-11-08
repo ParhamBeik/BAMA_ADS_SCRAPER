@@ -159,11 +159,11 @@ function ListingState({
 }) {
   if (status === "unverified") {
     return (
-      <p className="badge warn">
+      <div className="callout warn">
         این آگهی را از دست داده‌ایم — آخرین بررسی کامل ما از باما ناقص بوده، پس
         نمی‌توانیم بگوییم هنوز برای فروش هست یا نه.
         {lastSeen && <> آخرین بار {faDate(lastSeen)} دیده شد.</>}
-      </p>
+      </div>
     );
   }
 
@@ -176,7 +176,7 @@ function ListingState({
     unknown: "دلیلش را نمی‌دانیم",
   };
   return (
-    <p className="badge warn">
+    <div className="callout warn">
       دیگر در باما فهرست نشده است
       {lastSeen && <> — آخرین بار {faDate(lastSeen)} دیده شد</>}
       {reason && guess[reason] && (
@@ -192,7 +192,7 @@ function ListingState({
           <Link to={`/listing/${repostedFrom}`}>آگهی پیشین را ببینید</Link>.
         </>
       )}
-    </p>
+    </div>
   );
 }
 
@@ -257,43 +257,46 @@ export function ListingDetail() {
                     />
                   )}
                   <p className="price">{data.current_price != null ? toman(data.current_price) : "—"}</p>
-                  {/* From one ad to the question behind it: what this car
-                      costs in general, and news when that changes. */}
-                  {data.model_id != null && (
-                    <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-                      <Link
-                        className="btn"
-                        to={`/price${qs({
-                          model: data.model_id,
-                          variant: data.variant_id ?? undefined,
-                          year: data.year_jalali ?? undefined,
-                        })}`}
-                      >
-                        قیمت این خودرو در بازار
-                      </Link>
-                      <FollowButton scope={{
-                        model: String(data.model_id),
-                        variant: data.variant_id != null ? String(data.variant_id) : undefined,
-                        year: data.year_jalali != null ? String(data.year_jalali) : undefined,
-                      }} />
-                    </div>
-                  )}
+                  {/* Primary listing actions + model price link grouped right under the price. */}
+                  <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                    <BamaLink href={data.bama_url} className="btn primary" />
+                    <ListingActions code={data.code} />
+                    {data.model_id != null && (
+                      <>
+                        <Link
+                          className="btn"
+                          to={`/price${qs({
+                            model: data.model_id,
+                            variant: data.variant_id ?? undefined,
+                            year: data.year_jalali ?? undefined,
+                          })}`}
+                        >
+                          قیمت این خودرو در بازار
+                        </Link>
+                        <FollowButton scope={{
+                          model: String(data.model_id),
+                          variant: data.variant_id != null ? String(data.variant_id) : undefined,
+                          year: data.year_jalali != null ? String(data.year_jalali) : undefined,
+                        }} />
+                      </>
+                    )}
+                  </div>
                   {data.price_basis_unclear && (
-                    <p className="badge warn">
+                    <div className="callout warn">
                       این عدد به احتمال زیاد پیش‌پرداخت یا قسط است، نه قیمت کامل
-                      خودرو — به همین دلیل از فهرست معامله‌ها کنار گذاشته شده.
-                    </p>
+                      خودرو — از فهرست معامله‌ها کنار گذاشته شده.
+                    </div>
                   )}
                   {/* Name the field the flag came from. This always blamed the
                       description, but the flag fires first on Bama's structured
                       body-status column — so an ad reading «ماشین فوق العاده
                       سالم» was captioned as describing its own crash. */}
                   {data.condition_flagged && (
-                    <p className="badge warn">
+                    <div className="callout warn">
                       {data.condition_band && data.condition_band !== "clean" && data.body_status
                         ? `فروشنده وضعیت بدنه را «${data.body_status}» ثبت کرده — پیش از مقایسه قیمت آن را در نظر بگیرید.`
                         : "توضیحات آگهی به وضعیت خودرو اشاره کرده (تصادف، پلاک منطقه آزاد یا مشابه) — پیش از مقایسه قیمت آن را بخوانید."}
-                    </p>
+                    </div>
                   )}
                   {/* Label above value, two per row: a stack of "key: value"
                       sentences made the reader parse nine lines to find the
@@ -331,14 +334,10 @@ export function ListingDetail() {
                     </Spec>
                   </dl>
                   {data.cohort_flags?.map((f) => (
-                    <p key={f} className="badge warn">
+                    <div key={f} className="callout warn">
                       {FLAG_LABEL[f] ?? f}
-                    </p>
+                    </div>
                   ))}
-                  <div className="row">
-                    <BamaLink href={data.bama_url} />
-                    <ListingActions code={data.code} />
-                  </div>
                 </div>
                 <div className="card">
                   <h2>توضیحات</h2>
@@ -381,10 +380,13 @@ export function ListingDetail() {
                   carries this ad, the median and the middle half, so they are
                   not repeated in a table. The rest is behind the tap. */}
               {tooLow(fp.asking, fp.distribution?.p10) && (
-                <p className="badge warn">این قیمت خیلی پایین‌تر از مشابه‌هاست؛ شاید پیش‌پرداخت یا اشتباه ثبت باشد.</p>
+                <div className="callout warn">این قیمت خیلی پایین‌تر از مشابه‌هاست؛ شاید پیش‌پرداخت یا اشتباه ثبت باشد.</div>
               )}
               <PriceBar distribution={fp.distribution} asking={fp.asking} />
               {fp.cohort_stale && <span className="badge warn">مشابه‌ها قدیمی</span>}
+              {/* The deal board's own verdict on this listing, merged into the
+                  valuation card so the user reads one unified assessment. */}
+              <DealVerdict code={code} fairVerdict={fp.median_verdict ?? fp.verdict} />
               <RangeNotes distribution={fp.distribution}>
                 {fp.position_pct != null && (
                   <p>گران‌تر از {pct(fp.position_pct, 0)} آگهی‌های مشابه.</p>
@@ -414,15 +416,6 @@ export function ListingDetail() {
           )}
         </Async>
       </div>
-
-      {/* The deal board's own verdict on this listing.
-          `/api/analytics/deal-scores/<code>/` exists so a detail card can never
-          disagree with the row the reader clicked — and until now nothing
-          called it, so the listing page showed a fair-price estimate with no
-          way to tell whether the board had picked this car out at all. A 404
-          is the ordinary case (most listings are not on the board), so it
-          renders nothing rather than an error. */}
-      <DealVerdict code={code} fairVerdict={fair.data?.median_verdict ?? fair.data?.verdict} />
 
       {/* The learned estimate, deliberately *below* the statistical one and
           never in place of it. Two independent accounts of the same car, and
@@ -499,34 +492,28 @@ function DealVerdict({ code, fairVerdict }: { code: string; fairVerdict?: Verdic
   // this card says only what the deal board decided and why.
   const note = verdictNote(d);
   return (
-    <div className="card">
-      <h2>تابلوی معامله‌ها</h2>
-      <p>
+    <div className="hero-divider stack">
+      <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
         {d.deal_status === "deal"
-          ? <span className="badge ok">معامله‌ی خوب</span>
-          : <span className="badge warn">نیازمند بررسی</span>}
+          ? <span className="badge ok">تابلوی معامله‌ها: معامله‌ی خوب</span>
+          : <span className="badge warn">تابلوی معامله‌ها: نیازمند بررسی</span>}
         {differs && <span className="badge">در مقایسه با قیمت‌های تازه</span>}
-      </p>
+        <Link className="btn ghost" to="/cars?deals=1">همه معامله‌ها</Link>
+      </div>
       {note && <p className="stat-sub">{note}</p>}
       {d.liquidity && (
         <p className="stat-sub">
           {Math.round(d.liquidity.left_pct)}% از این مدل ظرف {d.liquidity.window_days} روز برداشته می‌شوند
         </p>
       )}
-      <HowWeKnow>
-        <p>
-          معامله‌ی خوب یعنی قیمتی که در ۱۴ روز اخیر ثبت شده، از بیشتر آگهی‌های هم‌گروهِ ماه
-          اخیر ارزان‌تر است، کارکرد عادی دارد و در متن آگهی دلیلی برای ارزانی دیده نمی‌شود.
-        </p>
-        {differs && (
+      {differs && (
+        <HowWeKnow label="تفاوت با ارزیابی قیمت">
           <p>
-            ارزیابی قیمتِ بالا همه‌ی آگهی‌های فعال مشابه را می‌سنجد، از جمله قیمت‌هایی که
-            هفته‌ها پیش ثبت شده‌اند. این تابلو فقط قیمت‌های ماه اخیر را؛ در بازاری که
-            قیمت‌ها بالا می‌رود، این دو می‌توانند متفاوت باشند.
+            ارزیابی قیمت همه‌ی آگهی‌های فعال مشابه را می‌سنجد؛ تابلوی معامله‌ها فقط
+            قیمت‌های ماه اخیر را. در بازار صعودی این دو می‌توانند متفاوت باشند.
           </p>
-        )}
-      </HowWeKnow>
-      <Link className="btn" to="/cars?deals=1">همه معامله‌ها</Link>
+        </HowWeKnow>
+      )}
     </div>
   );
 }
@@ -634,10 +621,10 @@ function ModelEstimate({ code }: { code: string }) {
       </ul>
 
       {p.anomaly_kind === "data_anomaly" && (
-        <p className="badge warn" style={{ marginTop: 8 }}>
+        <div className="callout warn" style={{ marginTop: 8 }}>
           این آگهی در فضای ویژگی‌ها غیرعادی است — پیش از هر نتیجه‌گیری، خود
           اطلاعات آگهی را بررسی کنید.
-        </p>
+        </div>
       )}
 
       {drivers.length > 0 && (

@@ -1520,3 +1520,43 @@ a.text-muted-foreground { color: var(--muted); }
 .list-count { margin: 0 0 10px; }
 .rule-actions { white-space: nowrap; }
 @media (max-width: 560px) { .rule-actions .h-8, .rule-actions button { padding-inline: 4px; } }
+
+/* Sentence-length warnings sit in a rounded callout banner rather than a
+   999px-radius pill badge, so wrapped lines stay aligned and readable. */
+.callout {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 6px 0;
+  padding: 8px 11px;
+  border-radius: 8px;
+  border-inline-start: 3px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.callout.warn {
+  border-inline-start-color: var(--warn);
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-weight: 600;
+}
+
+/* Header bar above unwrapped card grids (count + sort/view controls). */
+.grid-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.grid-header .list-count { margin: 0; }
+
+/* Divider between sections inside a unified hero card. */
+.hero-divider {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 12px 0;
+}

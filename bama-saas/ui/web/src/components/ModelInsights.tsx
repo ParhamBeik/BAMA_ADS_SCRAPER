@@ -13,6 +13,7 @@ import { qs } from "../filters";
 import { Async, Card, HowWeKnow, Provenance, SeriesCaveats, Stat, Table } from "../ui";
 import { fa, num, pct, toman } from "../format";
 import { WindowPicker } from "./WindowPicker";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 
 const Chart = lazy(() => import("@/components/Chart").then((m) => ({ default: m.Chart })));
 
@@ -189,24 +190,28 @@ export function RetentionPanel({ model, variant }: { model: string; variant?: st
                 height={210}
               />
             </Suspense>
-            <Table head={["سال ساخت", "تعداد آگهی", "میانه قیمت", "درصد جدیدترین سال"]}>
-              {data.points.map((p) => (
-                <tr key={p.year_jalali}>
-                  <td>{p.year_jalali}</td>
-                  <td className="num">{num(p.n)}</td>
-                  <td className="num">{toman(p.median_price)}</td>
-                  <td className="num">{p.pct_of_newest}%</td>
-                </tr>
-              ))}
-            </Table>
-            <p className="stat-sub">
+            <p className="stat-sub" style={{ marginTop: 8 }}>
               در {num(data.span_years)} سال،{" "}
               {data.retained_over_span_pct}% از ارزش حفظ شده است
               {data.avg_annual_decline_pct != null &&
-                ` (حدود ${data.avg_annual_decline_pct}% در سال)`}
-              . مبنا سال {data.reference_year} است: جدیدترین سالی که آگهی کافی دارد،
-              نه قیمت کارخانه — چنین قیمتی در این داده وجود ندارد.
+                ` (حدود ${data.avg_annual_decline_pct}% افت سالانه)`}
+              {" · "}مبنا سال {data.reference_year}
             </p>
+            <HowWeKnow label="جدول سال‌ها و روش محاسبه">
+              <Table head={["سال ساخت", "تعداد آگهی", "میانه قیمت", "درصد جدیدترین سال"]}>
+                {data.points.map((p) => (
+                  <tr key={p.year_jalali}>
+                    <td>{p.year_jalali}</td>
+                    <td className="num">{num(p.n)}</td>
+                    <td className="num">{toman(p.median_price)}</td>
+                    <td className="num">{p.pct_of_newest}%</td>
+                  </tr>
+                ))}
+              </Table>
+              <p>
+                مبنا سال {data.reference_year} است (جدیدترین سالی که آگهی کافی دارد، نه قیمت کارخانه).
+              </p>
+            </HowWeKnow>
             <Provenance envelope={data} />
           </>
         )}
@@ -263,13 +268,42 @@ export function SurvivalPanel({
                 from a fortnight of history reads as a fact about the market. */}
             <HowWeKnow><p>
               روی {fa(data.clean_days)} روز سابقه قابل اتکا محاسبه شده و طولانی‌ترین
-              آگهیِ زیر نظر {fa(Math.round(data.observed_days))} روز است — هیچ‌کدام
-              از این اعداد درباره بازه‌های بلندتر از آن چیزی نمی‌گویند.
+              آگهیِ زیر نظر {fa(Math.round(data.observed_days))} روز است.
             </p></HowWeKnow>
             <Provenance envelope={data} />
           </>
         )}
       </Async>
+    </Card>
+  );
+}
+
+/**
+ * All three model history views in one tabbed card, so `/price` does not stack
+ * three separate chart cards and three provenance footers below the listings.
+ */
+export function ModelInsightsCard({
+  model, variant, year, days,
+}: { model: string; variant?: string; year?: string; days: number }) {
+  const url = trendRequest({ model, variant, year, days })!;
+  return (
+    <Card title="سابقه و روند بازار">
+      <Tabs defaultValue="trend">
+        <TabsList className="mb-3 max-w-full">
+          <TabsTrigger value="trend">روند قیمت</TabsTrigger>
+          <TabsTrigger value="retention">افت قیمت با سن</TabsTrigger>
+          <TabsTrigger value="survival">مدت ماندن در بازار</TabsTrigger>
+        </TabsList>
+        <TabsContent value="trend">
+          <TrendPanel url={url} />
+        </TabsContent>
+        <TabsContent value="retention">
+          <RetentionPanel model={model} variant={variant} />
+        </TabsContent>
+        <TabsContent value="survival">
+          <SurvivalPanel model={model} variant={variant} year={year} />
+        </TabsContent>
+      </Tabs>
     </Card>
   );
 }
