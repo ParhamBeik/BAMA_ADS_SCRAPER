@@ -9,6 +9,9 @@ name: CI
 on:
   push:
     branches: ["**"]
+    # A push that changes only Markdown (agent instructions, docs) is not tested or
+    # deployed. Pull requests still run everything.
+    paths-ignore: ["**/*.md"]
   pull_request:
   workflow_call:      # deploy.yml reuses this rather than duplicating the steps
 

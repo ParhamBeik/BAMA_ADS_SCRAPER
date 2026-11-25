@@ -33,6 +33,9 @@ fi
 if [ -n "${IMAGE_TAG:-}" ]; then
     for name in app frontend; do
         remote="ghcr.io/parhambeik/bama_ads_scraper-$name:$IMAGE_TAG"
+        # app-release may already have loaded this exact image from the deploy run's
+        # artifact (digest-checked against ghcr.io); then there is nothing to pull.
+        docker image inspect "$remote" >/dev/null 2>&1 && continue
         # GHCR resets connections from Iran mid-layer; finished layers are kept.
         for attempt in 1 2 3 4 5; do
             docker pull -q "$remote" && break
