@@ -14,9 +14,7 @@ Dependencies flow `common → core → {jobs, ml, accounts} → config`.
 
 ## Architecture
 
-Read before changing structure, data flow or app boundaries. Claude Code loads it at session start:
-
-@bama-saas/ARCHITECTURE.md
+Read `bama-saas/ARCHITECTURE.md` at session start and before changing structure, data flow or app boundaries. (Claude Code also imports it through `CLAUDE.md`.)
 
 ## Required checks
 
