@@ -254,9 +254,14 @@ def cohort_series(
     what ``jobs.market_index`` does — resolves membership once rather than per
     scope.
     """
+    # ``.order_by()`` clears ``Meta.ordering`` ("-date", "model"), which sorts by
+    # brand and model *name* and so joined two tables and sorted ~430k rows on
+    # every call, for a result that lands in a dict. Measured on the VPS
+    # (2026-11-27): 3.0 s with the ordering, 0.11 s without; it was the single
+    # largest query by total time and wrote 309 GB of temp files in 62 days.
     qs = DailyInventorySnapshot.objects.filter(
         median_price__isnull=False, model_id__isnull=False
-    )
+    ).order_by()
     if scope == MarketIndex.Scope.BRAND:
         qs = qs.filter(model__brand__slug=scope_id)
     elif scope == MarketIndex.Scope.MODEL:
@@ -843,7 +848,12 @@ def kaplan_meier(observations: list[Observation]) -> SurvivalCurve:
 
 
 def _episode_qs(*, model_id=None, variant_id=None, year_jalali=None, clean=True):
-    qs = verified_by_ad(ListingEpisode.objects.select_related("ad"))
+    # No caller needs rows in order (they tally, count or feed kaplan_meier,
+    # which sorts itself). ``Meta.ordering`` ("ad", "started_at") expands to
+    # ``catalog_ad.publish_at`` and forced a sort after the join: 1.25 s -> 0.51 s
+    # on the VPS (2026-11-27) once cleared. ``select_related`` was dead weight:
+    # every caller uses ``values_list`` or ``count``.
+    qs = verified_by_ad(ListingEpisode.objects.all()).order_by()
     qs = (
         qs.filter(started_at__gte=clean_start()) if clean
         else qs.filter(started_at__lt=clean_start())
