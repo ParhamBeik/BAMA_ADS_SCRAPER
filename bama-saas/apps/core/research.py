@@ -44,6 +44,7 @@ from apps.core.quality import (
     without_cohort_outliers,
     without_high_outliers,
 )
+from apps.core.sync import sync_rows
 
 # ---------------------------------------------------------------------------
 # Matched-cohort chained price index
@@ -396,12 +397,14 @@ def build_index(scope: str, scope_id: str | None = None, *, segments: dict | Non
     of an axis resolves membership once instead of once per segment.
     """
     series = compute_index(cohort_series(scope, scope_id, segments=segments))
-    MarketIndex.objects.filter(scope=scope, scope_id=scope_id).delete()
-    if not series:
-        return 0
-    MarketIndex.objects.bulk_create(
+    # Same end state as delete-then-insert, but only changed points are
+    # written. A new day changes the tail of a series, not its history, and the
+    # old full rewrite made 78M inserts to keep 66k rows.
+    sync_rows(
+        MarketIndex,
         [MarketIndex(scope=scope, scope_id=scope_id, **row) for row in series],
-        batch_size=500,
+        key=("scope", "scope_id", "date"),
+        existing=MarketIndex.objects.filter(scope=scope, scope_id=scope_id).order_by(),
     )
     return len(series)
 

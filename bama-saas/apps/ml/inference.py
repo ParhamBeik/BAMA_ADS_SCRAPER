@@ -33,6 +33,7 @@ from django.db import transaction
 from apps.core.locks import PREDICTIONS_REBUILD, rebuild_lock
 from apps.core.models import Ad, DealScoreCache
 from apps.core.quality import exclude_unclear_price, verified
+from apps.core.sync import sync_rows
 from apps.ml import features, registry
 from apps.ml.models import AdPrediction, MLModel
 
@@ -118,12 +119,15 @@ def _score_rows(art, *, limit, model_ids) -> dict:
 
     objs = list(predictions.values())
     with transaction.atomic():
-        # Delete-and-recreate rather than update_or_create per row: this is the
-        # same wholesale-rebuild shape as `compute_deal_scores`, it is one query
-        # plus one bulk insert instead of 25,000 round trips, and it guarantees
-        # no row survives holding a column from a model that is no longer live.
-        AdPrediction.objects.filter(ad_id__in=list(predictions)).delete()
-        AdPrediction.objects.bulk_create(objs, batch_size=SCORE_BATCH)
+        # Each row is still written whole, so no row keeps a column from a model
+        # that is no longer live, but only rows whose values changed are
+        # written at all (the old delete-and-recreate made 18M inserts to keep
+        # 72k rows). `scored_at` therefore means "values last changed".
+        sync_rows(
+            AdPrediction, objs, key=("ad_id",),
+            existing=AdPrediction.objects.filter(ad_id__in=list(predictions)).order_by(),
+            batch_size=SCORE_BATCH,
+        )
 
     return {
         "scored": len(objs),
