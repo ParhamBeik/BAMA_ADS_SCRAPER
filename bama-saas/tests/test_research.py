@@ -1316,3 +1316,23 @@ def test_an_unmeasurable_condition_is_not_dressed_up_as_an_adjustment(cohorts):
 
     assert painted["basis"]["mode"] == "unconditioned"
     assert painted["basis"]["reason"] == "no_measured_adjustment"
+
+
+@pytest.mark.django_db
+def test_hot_research_reads_carry_no_order_by():
+    """Both reads land in dicts or counts, so a default ordering is pure cost.
+
+    ``Meta.ordering`` on the snapshot and episode models sorts through joins to
+    brand/model names and ``publish_at``: 3.0 s and 1.25 s a call on the VPS
+    (2026-11-27) against 0.11 s and 0.51 s without it. Re-adding a model
+    ordering must not silently bring that back.
+    """
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    with CaptureQueriesContext(connection) as ctx:
+        cohort_series(MarketIndex.Scope.MARKET)
+        R._turnover_tally(14, timezone.now())
+    assert len(ctx.captured_queries) == 2
+    for query in ctx.captured_queries:
+        assert "ORDER BY" not in query["sql"], query["sql"]

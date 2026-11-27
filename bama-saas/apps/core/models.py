@@ -358,6 +358,18 @@ class Ad(models.Model):
                 name="ad_list_active_idx",
                 condition=Q(current_price__gt=0),
             ),
+            # The turnover join (`research._turnover_tally`) needs only `code`,
+            # `is_verified` and `model_id` from this table, and read all 405 MB
+            # of the heap to get them (2.7 s x 16k calls, 2 TB read in 62 days).
+            # This index carries exactly those, so the join can read ~10 MB
+            # instead. Every column in it is already indexed elsewhere, so it
+            # blocks no HOT update that was not already blocked.
+            models.Index(
+                fields=("code",),
+                include=("model",),
+                condition=Q(is_verified=True),
+                name="ad_verified_model_cov",
+            ),
             # On `Upper(search_text)`, not on the column. `filters.filter_q` is
             # the only reader and it uses `__icontains`, which Django compiles to
             # `UPPER(search_text) LIKE UPPER(%s)` — and a trigram index on the
