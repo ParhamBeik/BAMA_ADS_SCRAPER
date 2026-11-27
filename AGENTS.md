@@ -49,3 +49,16 @@ host port `5433`.
 - Keep `ml_train` immediately before `ml_score` in `apps/jobs/pipeline.py`.
 - Run `bash -n` or `sh -n` on changed deployment scripts.
 - Do not deploy, push, or mutate production without explicit authorization.
+
+## Before/after proof in PRs
+
+Every PR that changes what users see, or what the API returns, carries proof in its
+description, so a reviewer (a person, the Codex review or a cloud agent) can judge it
+without running it:
+
+- Screens: a Before / After table of screenshots. "Before" is the live site
+  (https://bama.parhambm.ir) or `main`; "after" is the fixed branch running locally. Use the same page,
+  data and window size on both sides, and add phone width (393 px) when the layout changes.
+- Backend: the same request before and after, with one line on why the "after" value is right.
+- Upload the images through GitHub's web page; never commit screenshots to the repo.
+  A change whose proof is not ready yet says "not shown" and why.
