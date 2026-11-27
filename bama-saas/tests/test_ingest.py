@@ -1399,6 +1399,45 @@ def test_an_unchanged_resighting_writes_no_observation(make_payload):
     assert AdObservation.objects.filter(ad=ad).count() == 2
 
 
+@pytest.mark.django_db
+def test_an_unchanged_resighting_updates_only_last_seen_at(known_catalog, make_payload):
+    """Writing every column re-sent the payload JSON and rewrote its TOAST data.
+
+    Also: the ad already points at this version, so it is not re-pointed.
+    """
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    def sight(price, minutes):
+        at = NOW + timedelta(minutes=minutes)
+        run = FetchRun.objects.create(source=FetchRun.Source.LIVE_FETCH)
+        extracted = extract_ad(make_payload("seen02", price), at)
+        # Fixed: a relative phrase ("2 hours ago") moves publish_at each time.
+        return _ing(extracted, run=run, observed_at=at, publish_at=NOW - timedelta(hours=2))
+
+    first = sight(1_000_000_000, 0)
+    with CaptureQueriesContext(connection) as ctx:
+        ad = sight(1_000_000_000, 30)
+    updates = [q["sql"] for q in ctx.captured_queries
+               if q["sql"].startswith('UPDATE "catalog_ad"')]
+    assert len(updates) == 1, updates
+    assert updates[0].startswith('UPDATE "catalog_ad" SET "last_seen_at" = ')
+    assert updates[0].split(" WHERE ")[0].count(" = ") == 1  # one column set
+    ad.refresh_from_db()
+    assert ad.last_seen_at == NOW + timedelta(minutes=30)
+    assert ad.current_version_id == first.current_version_id
+
+    # A real change still lands, and only that column plus last_seen_at.
+    with CaptureQueriesContext(connection) as ctx:
+        sight(900_000_000, 60)
+    sets = [q["sql"].split(" WHERE ")[0] for q in ctx.captured_queries
+            if q["sql"].startswith('UPDATE "catalog_ad" SET')]
+    assert any('"current_price"' in s and '"raw_payload"' in s for s in sets), sets
+    assert not any('"title" = ' in s for s in sets), sets
+    ad.refresh_from_db()
+    assert ad.current_price == 900_000_000
+
+
 def test_one_range_flags_wide_and_two_clustered_groups():
     from apps.core.pricing import peer_distribution
 

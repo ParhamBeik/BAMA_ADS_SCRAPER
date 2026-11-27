@@ -7,6 +7,7 @@ provenance rows, which is the point of them.)
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -15,7 +16,9 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
-from django.db import IntegrityError, transaction
+from django.core.exceptions import ValidationError
+from django.core.serializers.json import DjangoJSONEncoder
+from django.db import IntegrityError, models, transaction
 from django.utils.text import slugify
 
 from apps.common.parsing import (
@@ -283,6 +286,35 @@ def parse_source_datetime(raw) -> datetime | None:
     return parsed.astimezone(dt_timezone.utc)
 
 
+def _changed_fields(ad: Ad, values: dict) -> dict:
+    """The subset of ``values`` that differs from what ``ad`` holds.
+
+    Compared the way the database would store them: a relation by its id,
+    a scalar through the field's ``to_python`` (so ``"1399"`` equals 1399), and
+    JSON through the encoder (a tuple equals the list it comes back as). Anything
+    that cannot be compared counts as changed, so the worst case is the old
+    full write, never a lost one.
+    """
+    changed = {}
+    for name, new in values.items():
+        f = Ad._meta.get_field(name)
+        try:
+            if f.is_relation:
+                old = getattr(ad, f.attname)
+                new_cmp = new.pk if isinstance(new, models.Model) else new
+                same = old == new_cmp
+            elif isinstance(f, models.JSONField):
+                same = (json.dumps(getattr(ad, name), cls=DjangoJSONEncoder, sort_keys=True)
+                        == json.dumps(new, cls=DjangoJSONEncoder, sort_keys=True))
+            else:
+                same = getattr(ad, name) == f.to_python(new)
+        except (TypeError, ValueError, ValidationError):
+            same = False
+        if not same:
+            changed[name] = new
+    return changed
+
+
 def _ad_defaults(extracted: dict, dims: dict, observed_at, publish_at, quality_flags: list) -> dict:
     g = extracted.get
     detail = (g("raw_payload") or {}).get("detail") or {}
@@ -499,11 +531,17 @@ def _ingest_ad(extracted, *, run, observed_at, publish_at, dealer=None, rank=Non
             defaults.pop("admission_state", None)
         if ad.first_seen_at and observed_at < ad.first_seen_at:
             defaults["first_seen_at"] = observed_at
-        Ad.objects.filter(code=code).update(**defaults)
+        # Only the columns that differ. Writing all ~50 every sighting re-sent
+        # `raw_payload` and `description` too, so every unchanged re-sighting
+        # rewrote their TOAST data (2.98M full-row updates in 62 days, 13 ms
+        # each). Usually only `last_seen_at` is left.
+        changed = _changed_fields(ad, defaults)
+        if changed:
+            Ad.objects.filter(code=code).update(**changed)
         # update() never touches the in-memory instance. Later steps (version
         # FK, price-drop comparison) still use `ad`; without this they see
         # the pre-observation row.
-        for k, v in defaults.items():
+        for k, v in changed.items():
             setattr(ad, k, v)
         created = False
 
@@ -535,7 +573,10 @@ def _ingest_ad(extracted, *, run, observed_at, publish_at, dealer=None, rank=Non
             classification_state="verified", classification_rule=dims["classification_rule"],
         )
         version.classification_state = "verified"
-    if not ad.current_version_id or ad.last_seen_at == observed_at:
+    # Only when it actually moves: re-pointing at the same version on every
+    # fresh sighting was 5.2M no-op updates in 62 days.
+    if ((not ad.current_version_id or ad.last_seen_at == observed_at)
+            and ad.current_version_id != version.pk):
         Ad.objects.filter(pk=ad.pk).update(current_version=version)
         ad.current_version = version
     # Storage policy (docs/STORAGE-POLICY.md): only the front photo is kept on
