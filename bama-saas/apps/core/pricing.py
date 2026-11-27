@@ -35,7 +35,7 @@ from statistics import median
 from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction
-from django.db.models import OuterRef, Subquery, Value
+from django.db.models import OuterRef, Q, Subquery, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
@@ -61,6 +61,7 @@ from apps.core.quality import (
     verified_by_ad,
     without_cohort_outliers,
 )
+from apps.core.sync import sync_rows
 
 # A cohort needs this many priced peers before it has an opinion worth quoting.
 MIN_PEERS = 8
@@ -1496,15 +1497,19 @@ def _compute_deal_scores(*, model_id: int | None = None,
         ))
 
     # Inside `compute_deal_scores`' transaction and lock: readers never see
-    # the board between the delete and the insert, and a concurrent rebuild
-    # (hot tick, admin refresh, a full cadence) waits instead of inserting on
-    # top of this one and tripping the one-row-per-ad constraint.
+    # the board half-written, and a concurrent rebuild (hot tick, admin
+    # refresh, a full cadence) waits instead of interleaving with this one.
+    # Only the difference is written: most scores are unchanged between ticks,
+    # and the old delete-all + insert-all made 70M inserts to keep 19k rows.
+    # The existing set also takes rows keyed by these ads under another model,
+    # so an ad that changed model is updated rather than inserted twice.
     if model_id is not None:
-        DealScoreCache.objects.filter(ad__model_id=model_id).delete()
+        existing = DealScoreCache.objects.filter(
+            Q(ad__model_id=model_id) | Q(ad_id__in=[o.ad_id for o in objs])
+        )
     else:
-        DealScoreCache.objects.all().delete()
-    if objs:
-        DealScoreCache.objects.bulk_create(objs, batch_size=500)
+        existing = DealScoreCache.objects.all()
+    sync_rows(DealScoreCache, objs, key=("ad_id",), existing=existing.order_by())
     for batch in (explained_low, cleared_low):
         if batch:
             Ad.objects.bulk_update(batch, ["cohort_flags"], batch_size=500)
